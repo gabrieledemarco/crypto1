@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login</title>
+</head>
+ <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-image:  url('https://www.ilcittadinomb.it/wp-content/uploads/2024/08/Binance-annuncia-Immagine2-1000x556.png'); /* Imposta l'immagine di sfondo */
+            background-size: cover; /* Copre l'intera area */
+            background-position: center; /* Centra l'immagine */
+            margin: 0;
+            padding: 20px;
+            color: black; /* Colore del testo */
+        }
+        .container {
+            max-width: 400px;
+            margin: auto;
+            background: rgba(255, 255, 255, 0.8); /* Sfondo bianco con trasparenza */
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        h2 {
+            text-align: center;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: black;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        .form-group button {
+            width: 100%;
+            padding: 10px;
+            background-color: #5cb85c;
+            border: none;
+            color: black;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .form-group button:hover {
+            background-color: #4cae4c;
+        }
+        .forgot-password {
+            text-align: right;
+            font-size: 0.8em; /* Dimensione del testo inferiore */
+        }
+        .forgot-password a {
+            font-style: italic;
+            text-decoration: underline;
+            color: black; /* Colore del link cambiato in nero */
+        }
+    </style>
+<body>
+<div class="container">
+    <h2>Login</h2>
+    <form method="POST">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit">Login</button>
+    </form>
+
+    {% if form.non_field_errors %}
+        <p style="color: red;">{{ form.non_field_errors }}</p>
+    {% endif %}
+
+    <p>Don't have an account? <a href="{% url 'register' %}">Register here</a></p>
+
+    <div class="forgot-password">
+        <a href="forgot-password.html">Password dimenticata?</a>
+    </div>
+</div>
+</body>
+</html>

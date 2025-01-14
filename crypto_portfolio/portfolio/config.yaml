@@ -1,0 +1,49 @@
+cookie:
+  expiry_days: 30
+  key: some_signature_key
+  name: null
+credentials:
+  usernames:
+    gab1:
+      email: utente@gmail
+      name: Gab1
+      password: '12345'
+    gab2:
+      email: utente@gmail
+      name: Gab2
+      password: '12345'
+    gab3:
+      email: utente@gmail
+      name: Gab3
+      password: '1234'
+    gab4:
+      email: utente@gmail
+      name: Gab4
+      password: '1234'
+    jsmith:
+      email: jsmith@gmail.com
+      name: John Smith
+      password: abc
+    rbriggs:
+      email: rbriggs@gmail.com
+      name: Rebecca Briggs
+      password: def
+    user1:
+      email: user1@email.com
+      name: Mario Biondi
+      password: efg
+    user2:
+      email: user2@email.com
+      name: Giuseppe Farina
+      password: stc
+    user54:
+      email: user4@email.com
+      name: Marco Polo
+      password: sts
+    usertest:
+      email: utente@gmail
+      name: Utente tre
+      password: '3456'
+preauthorized:
+  emails:
+  - melsby@gmail.com

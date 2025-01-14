@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>Home</title>
+</head>
+
+<body>
+
+    <h1>Benvenuto!</h1>
+    <p>Authenticate: {{auth_state}}</p>
+     {% if username %}
+
+        <p>Sei loggato come: {{ username }}</p>
+        <p>ID Utente: {{ id_user }}</p>
+        <p>API KEY: {{ api_key }}</p>
+    {% else %}
+        <p>Non sei loggato.</p>
+    {% endif %}
+    <a href="{% url 'logout' %}">Logout</a>  <!-- Aggiungi un link per il logout -->
+
+    <form action="{% url 'aggiorna_dati' %}" method="post">
+        {% csrf_token %}
+        <button type="submit" style="padding:10px 20px; font-size:16px; background:green; color:white;">
+            Aggiorna Dati
+        </button>
+    </form>
+
+</body>
+</html>

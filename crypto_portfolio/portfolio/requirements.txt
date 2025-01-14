@@ -1,0 +1,16 @@
+tqdm~=4.66.2
+numpy~=1.26.4
+coinmarketcap
+psycopg2-binary
+python-binance
+pandas~=2.2.1
+pyspark
+streamlit~=1.32.2
+streamlit_authenticator
+schedule
+matplotlib~=3.8.3
+bcrypt~=4.1.2
+SQLAlchemy~=2.0.29
+python-dateutil~=2.9.0.post0
+PyYAML~=6.0.1
+pillow~=10.2.0

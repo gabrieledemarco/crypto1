@@ -1,0 +1,83 @@
+from main_CLASS_FINALE import Main
+import pandas as pd
+import json
+from datetime import timedelta, datetime
+
+
+# Define a Valid Ticker
+def get_valid_ticker(coin: str, quote: str) -> str:
+    ticker = ""
+    try:
+        ticker = m.ser_symbol.get_symbol_with_coin_quote(coin=coin, quote=quote)
+    except TypeError as ex:
+        try:
+            ticker = m.ser_symbol.get_symbol_with_coin_quote(coin=quote, quote=coin)
+        except TypeError as ex:
+            print(ex)
+    return ticker
+
+
+def get_valid_conversion_Price(P_Coin_in_quote_0: float, quote_0: str, quote_1: str, time=None) -> float:
+    ticker = get_valid_ticker(coin=quote_0, quote=quote_1)
+
+    if time is None:
+        p_ticker = float(m.get_actual_price(symbol=ticker))
+    else:
+        end_date = time.date() + timedelta(days=1)
+        p_ticker = float(m.client.get_historical_klines(symbol=ticker, interval="1d",
+                                                        start_str=str(time.date()), end_str=str(end_date))[0][4])
+    lquote_0 = len(quote_0)
+    price_in_quote_1 = ""
+
+    if ticker[-lquote_0:] == quote_0:
+        price_in_quote_1 = P_Coin_in_quote_0 / p_ticker
+    elif ticker[0:lquote_0] == quote_0:
+        price_in_quote_1 = P_Coin_in_quote_0 * p_ticker
+    else:
+        print("we")
+
+    return price_in_quote_1
+
+
+m = Main()
+# Input from WebApp
+coin = "BTC"
+quote_1 = "ETH"
+
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
+
+# Db client request to trade and trx tables
+df_trd = m.ser_trades.get_df_All_trades_x_coin(coin=coin)
+df_trx = m.ser_tran_fiat.get_df_All_trx_x_coin(coin=coin)
+
+# Adjust columns name for next concat
+dft = df_trx.rename(columns={"fiatcurrency": "Symbol", "Buy_sell": "side", "totalfee": "commision"})
+map = {"B": "BUY", "S": "SELL"}
+dft["side"] = dft["side"].map(map)
+dft['comm_asset'] = dft['Symbol']
+dft['Symbol'] = coin + dft['Symbol']
+dft = dft.drop(columns=['Source'], axis=1)
+
+# Create a new table with Trade and Trx ordered by Date
+frame = [dft, df_trd]
+result = pd.concat(frame).reset_index()
+result = (result.drop(["index", "side"], axis=1)).sort_values('Date')
+
+num_trade = result.shape[0]
+
+result['Amount_0T'] = result.Qty.cumsum()
+result['Increase'] = result.Amount_0T.diff()
+result['ConvTick'] = 1
+result['ConvTick'][result.Symbol.str.replace(coin, "") != quote_1] = quote_1 + result.Symbol.str.replace(coin, "")
+result['ConvP'] = 1
+
+result['Date'] = pd.to_datetime(result['Date'], unit='ms')
+
+for i in range(num_trade):
+    if result['ConvTick'].iloc[i] != '1':
+        result['ConvP'].iloc[i] = get_valid_conversion_Price(P_Coin_in_quote_0=result['Price'].iloc[i],
+                                                             quote_0=result['Symbol'].iloc[i].replace(coin, ""),
+                                                             quote_1=quote_1,
+                                                             time=result['Date'].iloc[1])
+print(result)
