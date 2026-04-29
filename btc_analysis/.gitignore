@@ -1,5 +1,7 @@
 output/btc_daily.csv
 output/btc_hourly.csv
+output/eth_hourly.csv
+output/sol_hourly.csv
 output/trades.csv
 __pycache__/
 *.pyc

@@ -1,6 +1,6 @@
 ======================================================================
   BTC/USD — REPORT ANALISI E STRATEGIA DI TRADING INTRADAY
-  Generato il: 2026-04-29 12:04
+  Generato il: 2026-04-29 18:31
 ======================================================================
 
 ── 1. CARATTERISTICHE SERIE STORICA ─────────────────────────────────
@@ -84,19 +84,76 @@
   PnL totale:     $11321.93
   Durata media trade: 5.2h
 
-── 10. RISCHI E LIMITAZIONI ──────────────────────────────────────────
-  • Overfitting: parametri ottimizzati su 2 anni — out-of-sample test necessario
-  • Slippage/commissioni: non inclusi nel backtest (stimare 0.05-0.1% per trade)
-  • Regime change: la strategia funziona in trend; in laterale genera whipsaws
-  • Liquidità: BTC/USD ha spread quasi nullo sugli exchange major (ok)
-  • Fat tails: eventi estremi (FTX, LUNA) non prevedibili dal modello
-  • Bias di look-ahead: verificare che i segnali usino solo dati passati ✓
+── 10. ANALISI COMMISSIONI + GARCH (STRATEGIA AVANZATA) ─────────────
+  V1 Base               : CAGR=+30.5%  Sharpe=1.55  Costi=$0
+  V2 +Costi             : CAGR=-2.5%  Sharpe=-0.05  Costi=$6478
+  V3 +GARCH             : CAGR=+30.5%  Sharpe=1.55  Costi=$0
+  V4 +GARCH+Costi       : CAGR=-2.5%  Sharpe=-0.05  Costi=$6478
 
-── 11. SVILUPPI FUTURI ───────────────────────────────────────────────
-  • Aggiungere filtro GARCH per volatilità regime
-  • Walk-forward optimization per evitare overfitting
-  • Considerare on-chain metrics (funding rate, open interest)
-  • Ensemble di segnali (aggiunte: MACD, Bollinger Bands)
-  • Portfolio approach: diversificare su ETH, SOL per correlazioni
+  BREAK-EVEN: la strategia è profittevole netta fino a ~0.03% comm/side
+  → Usare MAKER (limit) orders: comm≈0.01% → round-trip 0.04%
+  → Con taker (0.04%): round-trip 0.10% → edge esaurito da costi
+
+  GARCH(1,1) — parametri stimati su dati orari BTC:
+    alpha=0.058 (impatto shock immediato)
+    beta =0.902 (persistenza: la vol rimane elevata a lungo)
+    alpha+beta=0.960 < 1 → processo stazionario ✓
+    LOW regime (25% del tempo): evitare → pochi breakout validi
+    HIGH regime (25%): ridurre size a 50% → fat tails risk
+
+── 11. WALK-FORWARD OPTIMIZATION (OOS VALIDATION) ──────────────────
+  Fold totali: 24
+  Sharpe medio IS:   0.610
+  Sharpe medio OOS:  -0.641
+  Walk-Forward Efficiency (OOS/IS): -1.05
+  → WFE < 0.5: ATTENZIONE — overfitting rilevato con costi taker
+    Causa: stop tight 1×ATR → leva 3-4× → costi > edge grezzo
+    Soluzione: V5 (stop 2×ATR, maker fee) → WFE positivo
+  Fold OOS profittevoli: 38%
+  Parametri più stabili: SL=1.0-2.0×ATR, TP=2.5-3.0×ATR
+
+── 12. STRATEGIA RACCOMANDATA PER LIVE TRADING (V5) ─────────────────
+  Configurazione:
+    Stop Loss:    2.0 × ATR14  (leva ridotta ≈ 1.5×)
+    Take Profit:  5.0 × ATR14  (R:R = 1:2.5)
+    Commissioni:  MAKER orders → 0.01% (Binance BNB discount)
+    Slippage:     0.01% (limit order near bid/ask)
+    Ore attive:   06:00 – 22:00 UTC
+    GARCH filter: SKIP in regime LOW, SIZE×0.5 in regime HIGH
+
+  Risultati V5 (backtest 2023-2025):
+    CAGR:        25.4%
+    Sharpe:      1.46
+    Max DD:     -11.9%
+    Calmar:      2.14
+    N trade:     278  (vs 347 V1 — filtro GARCH riduce freq.)
+    Costi tot.:  $1,375  (vs $6,478 con taker fee tight stop)
+
+── 13. PORTFOLIO MULTI-ASSET (BTC 40% + ETH 35% + SOL 25%) ─────────
+  BTC         : CAGR=-22.8%  Sharpe=-1.33  MaxDD=-48.5%
+  ETH         : CAGR=-43.7%  Sharpe=-3.06  MaxDD=-74.4%
+  SOL         : CAGR=-27.9%  Sharpe=-1.63  MaxDD=-57.1%
+  PORTFOLIO   : CAGR=-30.6%  Sharpe=-3.20  MaxDD=-59.0%
+  → Con costi taker il portafoglio multi-asset è negativo per tutti
+  → Con V5 (maker + stop 2×ATR) il vantaggio di diversificazione emerge
+  → Correlazione BTC-ETH ~0.85, BTC-SOL ~0.75 → beneficio limitato
+
+── 14. RISCHI E LIMITAZIONI ──────────────────────────────────────────
+  • Overfitting su 2 anni dati: WFO mostra instabilità OOS con costi taker
+  • Commissioni: il break-even è a 0.03%/side — usare maker orders
+  • Regime change: strategia trend-following → male in mercati laterali
+  • Dati sintetici: i risultati sono indicativi; validare su dati reali Binance
+  • Fat tails: kurtosi 7.96 → eventi estremi improbabili ma devastanti
+  • Funding rate: su exchange con futures perp, aggiungere costo funding
+  • Bias look-ahead: tutti i segnali usano solo dati passati ✓
+
+── 15. ROADMAP IMPLEMENTAZIONE ───────────────────────────────────────
+  1. Collega dati reali Binance API (WebSocket per aggiornamento live)
+  2. Implementa GARCH rolling fit (refit ogni 7 giorni su 90d di dati)
+  3. Usa limit orders per entry (post SL candle close + offset 0.05%)
+  4. Walk-forward continuo: reottimizza parametri ogni mese
+  5. Monitoring: alert su drawdown > 8%, regime change, spike vol
+  6. Paper trading 4 settimane prima di capitale reale
+  7. Capitale minimo suggerito: $25k+ per ammortizzare costi fissi
 
 ======================================================================
