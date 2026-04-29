@@ -1,0 +1,102 @@
+======================================================================
+  BTC/USD — REPORT ANALISI E STRATEGIA DI TRADING INTRADAY
+  Generato il: 2026-04-29 12:04
+======================================================================
+
+── 1. CARATTERISTICHE SERIE STORICA ─────────────────────────────────
+  Periodo dati giornalieri: 2015-01-02 → 2025-04-30
+  Prezzo minimo: $258
+  Prezzo massimo: $109,221
+  Rendimento totale (buy & hold): 29977%
+
+── 2. DISTRIBUZIONE DEI RENDIMENTI ──────────────────────────────────
+  Media giornaliera:   0.1506%  (38.0% ann.)
+  Volatilità daily:    5.0761%  (80.6% ann.)
+  Skewness:            0.2761  (coda destra/rally)
+  Kurtosi (excess):    7.96  (fat tails: distribuzione NON normale)
+  Worst day:           -35.8%
+  Best day:            42.2%
+
+── 3. STAZIONARIETÀ ──────────────────────────────────────────────────
+  Close price:         NON stazionaria (ADF p > 0.05)
+  Log-rendimenti:      STAZIONARIA (ADF p < 0.01) ✓
+  → La serie prezzi è I(1): si modella in rendimenti, non prezzi
+
+── 4. VOLATILITY CLUSTERING ──────────────────────────────────────────
+  ACF(|rendimenti|):   Autocorrelazione significativa per >30 lag
+  ARCH effects:        Confermati (p < 0.001)
+  → Periodi di alta vol seguono periodi di alta vol (GARCH-like)
+  → Usare filtri ATR per attivare/disattivare la strategia
+
+── 5. PATTERN TEMPORALI IDENTIFICATI ────────────────────────────────
+  Day-of-week:         Lunedì e Venerdì tendenzialmente negativi
+                       Mercoledì e Giovedì tendenzialmente positivi
+  Stagionalità mensile: Gennaio e Novembre storicamente forti
+                       Settembre storicamente debole
+  Ora del giorno:      Apertura sessione europea (08-10 UTC): breakout
+                       Apertura sessione USA (14-16 UTC): momentum forte
+                       Notte Asia (01-05 UTC): bassa liquidità, evitare
+
+── 6. HURST EXPONENT ─────────────────────────────────────────────────
+  H ≈ 0.55 → lieve persistenza (trending), non puro random walk
+  → Breakout confermati hanno maggiore probabilità di continuare
+  → Mean-reversion intraday su timeframe < 4h
+
+── 7. STRATEGIA DI TRADING INTRADAY ─────────────────────────────────
+  Nome: Multi-Signal Intraday Breakout + ATR Filter
+  Timeframe: 1 ora
+  Universo: BTC/USD
+
+  SEGNALE LONG:
+    • Close supera il massimo delle ultime 6 ore
+    • EMA50 > EMA200 (trend rialzista)
+    • RSI14 < 70 (non ipercomprato)
+    • Ora in sessione attiva (es. 08-20 UTC)
+    • ATR% > soglia minima (mercato mosso)
+
+  SEGNALE SHORT:
+    • Close rompe il minimo delle ultime 6 ore
+    • EMA50 < EMA200 (trend ribassista)
+    • RSI14 > 30 (non ipervenduto)
+    • Stesse condizioni tempo/volatilità
+
+  RISK MANAGEMENT:
+    • Stop Loss: 1.5 × ATR14 dal prezzo di entrata
+    • Take Profit: 2.5 × ATR14 (R:R = 1:1.67)
+    • Position sizing: 1% capitale per trade / SL-distance
+    • Nessuna martingala — size fissa in % capitale
+
+── 8. OTTIMIZZAZIONE PARAMETRI ──────────────────────────────────────
+  Migliori parametri (max Sharpe):
+    SL = 1.0× ATR
+    TP = 2.5× ATR
+    Ore attive = 6:00 - 22:00 UTC
+    Sharpe Ratio = 1.56
+    CAGR = 38.5%
+    Max DD = -17.9%
+    Win Rate = 34.1%
+
+── 9. STATISTICHE TRADE (BACKTEST 2023-2025) ────────────────────────
+  Totale trade: 419
+  Win: 143 (34.1%) | Loss: 276 (65.9%)
+  PnL medio win:  $370.59
+  PnL medio loss: $-150.99
+  PnL totale:     $11321.93
+  Durata media trade: 5.2h
+
+── 10. RISCHI E LIMITAZIONI ──────────────────────────────────────────
+  • Overfitting: parametri ottimizzati su 2 anni — out-of-sample test necessario
+  • Slippage/commissioni: non inclusi nel backtest (stimare 0.05-0.1% per trade)
+  • Regime change: la strategia funziona in trend; in laterale genera whipsaws
+  • Liquidità: BTC/USD ha spread quasi nullo sugli exchange major (ok)
+  • Fat tails: eventi estremi (FTX, LUNA) non prevedibili dal modello
+  • Bias di look-ahead: verificare che i segnali usino solo dati passati ✓
+
+── 11. SVILUPPI FUTURI ───────────────────────────────────────────────
+  • Aggiungere filtro GARCH per volatilità regime
+  • Walk-forward optimization per evitare overfitting
+  • Considerare on-chain metrics (funding rate, open interest)
+  • Ensemble di segnali (aggiunte: MACD, Bollinger Bands)
+  • Portfolio approach: diversificare su ETH, SOL per correlazioni
+
+======================================================================
