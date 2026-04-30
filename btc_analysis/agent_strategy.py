@@ -7,8 +7,21 @@ optimal trading strategy configuration.
 Runs after: 01_data_download → 02_timeseries_analysis → 03_pattern_analysis
 Outputs:    output/agent_strategy_config.json
 
-If ANTHROPIC_API_KEY is not set, falls back to V5 default parameters
-(SL=2×ATR, TP=5×ATR, maker fee, GARCH filter, active hours 06-22 UTC).
+Provider priority (first key found wins):
+  1. ANTHROPIC_API_KEY  → Anthropic SDK, claude-opus-4-7,
+                          adaptive thinking + prompt caching
+  2. OPENROUTER_API_KEY → OpenRouter HTTP API (OpenAI-compatible),
+                          model controlled by OPENROUTER_MODEL env var
+                          (default: anthropic/claude-opus-4)
+  3. Neither            → V5 default parameters (no API call)
+
+Environment variables:
+  ANTHROPIC_API_KEY   Anthropic direct access
+  OPENROUTER_API_KEY  OpenRouter access
+  OPENROUTER_MODEL    Model string for OpenRouter (optional)
+                      e.g. "anthropic/claude-opus-4"
+                           "openai/gpt-4o"
+                           "google/gemini-pro-1.5"
 """
 
 import os
@@ -19,6 +32,9 @@ import warnings
 warnings.filterwarnings("ignore")
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
+
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_DEFAULT_MODEL = "anthropic/claude-opus-4"
 
 V5_DEFAULT = {
     "sl_mult": 2.0,
@@ -68,6 +84,8 @@ Respond with ONLY a JSON object in this exact format (no prose, no markdown):
 }"""
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
 def _read_safe(path: str, max_chars: int = 6000) -> str:
     if not os.path.exists(path):
         return f"[not found: {os.path.basename(path)}]"
@@ -81,11 +99,11 @@ def _read_safe(path: str, max_chars: int = 6000) -> str:
 
 def _build_context() -> str:
     files = [
-        ("Statistical Report",         "REPORT.txt"),
-        ("Enhanced Strategy Comparison","enhanced_strategy_comparison.csv"),
-        ("Walk-Forward Results",        "walk_forward_results.csv"),
-        ("Monte Carlo Bootstrap",       "mc_bootstrap_results.csv"),
-        ("Grid-Search Optimization",    "optimization_results.csv"),
+        ("Statistical Report",          "REPORT.txt"),
+        ("Enhanced Strategy Comparison", "enhanced_strategy_comparison.csv"),
+        ("Walk-Forward Results",         "walk_forward_results.csv"),
+        ("Monte Carlo Bootstrap",        "mc_bootstrap_results.csv"),
+        ("Grid-Search Optimization",     "optimization_results.csv"),
     ]
     parts = []
     for title, fname in files:
@@ -106,12 +124,10 @@ def _extract_json(text: str) -> dict:
     raise ValueError("No valid JSON found in response")
 
 
-def _validate(cfg: dict) -> dict:
-    d = V5_DEFAULT.copy()
-    sl = float(cfg.get("sl_mult", d["sl_mult"]))
-    sl = max(0.5, min(5.0, sl))
-    tp = float(cfg.get("tp_mult", d["tp_mult"]))
-    tp = max(sl + 0.5, min(10.0, tp))
+def _validate(cfg: dict, source: str = "agent") -> dict:
+    d = V5_DEFAULT
+    sl = max(0.5, min(5.0, float(cfg.get("sl_mult", d["sl_mult"]))))
+    tp = max(sl + 0.5, min(10.0, float(cfg.get("tp_mult", d["tp_mult"]))))
 
     ah = cfg.get("active_hours", d["active_hours"])
     if isinstance(ah, (list, tuple)) and len(ah) == 2:
@@ -121,36 +137,28 @@ def _validate(cfg: dict) -> dict:
         h0, h1 = d["active_hours"]
 
     return {
-        "sl_mult":        sl,
-        "tp_mult":        tp,
-        "active_hours":   [h0, h1],
-        "rsi_ob":         max(60.0, min(90.0, float(cfg.get("rsi_ob",  d["rsi_ob"])))),
-        "rsi_os":         max(10.0, min(40.0, float(cfg.get("rsi_os",  d["rsi_os"])))),
-        "min_atr_pct":    max(0.001, min(0.02, float(cfg.get("min_atr_pct", d["min_atr_pct"])))),
+        "sl_mult":         sl,
+        "tp_mult":         tp,
+        "active_hours":    [h0, h1],
+        "rsi_ob":          max(60.0, min(90.0, float(cfg.get("rsi_ob",  d["rsi_ob"])))),
+        "rsi_os":          max(10.0, min(40.0, float(cfg.get("rsi_os",  d["rsi_os"])))),
+        "min_atr_pct":     max(0.001, min(0.02, float(cfg.get("min_atr_pct", d["min_atr_pct"])))),
         "use_garch_filter": bool(cfg.get("use_garch_filter", d["use_garch_filter"])),
-        "commission":     max(0.0, min(0.005, float(cfg.get("commission", d["commission"])))),
-        "slippage":       max(0.0, min(0.005, float(cfg.get("slippage",   d["slippage"])))),
-        "risk_per_trade": max(0.005, min(0.05, float(cfg.get("risk_per_trade", d["risk_per_trade"])))),
-        "rationale":      str(cfg.get("rationale", d["rationale"])),
-        "source":         "agent",
+        "commission":      max(0.0, min(0.005, float(cfg.get("commission", d["commission"])))),
+        "slippage":        max(0.0, min(0.005, float(cfg.get("slippage",   d["slippage"])))),
+        "risk_per_trade":  max(0.005, min(0.05, float(cfg.get("risk_per_trade", d["risk_per_trade"])))),
+        "rationale":       str(cfg.get("rationale", d["rationale"])),
+        "source":          source,
     }
 
 
-def run_agent() -> dict:
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        print("  [agent_strategy] ANTHROPIC_API_KEY not set — using V5 defaults.")
-        return {**V5_DEFAULT, "source": "default"}
+# ── Backend: Anthropic SDK ────────────────────────────────────────────────────
 
+def _call_anthropic(api_key: str, context: str) -> dict:
     try:
         import anthropic
     except ImportError:
-        print("  [agent_strategy] 'anthropic' not installed — using V5 defaults.")
-        print("  Install with: pip install anthropic")
-        return {**V5_DEFAULT, "source": "default"}
-
-    print("  [agent_strategy] Building analysis context...")
-    context = _build_context()
+        raise RuntimeError("anthropic package not installed — run: pip install anthropic")
 
     user_msg = (
         "Analyse the BTC/USD statistical results and return the optimal strategy "
@@ -160,59 +168,137 @@ def run_agent() -> dict:
     )
 
     client = anthropic.Anthropic(api_key=api_key)
-    print("  [agent_strategy] Calling claude-opus-4-7 with adaptive thinking...")
+    print("  [agent_strategy] Calling Anthropic claude-opus-4-7 (adaptive thinking + cache)...")
 
-    try:
-        response = client.messages.create(
-            model="claude-opus-4-7",
-            max_tokens=2048,
-            thinking={"type": "adaptive"},
-            system=[
-                {
-                    "type": "text",
-                    "text": SYSTEM_PROMPT,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": user_msg,
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ],
-                }
-            ],
-        )
+    response = client.messages.create(
+        model="claude-opus-4-7",
+        max_tokens=2048,
+        thinking={"type": "adaptive"},
+        system=[
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": user_msg,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            }
+        ],
+    )
 
-        text_out = next(
-            (b.text for b in response.content if b.type == "text"), ""
-        )
-        if not text_out:
-            raise ValueError("Empty text response from Claude")
+    text_out = next((b.text for b in response.content if b.type == "text"), "")
+    if not text_out:
+        raise ValueError("Empty text response from Anthropic API")
 
-        usage = response.usage
+    usage = response.usage
+    cache_info = (
+        f" cache_read={usage.cache_read_input_tokens}"
+        if getattr(usage, "cache_read_input_tokens", 0)
+        else ""
+    )
+    print(f"  [agent_strategy] Tokens in={usage.input_tokens} out={usage.output_tokens}{cache_info}")
+
+    return _validate(_extract_json(text_out), source="anthropic")
+
+
+# ── Backend: OpenRouter HTTP ──────────────────────────────────────────────────
+
+def _call_openrouter(api_key: str, context: str) -> dict:
+    import requests as _req
+
+    model = os.environ.get("OPENROUTER_MODEL", OPENROUTER_DEFAULT_MODEL)
+    print(f"  [agent_strategy] Calling OpenRouter model={model}...")
+
+    user_msg = (
+        "Analyse the BTC/USD statistical results and return the optimal strategy "
+        "configuration JSON.\n\n"
+        + context
+        + "\n\nReturn ONLY the JSON object, no other text."
+    )
+
+    payload = {
+        "model": model,
+        "max_tokens": 2048,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user",   "content": user_msg},
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/gabrieledemarco/crypto1",
+        "X-Title": "BTC Strategy Agent",
+    }
+
+    resp = _req.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=120)
+    resp.raise_for_status()
+    data = resp.json()
+
+    text_out = data["choices"][0]["message"]["content"]
+    if not text_out:
+        raise ValueError("Empty response from OpenRouter")
+
+    usage = data.get("usage", {})
+    print(
+        f"  [agent_strategy] Tokens in={usage.get('prompt_tokens', '?')} "
+        f"out={usage.get('completion_tokens', '?')}"
+    )
+
+    return _validate(_extract_json(text_out), source=f"openrouter/{model}")
+
+
+# ── Public entry point ────────────────────────────────────────────────────────
+
+def run_agent() -> dict:
+    """
+    Determine available provider and call the LLM.
+    Priority: Anthropic → OpenRouter → V5 defaults.
+    """
+    anthropic_key   = os.environ.get("ANTHROPIC_API_KEY",   "").strip()
+    openrouter_key  = os.environ.get("OPENROUTER_API_KEY",  "").strip()
+
+    if not anthropic_key and not openrouter_key:
         print(
-            f"  [agent_strategy] Tokens in={usage.input_tokens} "
-            f"out={usage.output_tokens}"
-            + (
-                f" cache_read={usage.cache_read_input_tokens}"
-                if getattr(usage, "cache_read_input_tokens", 0)
-                else ""
-            )
+            "  [agent_strategy] No API key found "
+            "(ANTHROPIC_API_KEY or OPENROUTER_API_KEY) — using V5 defaults."
         )
+        return {**V5_DEFAULT, "source": "default"}
 
-        raw = _extract_json(text_out)
-        return _validate(raw)
+    print("  [agent_strategy] Building analysis context...")
+    context = _build_context()
 
+    if anthropic_key:
+        try:
+            return _call_anthropic(anthropic_key, context)
+        except Exception as exc:
+            print(f"  [agent_strategy] Anthropic error: {exc}")
+            if openrouter_key:
+                print("  [agent_strategy] Retrying via OpenRouter...")
+            else:
+                print("  [agent_strategy] Falling back to V5 defaults.")
+                return {**V5_DEFAULT, "source": "default_fallback"}
+
+    # Reached here only if Anthropic failed and openrouter_key is set,
+    # OR if only openrouter_key was set from the start.
+    try:
+        return _call_openrouter(openrouter_key, context)
     except Exception as exc:
-        print(f"  [agent_strategy] API error: {exc}")
+        print(f"  [agent_strategy] OpenRouter error: {exc}")
         print("  [agent_strategy] Falling back to V5 defaults.")
         return {**V5_DEFAULT, "source": "default_fallback"}
 
+
+# ── CLI entry point ───────────────────────────────────────────────────────────
 
 def main():
     print("=" * 60)
@@ -226,11 +312,11 @@ def main():
     with open(out_path, "w") as f:
         json.dump(cfg, f, indent=2)
 
+    ah = cfg["active_hours"]
     print(f"\n  Config salvata: {out_path}")
     print(f"\n  Parametri strategia suggeriti:")
     print(f"    SL multiplier   : {cfg['sl_mult']:.2f}×ATR")
     print(f"    TP multiplier   : {cfg['tp_mult']:.2f}×ATR")
-    ah = cfg["active_hours"]
     print(f"    Ore attive (UTC): {ah[0]:02d}:00 – {ah[1]:02d}:00")
     print(f"    RSI overbought  : {cfg['rsi_ob']:.0f}")
     print(f"    RSI oversold    : {cfg['rsi_os']:.0f}")

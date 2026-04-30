@@ -89,10 +89,11 @@ with st.sidebar:
     st.divider()
     st.subheader("ℹ️ Info")
     st.caption(
-        "**Strategia V5**\n"
-        "ATR breakout · GARCH filter\n"
-        "SL=2×ATR · TP=5×ATR\n"
-        "Maker fee 0.01%\n\n"
+        "**Strategia** (Agent config)\n"
+        "ATR breakout · GARCH filter\n\n"
+        "**Agent AI**\n"
+        "ANTHROPIC_API_KEY (Anthropic)\n"
+        "OPENROUTER_API_KEY (OpenRouter)\n\n"
         "**Dati**: Yahoo Finance (yfinance)\n"
         "con fallback sintetico GARCH"
     )
@@ -713,9 +714,13 @@ with tab6:
 
     st.subheader("🤖 Agent Strategy Configuration")
     st.markdown(
-        "Il **Claude AI Agent** legge i risultati dell'analisi statistica "
+        "L'**AI Agent** legge i risultati dell'analisi statistica "
         "(stazionarietà, Hurst, kurtosis, regimi GARCH, walk-forward OOS, "
-        "Monte Carlo) e propone i parametri ottimali per la strategia ATR breakout."
+        "Monte Carlo) e propone i parametri ottimali per la strategia ATR breakout.\n\n"
+        "**Provider supportati** (priorità nell'ordine):\n"
+        "1. `ANTHROPIC_API_KEY` → Anthropic direct (claude-opus-4-7, adaptive thinking)\n"
+        "2. `OPENROUTER_API_KEY` → OpenRouter gateway (modello via `OPENROUTER_MODEL`)\n"
+        "3. Nessuna chiave → parametri V5 di default"
     )
 
     cfg_path = os.path.join(OUTPUT, "agent_strategy_config.json")
@@ -723,7 +728,7 @@ with tab6:
         st.info(
             "Il file `agent_strategy_config.json` non è ancora stato generato. "
             "Riesegui la pipeline (`run_all.py`) per attivare l'agent, oppure "
-            "imposta `ANTHROPIC_API_KEY` per usare il modello Claude."
+            "imposta `ANTHROPIC_API_KEY` o `OPENROUTER_API_KEY`."
         )
     else:
         try:
@@ -731,12 +736,14 @@ with tab6:
                 _cfg = _json.load(_f)
 
             _src = _cfg.get("source", "unknown")
-            if _src == "agent":
-                st.success("Configurazione generata dal **Claude AI Agent** (claude-opus-4-7)")
+            if _src.startswith("anthropic"):
+                st.success(f"Configurazione generata da **Anthropic API** (source: `{_src}`)")
+            elif _src.startswith("openrouter"):
+                st.success(f"Configurazione generata da **OpenRouter** (source: `{_src}`)")
             else:
                 st.warning(
                     f"Configurazione di **default V5** (source: `{_src}`). "
-                    "Imposta `ANTHROPIC_API_KEY` per usare il modello Claude."
+                    "Imposta `ANTHROPIC_API_KEY` o `OPENROUTER_API_KEY` per usare un modello AI."
                 )
 
             # ── KPI cards ────────────────────────────────────────────────────
