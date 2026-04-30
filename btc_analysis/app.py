@@ -158,12 +158,34 @@ with st.sidebar:
     _downloaded = [t for t in _sel_saved
                    if os.path.exists(os.path.join(OUTPUT, f"{ticker_to_fname(t)}_hourly.csv"))]
 
+    # Load current strategy asset from config (needed to pre-select the selectbox)
+    _cfg_path  = os.path.join(OUTPUT, "agent_strategy_config.json")
+    _cur_src   = "—"
+    _cur_asset = "BTC-USD"
+    if os.path.exists(_cfg_path):
+        try:
+            import json as _j0
+            _ac0 = _j0.load(open(_cfg_path))
+            _cur_src   = _ac0.get("source", "?")
+            _cur_asset = _ac0.get("asset", "BTC-USD")
+        except Exception:
+            pass
+
+    # Full selectable list: catalog + user's saved universe (union, no duplicates)
+    _all_tickers = list(dict.fromkeys(
+        ["BTC-USD"] + list(_CATALOG_FLAT.keys()) + _sel_saved
+    ))
+    _cur_asset_sel = _cur_asset if _cur_asset in _all_tickers else "BTC-USD"
     asset = st.selectbox(
-        "Asset (Tab Prezzi)",
-        options=_downloaded if _downloaded else ["BTC-USD"],
+        "Asset",
+        options=_all_tickers,
+        index=_all_tickers.index(_cur_asset_sel),
         format_func=lambda t: f"{_CATALOG_FLAT.get(t, t)} ({t})",
-        help="Asset visualizzato nel tab Prezzi & Rendimenti",
+        help="Tutti gli asset del catalogo + quelli nel tuo universe. Se non scaricato, download automatico al primo utilizzo.",
     )
+    _asset_csv = os.path.join(OUTPUT, f"{ticker_to_fname(asset)}_hourly.csv")
+    if not os.path.exists(_asset_csv):
+        st.caption(f"⬇️ `{asset}` non ancora scaricato — download automatico al primo utilizzo.")
 
     with st.expander("➕ Aggiungi asset al universe"):
         _new_sel: list = []
@@ -258,79 +280,53 @@ with st.sidebar:
 
     # ── Agent AI configurator ─────────────────────────────────────────────────
     st.subheader("🤖 Agent AI")
-
-    _cfg_path = os.path.join(OUTPUT, "agent_strategy_config.json")
-    _cur_src  = "—"
-    _cur_asset = "BTC-USD"
-    if os.path.exists(_cfg_path):
-        try:
-            import json as _j
-            _ac = _j.load(open(_cfg_path))
-            _cur_src   = _ac.get("source", "?")
-            _cur_asset = _ac.get("asset", "BTC-USD")
-        except Exception:
-            pass
     st.caption(f"Config attuale: `{_cur_src}` | asset: `{_cur_asset}`")
-
-    _strat_opts = list(dict.fromkeys(["BTC-USD"] + list(_CATALOG_FLAT.keys())))
-    _strat_idx  = _strat_opts.index(_cur_asset) if _cur_asset in _strat_opts else 0
-    _strategy_asset = st.selectbox(
-        "Asset per la strategia",
-        options=_strat_opts,
-        index=_strat_idx,
-        format_func=lambda t: f"{_CATALOG_FLAT.get(t, t)} ({t})",
-        help="L'agent progetterà la strategia su questo asset. Se non ancora scaricato, verrà scaricato automaticamente.",
-    )
-    _strat_fname = ticker_to_fname(_strategy_asset)
-    _strat_csv   = os.path.join(OUTPUT, f"{_strat_fname}_hourly.csv")
-    if not os.path.exists(_strat_csv):
-        st.caption(f"⬇️ `{_strategy_asset}` non ancora scaricato — verrà scaricato automaticamente prima di eseguire l'agent.")
 
     if st.button("▶ Esegui Agent", use_container_width=True):
         if not _ant_key and not _or_key:
             st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
         else:
             # Download asset data if missing
-            if not os.path.exists(_strat_csv):
-                with st.spinner(f"Download dati {_strategy_asset}…"):
+            if not os.path.exists(_asset_csv):
+                with st.spinner(f"Download dati {asset}…"):
                     try:
                         import importlib.util as _ilu2
                         _spec2 = _ilu2.spec_from_file_location(
                             "dl01b", os.path.join(BASE, "01_data_download.py"))
                         _dlm2 = _ilu2.module_from_spec(_spec2)
                         _spec2.loader.exec_module(_dlm2)
-                        _r2 = _dlm2.download_all_assets([_strategy_asset], skip_existing=False)
-                        if not _r2.get(_strategy_asset):
-                            st.error(f"Impossibile scaricare i dati per {_strategy_asset}.")
+                        _r2 = _dlm2.download_all_assets([asset], skip_existing=False)
+                        if not _r2.get(asset):
+                            st.error(f"Impossibile scaricare i dati per {asset}.")
                             st.stop()
                         st.cache_data.clear()
                     except Exception as _de2:
-                        st.error(f"Errore download {_strategy_asset}: {_de2}")
+                        st.error(f"Errore download {asset}: {_de2}")
                         st.stop()
             import sys as _sys
             _sys.path.insert(0, BASE)
             import importlib, agent_strategy as _ag
             importlib.reload(_ag)
-            with st.spinner(f"L'agent sta analizzando {_strategy_asset}…"):
+            with st.spinner(f"L'agent sta analizzando {asset}…"):
                 try:
                     _cfg_r, _code_r, _report_r = _ag.run_agent(
                         anthropic_key=_ant_key,
                         openrouter_key=_or_key,
                         openrouter_model=_or_model,
-                        asset=_strategy_asset,
+                        asset=asset,
                     )
                     _ag.save_outputs(_cfg_r, _code_r, _report_r)
                 except Exception as _ae:
                     st.error(f"Errore agent: {_ae}")
                     st.stop()
-            with st.spinner(f"Backtest {_strategy_asset}…"):
+            with st.spinner(f"Backtest {asset}…"):
                 try:
                     _run_script("06_enhanced_strategy.py",
-                                extra_env={"STRATEGY_ASSET": _strategy_asset})
+                                extra_env={"STRATEGY_ASSET": asset})
                     st.cache_data.clear()
                     st.success(
                         f"✅ Strategia `{_cfg_r.get('strategy_type','')}` su "
-                        f"`{_strategy_asset}` pronta. Vedi Tab **🤖 Agent Strategy**."
+                        f"`{asset}` pronta. Vedi Tab **🤖 Agent Strategy**."
                     )
                 except subprocess.CalledProcessError as _be:
                     st.warning(f"Backtest fallito: {_be.stderr.decode()[:300]}")
@@ -463,6 +459,13 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 
 with tab1:
     from scipy import stats as scipy_stats
+
+    if not os.path.exists(_asset_csv):
+        st.info(
+            f"**{_CATALOG_FLAT.get(asset, asset)} ({asset})** non è ancora stato scaricato. "
+            "Clicca **▶ Esegui Agent** nel sidebar (scarica e analizza automaticamente) "
+            "oppure usa **⬇️ Scarica** nella sezione 📊 Asset Universe."
+        )
 
     a_color = ASSET_COLORS.get(asset, C_LINE)
     daily   = load_ohlcv_daily(asset)
