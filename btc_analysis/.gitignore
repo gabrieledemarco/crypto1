@@ -1,0 +1,10 @@
+output/btc_daily.csv
+output/btc_hourly.csv
+output/eth_hourly.csv
+output/sol_hourly.csv
+output/trades.csv
+output/paper_trades.csv
+output/paper_equity.csv
+output/paper_trading.log
+__pycache__/
+*.pyc
