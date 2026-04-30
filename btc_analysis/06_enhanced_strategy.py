@@ -110,17 +110,21 @@ def plot_comparison(results: dict, df_ind: pd.DataFrame):
     # ── 1. Equity curves confronto ──────────────────────────────────────────
     ax1 = fig.add_subplot(gs[0, :])
     colors = {"V1 Base": "#3498DB", "V2 +Costi": "#E74C3C",
-               "V3 +GARCH": "#2ECC71", "V4 +GARCH+Costi": "#F39C12"}
+               "V3 +GARCH": "#2ECC71", "V4 +GARCH+Costi": "#F39C12",
+               "V_Agent": "#9B59B6"}
     styles = {"V1 Base": "--", "V2 +Costi": "-.",
-               "V3 +GARCH": ":", "V4 +GARCH+Costi": "-"}
+               "V3 +GARCH": ":", "V4 +GARCH+Costi": "-",
+               "V_Agent": "-"}
     for name, data in results.items():
         eq = data["result"]["equity"]
         m = data["metrics"]
         label = f"{name} (CAGR={m.get('cagr_pct', 0):.1f}%, Sharpe={m.get('sharpe_ratio', 0):.2f})"
-        ax1.plot(eq.index, eq.values, color=colors[name],
-                 linestyle=styles[name], linewidth=1.8, label=label)
+        c = colors.get(name, "#AAAAAA")
+        s = styles.get(name, "-")
+        ax1.plot(eq.index, eq.values, color=c,
+                 linestyle=s, linewidth=1.8, label=label)
     ax1.axhline(INITIAL_CAPITAL, color="gray", linewidth=0.8, linestyle="--")
-    ax1.set_title("Equity Curve — Confronto 4 Versioni Strategia", fontsize=14, fontweight="bold")
+    ax1.set_title("Equity Curve — Confronto Versioni Strategia", fontsize=14, fontweight="bold")
     ax1.set_ylabel("Capitale (USD)")
     ax1.legend(fontsize=9)
     ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"${x:,.0f}"))
@@ -186,7 +190,7 @@ def plot_comparison(results: dict, df_ind: pd.DataFrame):
             cum_costs = t["costs"].cumsum()
             cum_costs.index = range(len(cum_costs))
             ax5.plot(cum_costs.values, label=name,
-                     color=colors[name], linewidth=1.5)
+                     color=colors.get(name, "#AAAAAA"), linewidth=1.5)
     ax5.set_title("Costi Cumulati (Commissioni + Slippage)", fontsize=12, fontweight="bold")
     ax5.set_xlabel("Trade #")
     ax5.set_ylabel("Costi cumulati (USD)")
@@ -213,8 +217,8 @@ def plot_comparison(results: dict, df_ind: pd.DataFrame):
     for name, data in results.items():
         eq = data["result"]["equity"]
         dd = (eq - eq.cummax()) / eq.cummax() * 100
-        ax7.plot(dd.index, dd.values, color=colors[name],
-                 linestyle=styles[name], linewidth=1, label=name)
+        ax7.plot(dd.index, dd.values, color=colors.get(name, "#AAAAAA"),
+                 linestyle=styles.get(name, "-"), linewidth=1, label=name)
     ax7.set_title("Drawdown Confronto", fontsize=12, fontweight="bold")
     ax7.set_ylabel("Drawdown (%)")
     ax7.legend(fontsize=8)
