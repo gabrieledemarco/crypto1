@@ -1,6 +1,6 @@
 ======================================================================
   BTC/USD — REPORT ANALISI E STRATEGIA DI TRADING INTRADAY
-  Generato il: 2026-04-29 18:31
+  Generato il: 2026-04-30 07:36
 ======================================================================
 
 ── 1. CARATTERISTICHE SERIE STORICA ─────────────────────────────────
@@ -71,24 +71,24 @@
     SL = 1.0× ATR
     TP = 2.5× ATR
     Ore attive = 6:00 - 22:00 UTC
-    Sharpe Ratio = 1.56
-    CAGR = 38.5%
-    Max DD = -17.9%
-    Win Rate = 34.1%
+    Sharpe Ratio = 1.78
+    CAGR = 46.3%
+    Max DD = -12.6%
+    Win Rate = 34.9%
 
 ── 9. STATISTICHE TRADE (BACKTEST 2023-2025) ────────────────────────
-  Totale trade: 419
-  Win: 143 (34.1%) | Loss: 276 (65.9%)
-  PnL medio win:  $370.59
-  PnL medio loss: $-150.99
-  PnL totale:     $11321.93
-  Durata media trade: 5.2h
+  Totale trade: 427
+  Win: 149 (34.9%) | Loss: 278 (65.1%)
+  PnL medio win:  $372.76
+  PnL medio loss: $-148.58
+  PnL totale:     $14234.83
+  Durata media trade: 4.8h
 
 ── 10. ANALISI COMMISSIONI + GARCH (STRATEGIA AVANZATA) ─────────────
-  V1 Base               : CAGR=+30.5%  Sharpe=1.55  Costi=$0
-  V2 +Costi             : CAGR=-2.5%  Sharpe=-0.05  Costi=$6478
-  V3 +GARCH             : CAGR=+30.5%  Sharpe=1.55  Costi=$0
-  V4 +GARCH+Costi       : CAGR=-2.5%  Sharpe=-0.05  Costi=$6478
+  V1 Base               : CAGR=+27.4%  Sharpe=1.41  Costi=$0
+  V2 +Costi             : CAGR=-6.1%  Sharpe=-0.25  Costi=$6357
+  V3 +GARCH             : CAGR=+27.4%  Sharpe=1.41  Costi=$0
+  V4 +GARCH+Costi       : CAGR=-6.1%  Sharpe=-0.25  Costi=$6357
 
   BREAK-EVEN: la strategia è profittevole netta fino a ~0.03% comm/side
   → Usare MAKER (limit) orders: comm≈0.01% → round-trip 0.04%
@@ -130,10 +130,10 @@
     Costi tot.:  $1,375  (vs $6,478 con taker fee tight stop)
 
 ── 13. PORTFOLIO MULTI-ASSET (BTC 40% + ETH 35% + SOL 25%) ─────────
-  BTC         : CAGR=-22.8%  Sharpe=-1.33  MaxDD=-48.5%
+  BTC         : CAGR=-26.5%  Sharpe=-1.58  MaxDD=-51.2%
   ETH         : CAGR=-43.7%  Sharpe=-3.06  MaxDD=-74.4%
   SOL         : CAGR=-27.9%  Sharpe=-1.63  MaxDD=-57.1%
-  PORTFOLIO   : CAGR=-30.6%  Sharpe=-3.20  MaxDD=-59.0%
+  PORTFOLIO   : CAGR=-32.3%  Sharpe=-3.44  MaxDD=-60.1%
   → Con costi taker il portafoglio multi-asset è negativo per tutti
   → Con V5 (maker + stop 2×ATR) il vantaggio di diversificazione emerge
   → Correlazione BTC-ETH ~0.85, BTC-SOL ~0.75 → beneficio limitato
