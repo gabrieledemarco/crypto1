@@ -131,16 +131,13 @@ with st.sidebar:
             importlib.reload(_ag)
             with st.spinner("L'agent sta analizzando i risultati…"):
                 try:
-                    _result = _ag.run_agent(
+                    _cfg_r, _code_r, _report_r = _ag.run_agent(
                         anthropic_key=_ant_key,
                         openrouter_key=_or_key,
                         openrouter_model=_or_model,
                     )
-                    os.makedirs(OUTPUT, exist_ok=True)
-                    import json as _jw
-                    with open(_cfg_path, "w") as _fw:
-                        _jw.dump(_result, _fw, indent=2)
-                    st.success(f"Config aggiornata — source: `{_result['source']}`")
+                    _ag.save_outputs(_cfg_r, _code_r, _report_r)
+                    st.success(f"Strategia aggiornata — source: `{_cfg_r['source']}` | tipo: `{_cfg_r.get('strategy_type','')}`")
                     st.rerun()
                 except Exception as _ae:
                     st.error(f"Errore agent: {_ae}")
