@@ -21,6 +21,24 @@ warnings.filterwarnings("ignore")
 BASE   = os.path.dirname(os.path.abspath(__file__))
 OUTPUT = os.path.join(BASE, "output")
 
+_KEYS_FILE = os.path.join(OUTPUT, "api_keys.json")
+
+def _load_api_keys() -> dict:
+    if os.path.exists(_KEYS_FILE):
+        try:
+            import json as _j
+            return _j.load(open(_KEYS_FILE, encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+def _save_api_keys(ant: str, ort: str, model: str) -> None:
+    import json as _j
+    os.makedirs(OUTPUT, exist_ok=True)
+    _j.dump({"ANTHROPIC_API_KEY": ant, "OPENROUTER_API_KEY": ort,
+             "OPENROUTER_MODEL": model},
+            open(_KEYS_FILE, "w", encoding="utf-8"), indent=2)
+
 st.set_page_config(
     page_title="BTC Strategy Dashboard",
     page_icon="₿",
@@ -101,27 +119,37 @@ with st.sidebar:
             pass
     st.caption(f"Config attuale: `{_cur_src}`")
 
+    _saved_keys = _load_api_keys()
     _ant_key = st.text_input(
         "ANTHROPIC_API_KEY",
-        value=os.environ.get("ANTHROPIC_API_KEY", ""),
+        value=_saved_keys.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", ""),
         type="password",
         placeholder="sk-ant-…",
         help="Chiave Anthropic diretta — modello claude-opus-4-7",
     )
     _or_key = st.text_input(
         "OPENROUTER_API_KEY",
-        value=os.environ.get("OPENROUTER_API_KEY", ""),
+        value=_saved_keys.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY", ""),
         type="password",
         placeholder="sk-or-…",
         help="Chiave OpenRouter — supporta Claude, GPT-4o, Gemini, …",
     )
     _or_model = st.text_input(
         "OPENROUTER_MODEL",
-        value=os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-4"),
+        value=_saved_keys.get("OPENROUTER_MODEL") or os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-4"),
         help="Modello OpenRouter da usare (ignorato se si usa Anthropic diretto)",
     )
 
-    if st.button("▶ Esegui Agent", use_container_width=True):
+    _col1, _col2 = st.columns(2)
+    with _col1:
+        if st.button("💾 Salva chiavi", use_container_width=True,
+                     help="Salva le chiavi localmente in output/api_keys.json"):
+            _save_api_keys(_ant_key, _or_key, _or_model)
+            st.success("Chiavi salvate.")
+    with _col2:
+        _run_agent = st.button("▶ Esegui Agent", use_container_width=True)
+
+    if _run_agent:
         if not _ant_key and not _or_key:
             st.warning("Inserisci almeno una chiave API per eseguire l'agent.")
         else:
@@ -144,10 +172,20 @@ with st.sidebar:
 
     st.divider()
     st.subheader("ℹ️ Info")
+    _info_name = "ATR Breakout + GARCH Filter (default)"
+    _info_type = "breakout"
+    if os.path.exists(_cfg_path):
+        try:
+            import json as _j2
+            _info_cfg  = _j2.load(open(_cfg_path))
+            _info_name = _info_cfg.get("strategy_name", _info_name)
+            _info_type = _info_cfg.get("strategy_type", _info_type)
+        except Exception:
+            pass
     st.caption(
-        "**Strategia**: ATR breakout + GARCH filter\n"
-        "**Dati**: Yahoo Finance (yfinance)\n"
-        "con fallback sintetico GARCH"
+        f"**Strategia**: {_info_name}\n"
+        f"**Tipo**: {_info_type}\n"
+        "**Dati**: Yahoo Finance (yfinance) con fallback sintetico"
     )
     if st.button("🔄 Rigenera dati", use_container_width=True):
         st.cache_data.clear()
