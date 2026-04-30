@@ -1,21 +1,11 @@
 """
 07_walk_forward.py
 ==================
-Walk-Forward Optimization (WFO) per validazione out-of-sample (OOS).
-
-Procedura:
-  - Finestra train: 4 mesi (rolling)
-  - Finestra test:  1 mese (OOS)
-  - Step:           1 mese
-  - Ottimizzazione IS: max Sharpe su griglia parametri (sl_mult × tp_mult)
-  - OOS: applica best params al periodo successivo
-  - Raccoglie equity OOS concatenata → confronta con equity IS
-
-Metriche di robustezza:
-  - Correlazione Sharpe IS vs OOS
-  - % fold con OOS Sharpe > 0
-  - Degradazione media IS→OOS
-  - Walk-Forward Efficiency (WFE)
+Walk-Forward Optimization (WFO) con:
+  - Finestre estese: IS=8 mesi, OOS=2 mesi, step=2 mesi
+  - Multi-window sensitivity: confronto 4 configurazioni IS/OOS
+  - Statistical significance: t-test su OOS returns, IC (Information Coefficient)
+  - Walk-Forward Efficiency (WFE = OOS_sharpe / IS_sharpe)
 """
 
 import sys, os
@@ -37,288 +27,337 @@ from strategy_core import (
 sns.set_theme(style="darkgrid")
 
 INITIAL_CAPITAL = 10_000
-RISK = 0.01
-COMMISSION = 0.0004
-SLIPPAGE = 0.0001
-TRAIN_MONTHS = 4
-TEST_MONTHS = 1
-HOURS_YEAR = 24 * 30   # ~720 ore per mese
+RISK            = 0.01
+COMMISSION      = 0.0004
+SLIPPAGE        = 0.0001
+FIXED_HOURS     = (6, 22)
+HOURS_MONTH     = 24 * 30   # ~720 ore/mese
 
-# Griglia ridotta per velocità (già sappiamo le ore ottimali)
-PARAM_GRID = [
-    (sl, tp)
-    for sl in [1.0, 1.5, 2.0]
-    for tp in [2.0, 2.5, 3.0]
+# Griglia parametri
+PARAM_GRID = [(sl, tp) for sl in [1.0, 1.5, 2.0] for tp in [2.0, 2.5, 3.0]]
+
+# Configurazioni IS/OOS da confrontare
+WINDOW_CONFIGS = [
+    {"label": "IS=4m OOS=1m",  "train": 4,  "test": 1,  "step": 1},
+    {"label": "IS=6m OOS=2m",  "train": 6,  "test": 2,  "step": 2},
+    {"label": "IS=8m OOS=2m",  "train": 8,  "test": 2,  "step": 2},
+    {"label": "IS=8m OOS=3m",  "train": 8,  "test": 3,  "step": 2},
 ]
-FIXED_HOURS = (6, 22)
 
 
-def _run_single(df_window: pd.DataFrame, sl: float, tp: float,
-                cap: float = INITIAL_CAPITAL) -> dict:
-    """Backtest su finestra con parametri dati."""
-    df_s = generate_signals_v2(df_window, atr_mult_sl=sl, atr_mult_tp=tp,
+# ── Core: singolo backtest ────────────────────────────────────────────────────
+
+def _run(df_win: pd.DataFrame, sl: float, tp: float, cap: float) -> dict:
+    df_s = generate_signals_v2(df_win, atr_mult_sl=sl, atr_mult_tp=tp,
                                 active_hours=FIXED_HOURS, use_garch_filter=True)
     res = backtest_v2(df_s, cap, RISK, COMMISSION, SLIPPAGE)
     return compute_metrics(res, cap), res
 
 
-def walk_forward(df_ind: pd.DataFrame) -> dict:
-    """
-    Esegue la walk-forward optimization e restituisce:
-      - fold_results: lista di dict per ogni fold
-      - oos_equity: equity OOS concatenata
-      - is_equity:  equity IS concatenata (con best params)
-    """
-    n_bars = len(df_ind)
-    train_bars = TRAIN_MONTHS * HOURS_YEAR
-    test_bars = TEST_MONTHS * HOURS_YEAR
+# ── WFO per una coppia di finestre ────────────────────────────────────────────
+
+def walk_forward(df_ind: pd.DataFrame, train_m: int, test_m: int, step_m: int,
+                 label: str) -> dict:
+    train_bars = train_m * HOURS_MONTH
+    test_bars  = test_m  * HOURS_MONTH
+    step_bars  = step_m  * HOURS_MONTH
+    n_bars     = len(df_ind)
 
     if n_bars < train_bars + test_bars:
-        print(f"  Dati insufficienti: {n_bars} barre, servono {train_bars+test_bars}")
+        print(f"  [{label}] Dati insufficienti ({n_bars} barre)")
         return {}
 
-    fold_results = []
-    oos_equity_parts = []
-    is_equity_parts = []
-    oos_capital = INITIAL_CAPITAL  # capitale OOS evolve da fold a fold
-
-    fold = 0
-    start_idx = 0
+    fold_results  = []
+    oos_parts     = []
+    oos_capital   = INITIAL_CAPITAL
+    start_idx     = 0
+    fold          = 0
 
     while start_idx + train_bars + test_bars <= n_bars:
         train_end = start_idx + train_bars
-        test_end = train_end + test_bars
+        test_end  = train_end + test_bars
 
         df_train = df_ind.iloc[start_idx:train_end]
-        df_test = df_ind.iloc[train_end:test_end]
+        df_test  = df_ind.iloc[train_end:test_end]
 
-        if len(df_train) < 200 or len(df_test) < 50:
+        if len(df_train) < 200 or len(df_test) < 24:
             break
 
-        # ── IS optimization ──────────────────────────────────────────────
-        best_sharpe_is = -np.inf
-        best_params = PARAM_GRID[0]
-        best_is_res = None
-
+        # ── IS optimisation ──────────────────────────────────────────────────
+        best_sh, best_p, best_res_is = -np.inf, PARAM_GRID[0], None
         for sl, tp in PARAM_GRID:
-            m, res = _run_single(df_train, sl, tp, INITIAL_CAPITAL)
-            if "error" not in m and m["sharpe_ratio"] > best_sharpe_is:
-                best_sharpe_is = m["sharpe_ratio"]
-                best_params = (sl, tp)
-                best_is_res = res
+            m, res = _run(df_train, sl, tp, INITIAL_CAPITAL)
+            if "error" not in m and m["sharpe_ratio"] > best_sh:
+                best_sh, best_p, best_res_is = m["sharpe_ratio"], (sl, tp), res
 
-        # ── OOS test ─────────────────────────────────────────────────────
-        m_oos, res_oos = _run_single(df_test, *best_params, cap=oos_capital)
-
-        # Aggiorna capitale OOS per il fold successivo
+        # ── OOS test ─────────────────────────────────────────────────────────
+        m_oos, res_oos = _run(df_test, *best_p, cap=oos_capital)
         oos_capital = res_oos["final_capital"]
 
-        period_label = (
-            f"{df_train.index[0].strftime('%Y-%m')} – "
-            f"{df_test.index[-1].strftime('%Y-%m')}"
-        )
         fold_results.append({
-            "fold": fold + 1,
-            "period": period_label,
+            "fold":       fold + 1,
+            "period":     f"{df_train.index[0].strftime('%Y-%m')} → "
+                          f"{df_test.index[-1].strftime('%Y-%m')}",
             "train_start": df_train.index[0],
-            "train_end": df_train.index[-1],
-            "test_start": df_test.index[0],
-            "test_end": df_test.index[-1],
-            "best_sl": best_params[0],
-            "best_tp": best_params[1],
-            "is_sharpe": best_sharpe_is,
-            "oos_sharpe": m_oos.get("sharpe_ratio", 0),
-            "is_cagr": compute_metrics(best_is_res, INITIAL_CAPITAL).get("cagr_pct", 0)
-                        if best_is_res else 0,
-            "oos_cagr": m_oos.get("cagr_pct", 0),
-            "oos_maxdd": m_oos.get("max_drawdown_pct", 0),
-            "oos_trades": m_oos.get("n_trades", 0),
+            "test_start":  df_test.index[0],
+            "test_end":    df_test.index[-1],
+            "best_sl":     best_p[0],
+            "best_tp":     best_p[1],
+            "is_sharpe":   best_sh,
+            "oos_sharpe":  m_oos.get("sharpe_ratio", 0),
+            "is_cagr":     compute_metrics(best_res_is, INITIAL_CAPITAL).get("cagr_pct", 0)
+                           if best_res_is else 0,
+            "oos_cagr":    m_oos.get("cagr_pct", 0),
+            "oos_maxdd":   m_oos.get("max_drawdown_pct", 0),
+            "oos_trades":  m_oos.get("n_trades", 0),
             "oos_winrate": m_oos.get("win_rate_pct", 0),
         })
-
-        if best_is_res:
-            is_equity_parts.append(best_is_res["equity"].iloc[:test_bars]
-                                    if len(best_is_res["equity"]) >= test_bars
-                                    else best_is_res["equity"])
-        oos_equity_parts.append(res_oos["equity"])
+        oos_parts.append(res_oos["equity"])
 
         fold += 1
-        start_idx += test_bars   # step di 1 mese
+        start_idx += step_bars
 
-        print(f"  Fold {fold:>2}: {period_label}  "
-              f"IS Sharpe={best_sharpe_is:>6.2f}  OOS Sharpe={m_oos.get('sharpe_ratio', 0):>6.2f}  "
-              f"params=SL{best_params[0]} TP{best_params[1]}")
+    if not fold_results:
+        return {}
 
-    # Concatena equity OOS
-    if oos_equity_parts:
-        oos_equity = pd.concat(oos_equity_parts)
+    folds_df   = pd.DataFrame(fold_results)
+    oos_equity = pd.concat(oos_parts) if oos_parts else pd.Series(dtype=float)
+
+    # ── Aggregate metrics ────────────────────────────────────────────────────
+    is_m  = folds_df["is_sharpe"].mean()
+    oos_m = folds_df["oos_sharpe"].mean()
+    wfe   = oos_m / is_m if is_m != 0 else 0
+    pct_pos = (folds_df["oos_sharpe"] > 0).mean() * 100
+
+    # t-test: OOS sharpe significativamente diverso da 0?
+    t_stat, p_val = stats.ttest_1samp(folds_df["oos_sharpe"], 0)
+
+    # IC: correlazione IS_sharpe → OOS_sharpe
+    if len(folds_df) > 2:
+        ic, ic_p = stats.pearsonr(folds_df["is_sharpe"], folds_df["oos_sharpe"])
     else:
-        oos_equity = pd.Series(dtype=float)
+        ic, ic_p = 0, 1
 
     return {
-        "fold_results": pd.DataFrame(fold_results),
-        "oos_equity": oos_equity,
-        "oos_final_capital": oos_capital,
+        "label":       label,
+        "train_m":     train_m,
+        "test_m":      test_m,
+        "n_folds":     len(folds_df),
+        "folds":       folds_df,
+        "oos_equity":  oos_equity,
+        "oos_final":   oos_capital,
+        "is_sharpe":   is_m,
+        "oos_sharpe":  oos_m,
+        "wfe":         wfe,
+        "pct_pos":     pct_pos,
+        "t_stat":      t_stat,
+        "p_val":       p_val,
+        "ic":          ic,
+        "ic_p":        ic_p,
     }
 
 
-def compute_wfo_metrics(wfo: dict) -> None:
-    folds = wfo["fold_results"]
-    oos_eq = wfo["oos_equity"]
+# ── Print singolo WFO ─────────────────────────────────────────────────────────
 
-    print(f"\n{'═'*65}")
-    print("  WALK-FORWARD OPTIMIZATION — RISULTATI")
-    print(f"{'═'*65}")
-    print(f"\n  Fold analizzati: {len(folds)}")
-    print(f"  Capitale OOS finale: ${wfo['oos_final_capital']:,.0f}  "
-          f"(da ${INITIAL_CAPITAL:,.0f})")
-
-    if not folds.empty:
-        pct_pos = (folds["oos_sharpe"] > 0).mean() * 100
-        pct_profit = (folds["oos_cagr"] > 0).mean() * 100
-        corr_is_oos, pval = stats.pearsonr(folds["is_sharpe"], folds["oos_sharpe"])
-        is_mean = folds["is_sharpe"].mean()
-        oos_mean = folds["oos_sharpe"].mean()
-        wfe = oos_mean / is_mean if is_mean != 0 else 0
-
-        print(f"\n  Sharpe medio IS:        {is_mean:.3f}")
-        print(f"  Sharpe medio OOS:       {oos_mean:.3f}")
-        print(f"  WFE (OOS/IS ratio):     {wfe:.3f}  "
-              f"({'buono ✓' if wfe > 0.5 else 'overfitting sospetto ⚠'})")
-        print(f"  Corr Sharpe IS↔OOS:    {corr_is_oos:.3f}  (p={pval:.3f})")
-        print(f"  Fold con OOS Sharpe>0:  {pct_pos:.0f}%")
-        print(f"  Fold con OOS CAGR>0:    {pct_profit:.0f}%")
-        print(f"  OOS MaxDD medio:        {folds['oos_maxdd'].mean():.1f}%")
-        print(f"\n  Parametri più frequenti (best IS):")
-        print(f"    SL: {folds['best_sl'].value_counts().to_dict()}")
-        print(f"    TP: {folds['best_tp'].value_counts().to_dict()}")
-
-        print(f"\n  {'Fold':>4} {'Periodo':<30} {'SL':>4} {'TP':>4} "
-              f"{'IS Sharpe':>10} {'OOS Sharpe':>10} {'OOS CAGR%':>10}")
-        print(f"  {'-'*78}")
-        for _, r in folds.iterrows():
-            flag = "✓" if r["oos_sharpe"] > 0 else "✗"
-            print(f"  {int(r['fold']):>4} {r['period']:<30} {r['best_sl']:>4.1f} "
-                  f"{r['best_tp']:>4.1f} {r['is_sharpe']:>10.2f} "
-                  f"{r['oos_sharpe']:>10.2f} {r['oos_cagr']:>10.1f}% {flag}")
+def print_wfo(w: dict):
+    folds = w["folds"]
+    print(f"\n{'═'*72}")
+    print(f"  WFO: {w['label']}  |  {w['n_folds']} fold")
+    print(f"{'═'*72}")
+    print(f"  IS Sharpe medio:      {w['is_sharpe']:+.3f}")
+    print(f"  OOS Sharpe medio:     {w['oos_sharpe']:+.3f}")
+    print(f"  WFE (OOS/IS):         {w['wfe']:+.3f}  "
+          f"{'✓ robusto' if w['wfe'] > 0.5 else '⚠ overfitting'}")
+    print(f"  Fold OOS Sharpe > 0:  {w['pct_pos']:.0f}%")
+    print(f"  t-test OOS≠0:         t={w['t_stat']:.2f}  p={w['p_val']:.3f}  "
+          f"{'★ significativo' if w['p_val'] < 0.05 else 'non sign.'}")
+    print(f"  IC IS↔OOS:            r={w['ic']:.3f}  p={w['ic_p']:.3f}")
+    print(f"  Capitale OOS finale:  ${w['oos_final']:,.0f}")
+    print(f"\n  {'Fold':>4}  {'Periodo':<26}  {'SL':>4} {'TP':>4}  "
+          f"{'IS Sh':>7} {'OOS Sh':>8} {'OOS CAGR':>9}")
+    print(f"  {'─'*68}")
+    for _, r in folds.iterrows():
+        ok = "✓" if r["oos_sharpe"] > 0 else "✗"
+        print(f"  {int(r['fold']):>4}  {r['period']:<26}  "
+              f"{r['best_sl']:>4.1f} {r['best_tp']:>4.1f}  "
+              f"{r['is_sharpe']:>7.2f} {r['oos_sharpe']:>8.2f} "
+              f"{r['oos_cagr']:>9.1f}%  {ok}")
 
 
-def plot_wfo(wfo: dict):
-    folds = wfo["fold_results"]
-    oos_eq = wfo["oos_equity"]
+# ── Plot confronto multi-window ───────────────────────────────────────────────
 
-    fig = plt.figure(figsize=(20, 26))
-    gs = gridspec.GridSpec(5, 2, figure=fig, hspace=0.5, wspace=0.35)
+def plot_multi_window(wfos: list):
+    fig = plt.figure(figsize=(22, 30))
+    gs  = gridspec.GridSpec(6, 2, figure=fig, hspace=0.55, wspace=0.35)
 
-    # ── 1. OOS Equity Curve ─────────────────────────────────────────────────
+    COLORS = ["#3498DB", "#2ECC71", "#E74C3C", "#F39C12"]
+
+    # ── 1. OOS equity curves tutte le config ────────────────────────────────
     ax1 = fig.add_subplot(gs[0, :])
-    if not oos_eq.empty:
-        ax1.plot(oos_eq.index, oos_eq.values, color="#2ECC71", linewidth=1.5,
-                 label="OOS Equity (concatenata)")
-        ax1.axhline(INITIAL_CAPITAL, color="gray", linewidth=0.8, linestyle="--")
-        # Vertical lines per fold boundaries
-        if not folds.empty:
-            for _, r in folds.iterrows():
-                ax1.axvline(r["test_start"], color="orange", linewidth=0.8, alpha=0.5)
-        ax1.fill_between(oos_eq.index, oos_eq.values, INITIAL_CAPITAL,
-                         where=(oos_eq.values >= INITIAL_CAPITAL),
-                         alpha=0.2, color="#2ECC71")
-        ax1.fill_between(oos_eq.index, oos_eq.values, INITIAL_CAPITAL,
-                         where=(oos_eq.values < INITIAL_CAPITAL),
-                         alpha=0.3, color="#E74C3C")
-    ax1.set_title("Walk-Forward OOS Equity Curve (capitale reale evoluto fold-per-fold)",
-                  fontsize=13, fontweight="bold")
+    for w, c in zip(wfos, COLORS):
+        eq = w["oos_equity"]
+        if eq.empty:
+            continue
+        lbl = (f"{w['label']}  "
+               f"(WFE={w['wfe']:+.2f}, OOS Sh={w['oos_sharpe']:+.2f})")
+        ax1.plot(eq.index, eq.values, color=c, linewidth=1.8, label=lbl)
+    ax1.axhline(INITIAL_CAPITAL, color="gray", linewidth=0.8, linestyle="--")
+    ax1.set_title("OOS Equity Curve — Confronto Finestre IS/OOS", fontsize=13, fontweight="bold")
     ax1.set_ylabel("Capitale (USD)")
+    ax1.legend(fontsize=9)
     ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"${x:,.0f}"))
-    ax1.legend()
 
-    # ── 2. OOS Drawdown ─────────────────────────────────────────────────────
-    ax2 = fig.add_subplot(gs[1, :])
-    if not oos_eq.empty:
-        dd = (oos_eq - oos_eq.cummax()) / oos_eq.cummax() * 100
-        ax2.fill_between(dd.index, dd.values, 0, color="#E74C3C", alpha=0.7)
-    ax2.set_title("OOS Drawdown", fontsize=12, fontweight="bold")
-    ax2.set_ylabel("Drawdown (%)")
+    # ── 2. WFE per configurazione ────────────────────────────────────────────
+    ax2 = fig.add_subplot(gs[1, 0])
+    labels = [w["label"] for w in wfos]
+    wfes   = [w["wfe"]    for w in wfos]
+    bar_c  = ["#2ECC71" if v > 0.5 else ("#F39C12" if v > 0 else "#E74C3C")
+               for v in wfes]
+    ax2.bar(range(len(wfos)), wfes, color=bar_c, edgecolor="white")
+    ax2.axhline(0.5,  color="green",  linewidth=1.2, linestyle="--", label="WFE=0.5 (target)")
+    ax2.axhline(0.0,  color="black",  linewidth=0.8)
+    ax2.set_xticks(range(len(wfos)))
+    ax2.set_xticklabels([l.replace(" ", "\n") for l in labels], fontsize=8)
+    ax2.set_title("Walk-Forward Efficiency per Config", fontsize=12, fontweight="bold")
+    ax2.set_ylabel("WFE")
+    ax2.legend(fontsize=8)
+    for i, v in enumerate(wfes):
+        ax2.annotate(f"{v:.2f}", (i, v), ha="center",
+                     va="bottom" if v >= 0 else "top", fontsize=9)
 
-    # ── 3. IS vs OOS Sharpe scatter ─────────────────────────────────────────
-    ax3 = fig.add_subplot(gs[2, 0])
-    if not folds.empty:
-        sc = ax3.scatter(folds["is_sharpe"], folds["oos_sharpe"],
-                         c=folds["fold"], cmap="viridis", s=80, zorder=5)
-        plt.colorbar(sc, ax=ax3, label="Fold #")
-        # Regression line
-        x = folds["is_sharpe"].values
-        y = folds["oos_sharpe"].values
-        z = np.polyfit(x, y, 1)
-        p = np.poly1d(z)
-        x_line = np.linspace(x.min(), x.max(), 50)
-        ax3.plot(x_line, p(x_line), "r--", linewidth=1.5)
-        ax3.axhline(0, color="black", linewidth=0.8)
-        ax3.axvline(0, color="black", linewidth=0.8)
-        corr, pv = stats.pearsonr(x, y)
-        ax3.set_title(f"IS vs OOS Sharpe (r={corr:.2f}, p={pv:.3f})",
-                      fontsize=12, fontweight="bold")
-        ax3.set_xlabel("IS Sharpe")
-        ax3.set_ylabel("OOS Sharpe")
+    # ── 3. OOS Sharpe medio per config ──────────────────────────────────────
+    ax3 = fig.add_subplot(gs[1, 1])
+    oos_sh = [w["oos_sharpe"] for w in wfos]
+    is_sh  = [w["is_sharpe"]  for w in wfos]
+    x = np.arange(len(wfos))
+    ax3.bar(x - 0.2, is_sh,  0.35, color="#3498DB", label="IS Sharpe",  alpha=0.85)
+    ax3.bar(x + 0.2, oos_sh, 0.35,
+            color=["#2ECC71" if v > 0 else "#E74C3C" for v in oos_sh],
+            label="OOS Sharpe", alpha=0.85)
+    ax3.axhline(0, color="black", linewidth=0.8)
+    ax3.set_xticks(x)
+    ax3.set_xticklabels([l.replace(" ", "\n") for l in labels], fontsize=8)
+    ax3.set_title("IS vs OOS Sharpe medio per Config", fontsize=12, fontweight="bold")
+    ax3.legend()
 
-    # ── 4. Sharpe IS vs OOS per fold (bar) ──────────────────────────────────
-    ax4 = fig.add_subplot(gs[2, 1])
-    if not folds.empty:
-        x = np.arange(len(folds))
-        w = 0.35
-        ax4.bar(x - w/2, folds["is_sharpe"].values, w, label="IS", color="#3498DB", alpha=0.8)
-        ax4.bar(x + w/2, folds["oos_sharpe"].values, w, label="OOS",
-                color=["#2ECC71" if s > 0 else "#E74C3C" for s in folds["oos_sharpe"].values],
-                alpha=0.8)
-        ax4.axhline(0, color="black", linewidth=0.8)
-        ax4.set_xticks(x)
-        ax4.set_xticklabels([f"F{int(f)}" for f in folds["fold"].values], fontsize=8)
-        ax4.set_title("Sharpe IS vs OOS per Fold", fontsize=12, fontweight="bold")
-        ax4.legend()
+    # ── 4. Heatmap IS_sharpe per fold — config principale (IS=8m OOS=2m) ───
+    best_wfo = max(wfos, key=lambda w: w["wfe"])
+    ax4 = fig.add_subplot(gs[2, :])
+    folds = best_wfo["folds"]
+    ax4b  = ax4.twinx()
+    x_f   = np.arange(len(folds))
+    w_bar = 0.35
+    ax4.bar(x_f - w_bar/2, folds["is_sharpe"].values,  w_bar,
+            color="#3498DB", alpha=0.75, label="IS Sharpe")
+    ax4.bar(x_f + w_bar/2, folds["oos_sharpe"].values, w_bar,
+            color=["#2ECC71" if s > 0 else "#E74C3C" for s in folds["oos_sharpe"]],
+            alpha=0.85, label="OOS Sharpe")
+    ax4b.plot(x_f, folds["oos_cagr"].values, "o--",
+              color="#F39C12", linewidth=1.4, markersize=5, label="OOS CAGR%")
+    ax4.axhline(0, color="black", linewidth=0.8)
+    ax4.set_xticks(x_f)
+    ax4.set_xticklabels([r["period"].replace(" → ", "\n→") for _, r in folds.iterrows()],
+                         fontsize=7, rotation=30)
+    ax4.set_title(f"Sharpe IS vs OOS per Fold — {best_wfo['label']}",
+                  fontsize=12, fontweight="bold")
+    ax4.set_ylabel("Sharpe")
+    ax4b.set_ylabel("OOS CAGR%")
+    lines1, lab1 = ax4.get_legend_handles_labels()
+    lines2, lab2 = ax4b.get_legend_handles_labels()
+    ax4.legend(lines1 + lines2, lab1 + lab2, fontsize=9)
 
-    # ── 5. Best parameters stability ────────────────────────────────────────
+    # ── 5. IS vs OOS scatter — config principale ─────────────────────────────
     ax5 = fig.add_subplot(gs[3, 0])
-    if not folds.empty:
-        ax5.plot(folds["fold"].values, folds["best_sl"].values, "o-",
-                 color="#E74C3C", label="Best SL ×ATR")
-        ax5.plot(folds["fold"].values, folds["best_tp"].values, "s-",
-                 color="#3498DB", label="Best TP ×ATR")
-        ax5.set_title("Stabilità Parametri Ottimali per Fold", fontsize=12, fontweight="bold")
-        ax5.set_xlabel("Fold #")
-        ax5.set_ylabel("Moltiplicatore ATR")
-        ax5.legend()
-        ax5.set_xticks(folds["fold"].values)
+    x_s = folds["is_sharpe"].values
+    y_s = folds["oos_sharpe"].values
+    sc  = ax5.scatter(x_s, y_s, c=range(len(folds)), cmap="viridis", s=80, zorder=5)
+    plt.colorbar(sc, ax=ax5, label="Fold #")
+    if len(x_s) > 2:
+        z  = np.polyfit(x_s, y_s, 1)
+        xl = np.linspace(x_s.min(), x_s.max(), 50)
+        ax5.plot(xl, np.poly1d(z)(xl), "r--", linewidth=1.5)
+    ax5.axhline(0, color="black", linewidth=0.8)
+    ax5.axvline(0, color="black", linewidth=0.8)
+    ax5.set_title(f"IS↔OOS Sharpe Scatter — {best_wfo['label']}\n"
+                  f"IC={best_wfo['ic']:.3f}  p={best_wfo['ic_p']:.3f}",
+                  fontsize=11, fontweight="bold")
+    ax5.set_xlabel("IS Sharpe")
+    ax5.set_ylabel("OOS Sharpe")
 
-    # ── 6. OOS CAGR per fold ────────────────────────────────────────────────
+    # ── 6. OOS drawdown — config principale ──────────────────────────────────
     ax6 = fig.add_subplot(gs[3, 1])
-    if not folds.empty:
-        colors_oos = ["#2ECC71" if v > 0 else "#E74C3C" for v in folds["oos_cagr"].values]
-        ax6.bar(folds["fold"].values, folds["oos_cagr"].values, color=colors_oos)
-        ax6.axhline(0, color="black", linewidth=0.8)
-        ax6.set_title("OOS CAGR% per Fold", fontsize=12, fontweight="bold")
-        ax6.set_xlabel("Fold #")
-        ax6.set_ylabel("CAGR%")
+    eq_best = best_wfo["oos_equity"]
+    if not eq_best.empty:
+        dd = (eq_best - eq_best.cummax()) / eq_best.cummax() * 100
+        ax6.fill_between(dd.index, dd.values, 0, color="#E74C3C", alpha=0.7)
+        ax6.set_title(f"OOS Drawdown — {best_wfo['label']}", fontsize=12, fontweight="bold")
+        ax6.set_ylabel("Drawdown (%)")
 
-    # ── 7. OOS cumulative returns distribution ───────────────────────────────
-    ax7 = fig.add_subplot(gs[4, :])
-    if not folds.empty and not oos_eq.empty:
-        monthly_ret = oos_eq.resample("ME").last().pct_change().dropna() * 100
-        colors_m = ["#2ECC71" if v > 0 else "#E74C3C" for v in monthly_ret.values]
-        ax7.bar(range(len(monthly_ret)), monthly_ret.values, color=colors_m)
-        ax7.axhline(0, color="black", linewidth=0.8)
-        tick_step = max(1, len(monthly_ret) // 12)
-        ax7.set_xticks(range(0, len(monthly_ret), tick_step))
-        ax7.set_xticklabels([str(d.strftime("%b%y")) for d in monthly_ret.index[::tick_step]],
-                             rotation=45, fontsize=8)
-        ax7.set_title("Rendimenti Mensili OOS", fontsize=12, fontweight="bold")
-        ax7.set_ylabel("Return mensile (%)")
+    # ── 7. Param stability ────────────────────────────────────────────────────
+    ax7 = fig.add_subplot(gs[4, 0])
+    ax7.plot(folds["fold"], folds["best_sl"], "o-", color="#E74C3C", label="SL ×ATR")
+    ax7.plot(folds["fold"], folds["best_tp"], "s-", color="#3498DB", label="TP ×ATR")
+    ax7.set_title("Stabilità Parametri per Fold", fontsize=12, fontweight="bold")
+    ax7.set_xlabel("Fold")
+    ax7.set_ylabel("Moltiplicatore ATR")
+    ax7.legend()
+    ax7.set_xticks(folds["fold"])
 
-    fig.suptitle("BTC/USD — Walk-Forward Optimization (train=4m, test=1m, step=1m)",
-                 fontsize=15, fontweight="bold")
+    # ── 8. Riepilogo statistico WFE vs n_fold ────────────────────────────────
+    ax8 = fig.add_subplot(gs[4, 1])
+    n_folds_list = [w["n_folds"]  for w in wfos]
+    wfe_list     = [w["wfe"]      for w in wfos]
+    pct_pos_list = [w["pct_pos"]  for w in wfos]
+    ax8.scatter(n_folds_list, wfe_list, s=120, c=COLORS[:len(wfos)], zorder=5)
+    for w, c in zip(wfos, COLORS):
+        ax8.annotate(w["label"], (w["n_folds"], w["wfe"]),
+                     textcoords="offset points", xytext=(5, 5), fontsize=8, color=c)
+    ax8.axhline(0, color="black", linewidth=0.8)
+    ax8.axhline(0.5, color="green", linewidth=1, linestyle="--")
+    ax8.set_title("WFE vs N Fold per Configurazione", fontsize=12, fontweight="bold")
+    ax8.set_xlabel("Numero di fold")
+    ax8.set_ylabel("WFE")
+
+    # ── 9. Rendimenti mensili OOS — config principale ─────────────────────────
+    ax9 = fig.add_subplot(gs[5, :])
+    if not eq_best.empty:
+        monthly = eq_best.resample("ME").last().pct_change().dropna() * 100
+        colors_m = ["#2ECC71" if v > 0 else "#E74C3C" for v in monthly.values]
+        ax9.bar(range(len(monthly)), monthly.values, color=colors_m, edgecolor="white")
+        ax9.axhline(0, color="black", linewidth=0.8)
+        step_t = max(1, len(monthly) // 10)
+        ax9.set_xticks(range(0, len(monthly), step_t))
+        ax9.set_xticklabels(
+            [monthly.index[i].strftime("%b%y") for i in range(0, len(monthly), step_t)],
+            rotation=45, fontsize=8)
+        ax9.set_title(f"Rendimenti Mensili OOS — {best_wfo['label']}", fontsize=12, fontweight="bold")
+        ax9.set_ylabel("Return %")
+
+    fig.suptitle("Walk-Forward Optimization — Analisi Multi-Window (IS/OOS estesi)",
+                 fontsize=14, fontweight="bold")
     plt.savefig(os.path.join(OUTPUT_DIR, "05_walk_forward.png"), dpi=150, bbox_inches="tight")
     plt.close()
     print("  Saved: 05_walk_forward.png")
 
+
+# ── Riepilogo comparativo ─────────────────────────────────────────────────────
+
+def print_summary(wfos: list):
+    print(f"\n{'═'*80}")
+    print("  RIEPILOGO CONFRONTO FINESTRE IS/OOS")
+    print(f"{'═'*80}")
+    print(f"  {'Config':<18} {'Fold':>5} {'IS Sh':>8} {'OOS Sh':>9} {'WFE':>7} "
+          f"{'%>0':>5} {'t-p':>7} {'IC':>6}  {'Cap OOS':>10}")
+    print(f"  {'─'*76}")
+    for w in wfos:
+        sig = "★" if w["p_val"] < 0.05 else " "
+        print(f"  {w['label']:<18} {w['n_folds']:>5} {w['is_sharpe']:>8.2f} "
+              f"{w['oos_sharpe']:>9.2f} {w['wfe']:>7.2f} "
+              f"{w['pct_pos']:>5.0f}% {w['p_val']:>7.3f} {w['ic']:>6.3f} "
+              f" ${w['oos_final']:>9,.0f}  {sig}")
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     print("Caricamento dati orari BTC...")
@@ -326,19 +365,30 @@ if __name__ == "__main__":
 
     print("Calcolo indicatori + GARCH(1,1)...")
     df_ind = compute_indicators_v2(df_raw, fit_garch=True)
-    print(f"  {len(df_ind)} barre disponibili per WFO")
+    print(f"  {len(df_ind)} barre disponibili  "
+          f"({df_ind.index[0].date()} → {df_ind.index[-1].date()})")
 
-    print(f"\nAvvio Walk-Forward Optimization")
-    print(f"  Train: {TRAIN_MONTHS} mesi | Test: {TEST_MONTHS} mese | Grid: {len(PARAM_GRID)} combo")
-    print(f"  {'─'*78}")
-    wfo = walk_forward(df_ind)
+    wfos = []
+    for cfg in WINDOW_CONFIGS:
+        print(f"\n{'─'*60}")
+        print(f"  Avvio WFO: {cfg['label']}  "
+              f"(train={cfg['train']}m, test={cfg['test']}m, step={cfg['step']}m)")
+        w = walk_forward(df_ind,
+                         train_m=cfg["train"],
+                         test_m=cfg["test"],
+                         step_m=cfg["step"],
+                         label=cfg["label"])
+        if w:
+            print_wfo(w)
+            wfos.append(w)
+            w["folds"].to_csv(
+                os.path.join(OUTPUT_DIR,
+                             f"wfo_{cfg['label'].replace(' ', '_').replace('=','')}.csv"),
+                index=False)
 
-    if wfo:
-        compute_wfo_metrics(wfo)
-        print("\nGenerazione grafici WFO...")
-        plot_wfo(wfo)
-        wfo["fold_results"].to_csv(
-            os.path.join(OUTPUT_DIR, "walk_forward_results.csv"), index=False)
-        print("  Saved: walk_forward_results.csv")
+    if wfos:
+        print_summary(wfos)
+        print("\nGenerazione grafici multi-window...")
+        plot_multi_window(wfos)
 
     print("\nWalk-Forward completato.")
