@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Secrets — never commit
+btc_analysis/output/api_keys.json
+
+# Output data (large files)
+btc_analysis/output/*.csv
+btc_analysis/output/*.png
+btc_analysis/output/*.log
+btc_analysis/output/REPORT.txt
