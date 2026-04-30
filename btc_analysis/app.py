@@ -32,12 +32,10 @@ def _load_api_keys() -> dict:
             pass
     return {}
 
-def _save_api_keys(ant: str, ort: str, model: str) -> None:
+def _save_api_keys(keys: dict) -> None:
     import json as _j
     os.makedirs(OUTPUT, exist_ok=True)
-    _j.dump({"ANTHROPIC_API_KEY": ant, "OPENROUTER_API_KEY": ort,
-             "OPENROUTER_MODEL": model},
-            open(_KEYS_FILE, "w", encoding="utf-8"), indent=2)
+    _j.dump(keys, open(_KEYS_FILE, "w", encoding="utf-8"), indent=2)
 
 st.set_page_config(
     page_title="BTC Strategy Dashboard",
@@ -52,10 +50,17 @@ _REQUIRED = [
     "eth_hourly.csv", "sol_hourly.csv", "trades.csv",
 ]
 
-def _run_script(name: str):
+def _run_script(name: str, extra_env: dict = None):
+    env = os.environ.copy()
+    _k = _load_api_keys()
+    for _key in ("ALPACA_API_KEY", "ALPACA_SECRET_KEY"):
+        if _k.get(_key):
+            env[_key] = _k[_key]
+    if extra_env:
+        env.update(extra_env)
     subprocess.run(
         [sys.executable, os.path.join(BASE, name)],
-        check=True, capture_output=True,
+        check=True, capture_output=True, env=env,
     )
 
 def ensure_data():
@@ -106,6 +111,55 @@ with st.sidebar:
 
     st.divider()
 
+    # ── Chiavi API ────────────────────────────────────────────────────────────
+    st.subheader("🔑 Chiavi API")
+    _sk = _load_api_keys()
+
+    st.caption("🤖 Agent AI")
+    _ant_key = st.text_input(
+        "ANTHROPIC_API_KEY",
+        value=_sk.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", ""),
+        type="password", placeholder="sk-ant-…",
+        help="Claude claude-opus-4-7 con adaptive thinking",
+    )
+    _or_key = st.text_input(
+        "OPENROUTER_API_KEY",
+        value=_sk.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY", ""),
+        type="password", placeholder="sk-or-…",
+        help="Alternativa: Claude/GPT-4o/Gemini via OpenRouter",
+    )
+    _or_model = st.text_input(
+        "OPENROUTER_MODEL",
+        value=_sk.get("OPENROUTER_MODEL") or os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-4"),
+        help="Ignorato se si usa Anthropic diretto",
+    )
+
+    st.caption("📡 Dati (Alpaca Markets)")
+    _alp_key = st.text_input(
+        "ALPACA_API_KEY",
+        value=_sk.get("ALPACA_API_KEY") or os.environ.get("ALPACA_API_KEY", ""),
+        type="password", placeholder="PK…",
+        help="Fallback se Yahoo Finance non è disponibile",
+    )
+    _alp_sec = st.text_input(
+        "ALPACA_SECRET_KEY",
+        value=_sk.get("ALPACA_SECRET_KEY") or os.environ.get("ALPACA_SECRET_KEY", ""),
+        type="password", placeholder="…",
+    )
+
+    if st.button("💾 Salva tutte le chiavi", use_container_width=True,
+                 help="Salva in output/api_keys.json (escluso da git)"):
+        _save_api_keys({
+            "ANTHROPIC_API_KEY":  _ant_key,
+            "OPENROUTER_API_KEY": _or_key,
+            "OPENROUTER_MODEL":   _or_model,
+            "ALPACA_API_KEY":     _alp_key,
+            "ALPACA_SECRET_KEY":  _alp_sec,
+        })
+        st.success("Chiavi salvate.")
+
+    st.divider()
+
     # ── Agent AI configurator ─────────────────────────────────────────────────
     st.subheader("🤖 Agent AI")
 
@@ -119,39 +173,9 @@ with st.sidebar:
             pass
     st.caption(f"Config attuale: `{_cur_src}`")
 
-    _saved_keys = _load_api_keys()
-    _ant_key = st.text_input(
-        "ANTHROPIC_API_KEY",
-        value=_saved_keys.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", ""),
-        type="password",
-        placeholder="sk-ant-…",
-        help="Chiave Anthropic diretta — modello claude-opus-4-7",
-    )
-    _or_key = st.text_input(
-        "OPENROUTER_API_KEY",
-        value=_saved_keys.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY", ""),
-        type="password",
-        placeholder="sk-or-…",
-        help="Chiave OpenRouter — supporta Claude, GPT-4o, Gemini, …",
-    )
-    _or_model = st.text_input(
-        "OPENROUTER_MODEL",
-        value=_saved_keys.get("OPENROUTER_MODEL") or os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-4"),
-        help="Modello OpenRouter da usare (ignorato se si usa Anthropic diretto)",
-    )
-
-    _col1, _col2 = st.columns(2)
-    with _col1:
-        if st.button("💾 Salva chiavi", use_container_width=True,
-                     help="Salva le chiavi localmente in output/api_keys.json"):
-            _save_api_keys(_ant_key, _or_key, _or_model)
-            st.success("Chiavi salvate.")
-    with _col2:
-        _run_agent = st.button("▶ Esegui Agent", use_container_width=True)
-
-    if _run_agent:
+    if st.button("▶ Esegui Agent", use_container_width=True):
         if not _ant_key and not _or_key:
-            st.warning("Inserisci almeno una chiave API per eseguire l'agent.")
+            st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
         else:
             import sys as _sys
             _sys.path.insert(0, BASE)
@@ -165,10 +189,20 @@ with st.sidebar:
                         openrouter_model=_or_model,
                     )
                     _ag.save_outputs(_cfg_r, _code_r, _report_r)
-                    st.success(f"Strategia aggiornata — source: `{_cfg_r['source']}` | tipo: `{_cfg_r.get('strategy_type','')}`")
-                    st.rerun()
                 except Exception as _ae:
                     st.error(f"Errore agent: {_ae}")
+                    st.stop()
+            with st.spinner("Calcolo backtest con la nuova strategia…"):
+                try:
+                    _run_script("06_enhanced_strategy.py")
+                    st.cache_data.clear()
+                    st.success(
+                        f"✅ Strategia `{_cfg_r.get('strategy_type','')}` pronta. "
+                        "Vedi Tab **🤖 Agent Strategy** per i risultati."
+                    )
+                except subprocess.CalledProcessError as _be:
+                    st.warning(f"Backtest fallito: {_be.stderr.decode()[:300]}")
+            st.rerun()
 
     st.divider()
     st.subheader("ℹ️ Info")
@@ -185,7 +219,7 @@ with st.sidebar:
     st.caption(
         f"**Strategia**: {_info_name}\n"
         f"**Tipo**: {_info_type}\n"
-        "**Dati**: Yahoo Finance (yfinance) con fallback sintetico"
+        "**Dati**: Yahoo Finance · Alpaca Markets"
     )
     if st.button("🔄 Rigenera dati", use_container_width=True):
         st.cache_data.clear()
@@ -844,6 +878,40 @@ with tab6:
             c3.metric("TP",               f"{_cfg.get('tp_mult', 5.0):.2f}×ATR")
             c4.metric("Ore attive UTC",   f"{_ah[0]:02d}:00–{_ah[1]:02d}:00")
             c5.metric("Risk/trade",       f"{_cfg.get('risk_per_trade', 0.01)*100:.1f}%")
+
+            # ── Backtest results from enhanced_strategy_comparison.csv ─────────
+            _comp_path = os.path.join(OUTPUT, "enhanced_strategy_comparison.csv")
+            if os.path.exists(_comp_path):
+                try:
+                    _comp = pd.read_csv(_comp_path)
+                    _vrow = _comp[_comp["version"] == "V_Agent"]
+                    if not _vrow.empty:
+                        _r = _vrow.iloc[0]
+                        st.subheader("📊 Backtest V_Agent")
+                        _bc1, _bc2, _bc3, _bc4, _bc5, _bc6 = st.columns(6)
+                        _bc1.metric("Return totale",  f"{_r['total_return_pct']:.1f}%")
+                        _bc2.metric("CAGR",           f"{_r['cagr_pct']:.1f}%")
+                        _bc3.metric("Sharpe",         f"{_r['sharpe_ratio']:.2f}")
+                        _bc4.metric("Max DD",         f"{_r['max_drawdown_pct']:.1f}%")
+                        _bc5.metric("Win rate",       f"{_r['win_rate_pct']:.1f}%")
+                        _bc6.metric("# Trade",        int(_r["n_trades"]))
+
+                        # compare V_Agent vs V4 (best baseline)
+                        _v4 = _comp[_comp["version"] == "V4 +GARCH+Costi"]
+                        if not _v4.empty:
+                            _v4r = _v4.iloc[0]
+                            st.markdown(
+                                f"**vs V4 baseline** — CAGR: "
+                                f"`{_r['cagr_pct']:.1f}%` vs `{_v4r['cagr_pct']:.1f}%` · "
+                                f"Sharpe: `{_r['sharpe_ratio']:.2f}` vs "
+                                f"`{_v4r['sharpe_ratio']:.2f}` · "
+                                f"Max DD: `{_r['max_drawdown_pct']:.1f}%` vs "
+                                f"`{_v4r['max_drawdown_pct']:.1f}%`"
+                            )
+                    else:
+                        st.info("Esegui **▶ Esegui Agent** per calcolare il backtest V_Agent.")
+                except Exception as _ce:
+                    st.warning(f"Errore lettura metriche backtest: {_ce}")
 
             st.divider()
 
