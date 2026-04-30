@@ -272,20 +272,41 @@ with st.sidebar:
             pass
     st.caption(f"Config attuale: `{_cur_src}` | asset: `{_cur_asset}`")
 
-    _strat_opts = list(dict.fromkeys(["BTC-USD"] + _downloaded))
+    _strat_opts = list(dict.fromkeys(["BTC-USD"] + list(_CATALOG_FLAT.keys())))
     _strat_idx  = _strat_opts.index(_cur_asset) if _cur_asset in _strat_opts else 0
     _strategy_asset = st.selectbox(
         "Asset per la strategia",
         options=_strat_opts,
         index=_strat_idx,
         format_func=lambda t: f"{_CATALOG_FLAT.get(t, t)} ({t})",
-        help="L'agent progetterà e backtesterà la strategia su questo asset",
+        help="L'agent progetterà la strategia su questo asset. Se non ancora scaricato, verrà scaricato automaticamente.",
     )
+    _strat_fname = ticker_to_fname(_strategy_asset)
+    _strat_csv   = os.path.join(OUTPUT, f"{_strat_fname}_hourly.csv")
+    if not os.path.exists(_strat_csv):
+        st.caption(f"⬇️ `{_strategy_asset}` non ancora scaricato — verrà scaricato automaticamente prima di eseguire l'agent.")
 
     if st.button("▶ Esegui Agent", use_container_width=True):
         if not _ant_key and not _or_key:
             st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
         else:
+            # Download asset data if missing
+            if not os.path.exists(_strat_csv):
+                with st.spinner(f"Download dati {_strategy_asset}…"):
+                    try:
+                        import importlib.util as _ilu2
+                        _spec2 = _ilu2.spec_from_file_location(
+                            "dl01b", os.path.join(BASE, "01_data_download.py"))
+                        _dlm2 = _ilu2.module_from_spec(_spec2)
+                        _spec2.loader.exec_module(_dlm2)
+                        _r2 = _dlm2.download_all_assets([_strategy_asset], skip_existing=False)
+                        if not _r2.get(_strategy_asset):
+                            st.error(f"Impossibile scaricare i dati per {_strategy_asset}.")
+                            st.stop()
+                        st.cache_data.clear()
+                    except Exception as _de2:
+                        st.error(f"Errore download {_strategy_asset}: {_de2}")
+                        st.stop()
             import sys as _sys
             _sys.path.insert(0, BASE)
             import importlib, agent_strategy as _ag
