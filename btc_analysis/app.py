@@ -144,10 +144,20 @@ with st.sidebar:
 
     st.divider()
     st.subheader("ℹ️ Info")
+    _info_name = "ATR Breakout + GARCH Filter (default)"
+    _info_type = "breakout"
+    if os.path.exists(_cfg_path):
+        try:
+            import json as _j2
+            _info_cfg  = _j2.load(open(_cfg_path))
+            _info_name = _info_cfg.get("strategy_name", _info_name)
+            _info_type = _info_cfg.get("strategy_type", _info_type)
+        except Exception:
+            pass
     st.caption(
-        "**Strategia**: ATR breakout + GARCH filter\n"
-        "**Dati**: Yahoo Finance (yfinance)\n"
-        "con fallback sintetico GARCH"
+        f"**Strategia**: {_info_name}\n"
+        f"**Tipo**: {_info_type}\n"
+        "**Dati**: Yahoo Finance (yfinance) con fallback sintetico"
     )
     if st.button("🔄 Rigenera dati", use_container_width=True):
         st.cache_data.clear()
