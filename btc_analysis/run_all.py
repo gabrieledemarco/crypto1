@@ -22,6 +22,7 @@ scripts = [
     ("06_enhanced_strategy.py", "GARCH filter + costi realistici"),
     ("07_walk_forward.py",      "Walk-Forward Optimization"),
     ("08_multi_asset.py",       "Portfolio multi-asset"),
+    ("09_monte_carlo.py",       "Monte Carlo (bootstrap + stress test)"),
     ("05_report.py",            "Generazione report finale"),
 ]
 
