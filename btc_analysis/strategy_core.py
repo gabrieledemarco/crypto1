@@ -12,6 +12,7 @@ Fornisce:
   - load_hourly(): carica dati orari con colonne standardizzate
 """
 
+import re
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
@@ -20,6 +21,17 @@ import os, warnings
 warnings.filterwarnings("ignore")
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
+
+# ── Ticker → filename mapping ──────────────────────────────────────────────────
+
+_TICKER_ALIAS = {"BTC-USD": "btc", "ETH-USD": "eth", "SOL-USD": "sol"}
+
+
+def ticker_to_fname(ticker: str) -> str:
+    """Map any ticker symbol to its CSV filename prefix (no extension)."""
+    if ticker in _TICKER_ALIAS:
+        return _TICKER_ALIAS[ticker]
+    return re.sub(r"[^a-z0-9]", "_", ticker.lower()).strip("_")
 
 
 # ── GARCH(1,1) ────────────────────────────────────────────────────────────────
@@ -417,8 +429,7 @@ def load_agent_config() -> dict:
 # ── Data loader ───────────────────────────────────────────────────────────────
 
 def load_hourly(asset: str = "BTC") -> pd.DataFrame:
-    fname = f"{asset.lower()}_hourly.csv"
-    path = os.path.join(OUTPUT_DIR, fname)
+    path = os.path.join(OUTPUT_DIR, f"{ticker_to_fname(asset)}_hourly.csv")
     df = pd.read_csv(path, index_col="Date", parse_dates=True)
     df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
     df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
@@ -426,8 +437,7 @@ def load_hourly(asset: str = "BTC") -> pd.DataFrame:
 
 
 def load_daily(asset: str = "BTC") -> pd.DataFrame:
-    fname = f"{asset.lower()}_daily.csv"
-    path = os.path.join(OUTPUT_DIR, fname)
+    path = os.path.join(OUTPUT_DIR, f"{ticker_to_fname(asset)}_daily.csv")
     df = pd.read_csv(path, index_col="Date", parse_dates=True)
     df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
     df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()

@@ -26,10 +26,13 @@ import seaborn as sns
 from strategy_core import (
     load_hourly, compute_indicators_v2, generate_signals_v2,
     backtest_v2, compute_metrics, fit_garch11, compute_garch_regime,
-    load_agent_config, load_agent_strategy, OUTPUT_DIR
+    load_agent_config, load_agent_strategy, ticker_to_fname, OUTPUT_DIR
 )
 
 sns.set_theme(style="darkgrid")
+
+# Asset to run strategy on (can be overridden via STRATEGY_ASSET env var)
+STRATEGY_ASSET = os.environ.get("STRATEGY_ASSET", "BTC-USD")
 
 INITIAL_CAPITAL = 10_000
 RISK = 0.01
@@ -232,8 +235,8 @@ def plot_comparison(results: dict, df_ind: pd.DataFrame):
 
 
 if __name__ == "__main__":
-    print("Caricamento dati orari BTC...")
-    df_raw = load_hourly("BTC")
+    print(f"Caricamento dati orari {STRATEGY_ASSET}...")
+    df_raw = load_hourly(STRATEGY_ASSET)
 
     print("Calcolo indicatori + GARCH(1,1) (potrebbe richiedere ~30s)...")
     df_ind = compute_indicators_v2(df_raw, fit_garch=True)

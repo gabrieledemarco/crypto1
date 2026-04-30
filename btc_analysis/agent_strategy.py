@@ -30,6 +30,7 @@ OPENROUTER_DEFAULT_MODEL = "anthropic/claude-opus-4"
 # ── V5 default config (used as fallback) ──────────────────────────────────────
 
 V5_DEFAULT_CONFIG = {
+    "asset": "BTC-USD",
     "strategy_type": "breakout",
     "strategy_name": "ATR Breakout + GARCH Filter (V5 Default)",
     "sl_mult": 2.0,
@@ -98,18 +99,21 @@ def _read_safe(path: str, max_chars: int = 6000) -> str:
         return f"[error: {exc}]"
 
 
-def _build_context() -> str:
+def _build_context(asset: str = "BTC-USD") -> str:
     files = [
-        ("Statistical Report",          "REPORT.txt"),
-        ("Enhanced Strategy Comparison", "enhanced_strategy_comparison.csv"),
-        ("Walk-Forward Results",         "walk_forward_results.csv"),
-        ("Monte Carlo Bootstrap",        "mc_bootstrap_results.csv"),
-        ("Grid-Search Optimization",     "optimization_results.csv"),
+        ("Statistical Report (BTC reference)", "REPORT.txt"),
+        ("Enhanced Strategy Comparison",        "enhanced_strategy_comparison.csv"),
+        ("Walk-Forward Results",                "walk_forward_results.csv"),
+        ("Monte Carlo Bootstrap",               "mc_bootstrap_results.csv"),
+        ("Grid-Search Optimization",            "optimization_results.csv"),
     ]
-    return "\n\n".join(
+    ctx = "\n\n".join(
         f"### {title}\n```\n{_read_safe(os.path.join(OUTPUT_DIR, fname))}\n```"
         for title, fname in files
     )
+    ctx += f"\n\n{_compute_quick_stats(asset)}"
+    ctx += f"\n\n### Target Asset\nDesign the strategy for **{asset}**.\n"
+    return ctx
 
 
 def _extract_block(text: str, lang: str) -> str:
@@ -118,6 +122,45 @@ def _extract_block(text: str, lang: str) -> str:
     return m.group(1).strip() if m else ""
 
 # ── Validation ────────────────────────────────────────────────────────────────
+
+def _compute_quick_stats(ticker: str) -> str:
+    """Compute Hurst, ACF, kurtosis, volatility for any downloaded asset."""
+    try:
+        import re as _re
+        _alias = {"BTC-USD": "btc", "ETH-USD": "eth", "SOL-USD": "sol"}
+        fname = _alias.get(ticker) or _re.sub(r"[^a-z0-9]", "_", ticker.lower()).strip("_")
+        path = os.path.join(OUTPUT_DIR, f"{fname}_hourly.csv")
+        if not os.path.exists(path):
+            return f"[dati non disponibili per {ticker}]"
+        import pandas as _pd, numpy as _np
+        df = _pd.read_csv(path, index_col=0, parse_dates=True)
+        df.columns = [c if isinstance(c, str) else c[0] for c in df.columns]
+        ret = df["Close"].pct_change().dropna()
+        lp  = _np.log(df["Close"].values)
+        lags = [2, 4, 8, 16, 32, 64, 128]
+        rs   = [_np.std(_np.diff(lp, lag)) for lag in lags]
+        H    = float(_np.polyfit(_np.log(lags), _np.log(rs), 1)[0])
+        acf1 = float(ret.autocorr(1))
+        kurt = float(ret.kurtosis())
+        vol  = float(ret.std() * _np.sqrt(24 * 365) * 100)
+        idx  = _pd.to_datetime(df.index)
+        best_hrs = sorted(ret.groupby(idx.hour).mean().nlargest(8).index.tolist())
+        regime = ("trend following" if H > 0.55
+                  else "mean reversion" if H < 0.45
+                  else "breakout/range trading")
+        return (
+            f"### Proprietà statistiche {ticker}\n"
+            f"- Periodo: {df.index[0]} → {df.index[-1]}\n"
+            f"- Prezzo attuale: {df['Close'].iloc[-1]:.4f}\n"
+            f"- Hurst exponent: {H:.3f} → **{regime}**\n"
+            f"- ACF lag-1: {acf1:.3f} ({'momentum' if acf1 > 0 else 'mean reversion'})\n"
+            f"- Kurtosis: {kurt:.2f} ({'fat tails' if kurt > 5 else 'normal tails'})\n"
+            f"- Volatilità annualizzata: {vol:.1f}%\n"
+            f"- Ore UTC più attive: {best_hrs}\n"
+        )
+    except Exception as exc:
+        return f"[errore stats {ticker}: {exc}]"
+
 
 def _validate_config(raw: dict, source: str = "agent") -> dict:
     d  = V5_DEFAULT_CONFIG
@@ -130,6 +173,7 @@ def _validate_config(raw: dict, source: str = "agent") -> dict:
     else:
         h0, h1 = d["active_hours"]
     return {
+        "asset":          str(raw.get("asset",          d.get("asset", "BTC-USD"))),
         "strategy_type":  str(raw.get("strategy_type", d["strategy_type"])),
         "strategy_name":  str(raw.get("strategy_name", d["strategy_name"])),
         "sl_mult":        sl,
@@ -356,6 +400,7 @@ def run_agent(
     anthropic_key: str = "",
     openrouter_key: str = "",
     openrouter_model: str = "",
+    asset: str = "BTC-USD",
 ) -> tuple:
     """
     Returns (config: dict, code: str, report: str).
@@ -366,10 +411,12 @@ def run_agent(
 
     if not ant and not ort:
         print("  [agent] No API key — using V5 defaults.")
-        return V5_DEFAULT_CONFIG.copy(), DEFAULT_CODE, DEFAULT_REPORT
+        cfg = V5_DEFAULT_CONFIG.copy()
+        cfg["asset"] = asset
+        return cfg, DEFAULT_CODE, DEFAULT_REPORT
 
-    print("  [agent] Building analysis context...")
-    ctx = _build_context()
+    print(f"  [agent] Building analysis context for {asset}...")
+    ctx = _build_context(asset)
 
     if ant:
         try:
