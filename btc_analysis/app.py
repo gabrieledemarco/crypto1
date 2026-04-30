@@ -171,14 +171,17 @@ with st.sidebar:
         except Exception:
             pass
 
-    _all_tickers = list(dict.fromkeys(["BTC-USD"] + list(_CATALOG_FLAT.keys())))
+    # Full selectable list: catalog + user's saved universe (union, no duplicates)
+    _all_tickers = list(dict.fromkeys(
+        ["BTC-USD"] + list(_CATALOG_FLAT.keys()) + _sel_saved
+    ))
     _cur_asset_sel = _cur_asset if _cur_asset in _all_tickers else "BTC-USD"
     asset = st.selectbox(
         "Asset",
         options=_all_tickers,
         index=_all_tickers.index(_cur_asset_sel),
         format_func=lambda t: f"{_CATALOG_FLAT.get(t, t)} ({t})",
-        help="Asset per Tab Prezzi e per la strategia agent. Se non scaricato, verrà scaricato automaticamente.",
+        help="Tutti gli asset del catalogo + quelli nel tuo universe. Se non scaricato, download automatico al primo utilizzo.",
     )
     _asset_csv = os.path.join(OUTPUT, f"{ticker_to_fname(asset)}_hourly.csv")
     if not os.path.exists(_asset_csv):
