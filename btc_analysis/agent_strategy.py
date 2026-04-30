@@ -212,10 +212,10 @@ def _call_anthropic(api_key: str, context: str) -> dict:
 
 # ── Backend: OpenRouter HTTP ──────────────────────────────────────────────────
 
-def _call_openrouter(api_key: str, context: str) -> dict:
+def _call_openrouter(api_key: str, context: str, model: str = "") -> dict:
     import requests as _req
 
-    model = os.environ.get("OPENROUTER_MODEL", OPENROUTER_DEFAULT_MODEL)
+    model = model or os.environ.get("OPENROUTER_MODEL", OPENROUTER_DEFAULT_MODEL)
     print(f"  [agent_strategy] Calling OpenRouter model={model}...")
 
     user_msg = (
@@ -259,15 +259,22 @@ def _call_openrouter(api_key: str, context: str) -> dict:
 
 # ── Public entry point ────────────────────────────────────────────────────────
 
-def run_agent() -> dict:
+def run_agent(
+    anthropic_key: str = "",
+    openrouter_key: str = "",
+    openrouter_model: str = "",
+) -> dict:
     """
     Determine available provider and call the LLM.
     Priority: Anthropic → OpenRouter → V5 defaults.
-    """
-    anthropic_key   = os.environ.get("ANTHROPIC_API_KEY",   "").strip()
-    openrouter_key  = os.environ.get("OPENROUTER_API_KEY",  "").strip()
 
-    if not anthropic_key and not openrouter_key:
+    Explicit key parameters override environment variables, allowing callers
+    (e.g. the Streamlit sidebar) to supply keys without touching os.environ.
+    """
+    ant_key = (anthropic_key or "").strip()  or os.environ.get("ANTHROPIC_API_KEY",  "").strip()
+    or_key  = (openrouter_key or "").strip() or os.environ.get("OPENROUTER_API_KEY", "").strip()
+
+    if not ant_key and not or_key:
         print(
             "  [agent_strategy] No API key found "
             "(ANTHROPIC_API_KEY or OPENROUTER_API_KEY) — using V5 defaults."
@@ -277,21 +284,21 @@ def run_agent() -> dict:
     print("  [agent_strategy] Building analysis context...")
     context = _build_context()
 
-    if anthropic_key:
+    if ant_key:
         try:
-            return _call_anthropic(anthropic_key, context)
+            return _call_anthropic(ant_key, context)
         except Exception as exc:
             print(f"  [agent_strategy] Anthropic error: {exc}")
-            if openrouter_key:
+            if or_key:
                 print("  [agent_strategy] Retrying via OpenRouter...")
             else:
                 print("  [agent_strategy] Falling back to V5 defaults.")
                 return {**V5_DEFAULT, "source": "default_fallback"}
 
-    # Reached here only if Anthropic failed and openrouter_key is set,
-    # OR if only openrouter_key was set from the start.
+    # Reached here only if Anthropic failed and or_key is set,
+    # OR if only or_key was set from the start.
     try:
-        return _call_openrouter(openrouter_key, context)
+        return _call_openrouter(or_key, context, model=openrouter_model)
     except Exception as exc:
         print(f"  [agent_strategy] OpenRouter error: {exc}")
         print("  [agent_strategy] Falling back to V5 defaults.")

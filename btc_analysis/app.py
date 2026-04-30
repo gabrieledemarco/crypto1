@@ -87,17 +87,72 @@ with st.sidebar:
                                value=2025, step=1)
 
     st.divider()
+
+    # ── Agent AI configurator ─────────────────────────────────────────────────
+    st.subheader("🤖 Agent AI")
+
+    _cfg_path = os.path.join(OUTPUT, "agent_strategy_config.json")
+    _cur_src  = "—"
+    if os.path.exists(_cfg_path):
+        try:
+            import json as _j
+            _cur_src = _j.load(open(_cfg_path)).get("source", "?")
+        except Exception:
+            pass
+    st.caption(f"Config attuale: `{_cur_src}`")
+
+    _ant_key = st.text_input(
+        "ANTHROPIC_API_KEY",
+        value=os.environ.get("ANTHROPIC_API_KEY", ""),
+        type="password",
+        placeholder="sk-ant-…",
+        help="Chiave Anthropic diretta — modello claude-opus-4-7",
+    )
+    _or_key = st.text_input(
+        "OPENROUTER_API_KEY",
+        value=os.environ.get("OPENROUTER_API_KEY", ""),
+        type="password",
+        placeholder="sk-or-…",
+        help="Chiave OpenRouter — supporta Claude, GPT-4o, Gemini, …",
+    )
+    _or_model = st.text_input(
+        "OPENROUTER_MODEL",
+        value=os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-4"),
+        help="Modello OpenRouter da usare (ignorato se si usa Anthropic diretto)",
+    )
+
+    if st.button("▶ Esegui Agent", use_container_width=True):
+        if not _ant_key and not _or_key:
+            st.warning("Inserisci almeno una chiave API per eseguire l'agent.")
+        else:
+            import sys as _sys
+            _sys.path.insert(0, BASE)
+            import importlib, agent_strategy as _ag
+            importlib.reload(_ag)
+            with st.spinner("L'agent sta analizzando i risultati…"):
+                try:
+                    _result = _ag.run_agent(
+                        anthropic_key=_ant_key,
+                        openrouter_key=_or_key,
+                        openrouter_model=_or_model,
+                    )
+                    os.makedirs(OUTPUT, exist_ok=True)
+                    import json as _jw
+                    with open(_cfg_path, "w") as _fw:
+                        _jw.dump(_result, _fw, indent=2)
+                    st.success(f"Config aggiornata — source: `{_result['source']}`")
+                    st.rerun()
+                except Exception as _ae:
+                    st.error(f"Errore agent: {_ae}")
+
+    st.divider()
     st.subheader("ℹ️ Info")
     st.caption(
-        "**Strategia** (Agent config)\n"
-        "ATR breakout · GARCH filter\n\n"
-        "**Agent AI**\n"
-        "ANTHROPIC_API_KEY (Anthropic)\n"
-        "OPENROUTER_API_KEY (OpenRouter)\n\n"
+        "**Strategia**: ATR breakout + GARCH filter\n"
         "**Dati**: Yahoo Finance (yfinance)\n"
         "con fallback sintetico GARCH"
     )
-    if st.button("🔄 Rigenera dati"):
+    if st.button("🔄 Rigenera dati", use_container_width=True):
         st.cache_data.clear()
         for f in _REQUIRED:
             p = os.path.join(OUTPUT, f)
