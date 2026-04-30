@@ -359,6 +359,43 @@ _AGENT_CONFIG_DEFAULTS = {
     "risk_per_trade": 0.01,
 }
 
+def load_agent_strategy():
+    """
+    Dynamically load the agent-generated strategy function from
+    output/agent_strategy_code.py.  Returns generate_signals_agent(df).
+    Falls back to generate_signals_v2 with agent-config params if the
+    code file is missing or fails to import.
+    """
+    import importlib.util
+    code_path = os.path.join(OUTPUT_DIR, "agent_strategy_code.py")
+    if os.path.exists(code_path):
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "agent_strategy_code", code_path
+            )
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            if hasattr(mod, "generate_signals_agent"):
+                return mod.generate_signals_agent
+        except Exception as exc:
+            warnings.warn(f"[strategy_core] agent code load failed: {exc}; using fallback")
+
+    # Fallback: wrap generate_signals_v2 with agent-config params
+    cfg = load_agent_config()
+    def _fallback(df: pd.DataFrame) -> pd.DataFrame:
+        return generate_signals_v2(
+            df,
+            atr_mult_sl=cfg.get("sl_mult", 2.0),
+            atr_mult_tp=cfg.get("tp_mult", 5.0),
+            active_hours=tuple(cfg.get("active_hours", [6, 22])),
+            use_garch_filter=cfg.get("use_garch_filter", True),
+            rsi_ob=cfg.get("rsi_ob", 70),
+            rsi_os=cfg.get("rsi_os", 30),
+            min_atr_pct=cfg.get("min_atr_pct", 0.003),
+        )
+    return _fallback
+
+
 def load_agent_config() -> dict:
     """
     Load agent-proposed strategy config from output/agent_strategy_config.json.

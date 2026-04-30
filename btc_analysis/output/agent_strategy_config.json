@@ -1,14 +1,12 @@
 {
+  "strategy_type": "breakout",
+  "strategy_name": "ATR Breakout + GARCH Filter (V5 Default)",
   "sl_mult": 2.0,
   "tp_mult": 5.0,
   "active_hours": [
     6,
     22
   ],
-  "rsi_ob": 70.0,
-  "rsi_os": 30.0,
-  "min_atr_pct": 0.003,
-  "use_garch_filter": true,
   "commission": 0.0001,
   "slippage": 0.0001,
   "risk_per_trade": 0.01,
