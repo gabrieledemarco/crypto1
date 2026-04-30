@@ -25,8 +25,10 @@ from scipy import stats
 from statsmodels.tsa.stattools import acf
 from strategy_core import (
     load_hourly, compute_indicators_v2, generate_signals_v2,
-    backtest_v2, compute_metrics, OUTPUT_DIR
+    backtest_v2, compute_metrics, load_agent_config, OUTPUT_DIR
 )
+
+_ACFG = load_agent_config()
 
 np.random.seed(42)
 sns.set_theme(style="darkgrid")
@@ -41,16 +43,21 @@ N_YEARS         = 2.33        # durata dataset orario (gen 2023 – apr 2025)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_v5_trades() -> pd.DataFrame:
-    """Ri-esegue la strategia V5 e restituisce il DataFrame dei trade."""
+    """Ri-esegue la strategia (parametri da agent config) e restituisce i trade."""
     df_raw = load_hourly("BTC")
     df_ind = compute_indicators_v2(df_raw, fit_garch=True)
     df_sig = generate_signals_v2(df_ind,
-                                  atr_mult_sl=2.0,
-                                  atr_mult_tp=5.0,
-                                  active_hours=(6, 22),
-                                  use_garch_filter=True)
-    res = backtest_v2(df_sig, INITIAL_CAPITAL, risk_per_trade=0.01,
-                      commission=0.0001, slippage=0.0001)
+                                  atr_mult_sl=_ACFG["sl_mult"],
+                                  atr_mult_tp=_ACFG["tp_mult"],
+                                  active_hours=tuple(_ACFG["active_hours"]),
+                                  use_garch_filter=_ACFG.get("use_garch_filter", True),
+                                  rsi_ob=_ACFG.get("rsi_ob", 70),
+                                  rsi_os=_ACFG.get("rsi_os", 30),
+                                  min_atr_pct=_ACFG.get("min_atr_pct", 0.003))
+    res = backtest_v2(df_sig, INITIAL_CAPITAL,
+                      risk_per_trade=_ACFG.get("risk_per_trade", 0.01),
+                      commission=_ACFG.get("commission", 0.0001),
+                      slippage=_ACFG.get("slippage", 0.0001))
     trades = res["trades"].copy()
     if "entry_time" in trades.columns and "exit_time" in trades.columns:
         trades["duration_h"] = (

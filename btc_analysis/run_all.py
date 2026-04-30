@@ -18,11 +18,12 @@ scripts = [
     ("01_data_download.py",     "Generazione dati sintetici BTC/ETH/SOL"),
     ("02_timeseries_analysis.py","Analisi serie storica"),
     ("03_pattern_analysis.py",  "Pattern analysis"),
+    ("agent_strategy.py",       "Agent AI — configurazione strategia ottimale"),
     ("04_strategy.py",          "Strategia base + grid search"),
-    ("06_enhanced_strategy.py", "GARCH filter + costi realistici"),
-    ("07_walk_forward.py",      "Walk-Forward Optimization"),
-    ("08_multi_asset.py",       "Portfolio multi-asset"),
-    ("09_monte_carlo.py",       "Monte Carlo (bootstrap + stress test)"),
+    ("06_enhanced_strategy.py", "GARCH filter + costi realistici (agent config)"),
+    ("07_walk_forward.py",      "Walk-Forward Optimization (agent config)"),
+    ("08_multi_asset.py",       "Portfolio multi-asset (agent config)"),
+    ("09_monte_carlo.py",       "Monte Carlo (bootstrap + stress test, agent config)"),
     ("05_report.py",            "Generazione report finale"),
 ]
 

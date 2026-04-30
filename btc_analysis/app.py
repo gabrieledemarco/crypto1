@@ -89,10 +89,11 @@ with st.sidebar:
     st.divider()
     st.subheader("ℹ️ Info")
     st.caption(
-        "**Strategia V5**\n"
-        "ATR breakout · GARCH filter\n"
-        "SL=2×ATR · TP=5×ATR\n"
-        "Maker fee 0.01%\n\n"
+        "**Strategia** (Agent config)\n"
+        "ATR breakout · GARCH filter\n\n"
+        "**Agent AI**\n"
+        "ANTHROPIC_API_KEY (Anthropic)\n"
+        "OPENROUTER_API_KEY (OpenRouter)\n\n"
         "**Dati**: Yahoo Finance (yfinance)\n"
         "con fallback sintetico GARCH"
     )
@@ -188,12 +189,13 @@ except Exception:
 
 st.divider()
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 Prezzi & Rendimenti",
     "📈 Strategia V5",
     "🔄 Walk-Forward",
     "🎲 Monte Carlo",
     "🌐 Multi-Asset",
+    "🤖 Agent Strategy",
 ])
 
 
@@ -703,7 +705,92 @@ with tab5:
         st.error(f"Errore caricamento dati multi-asset: {e}")
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB 6 — Agent Strategy
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab6:
+    import json as _json
+
+    st.subheader("🤖 Agent Strategy Configuration")
+    st.markdown(
+        "L'**AI Agent** legge i risultati dell'analisi statistica "
+        "(stazionarietà, Hurst, kurtosis, regimi GARCH, walk-forward OOS, "
+        "Monte Carlo) e propone i parametri ottimali per la strategia ATR breakout.\n\n"
+        "**Provider supportati** (priorità nell'ordine):\n"
+        "1. `ANTHROPIC_API_KEY` → Anthropic direct (claude-opus-4-7, adaptive thinking)\n"
+        "2. `OPENROUTER_API_KEY` → OpenRouter gateway (modello via `OPENROUTER_MODEL`)\n"
+        "3. Nessuna chiave → parametri V5 di default"
+    )
+
+    cfg_path = os.path.join(OUTPUT, "agent_strategy_config.json")
+    if not os.path.exists(cfg_path):
+        st.info(
+            "Il file `agent_strategy_config.json` non è ancora stato generato. "
+            "Riesegui la pipeline (`run_all.py`) per attivare l'agent, oppure "
+            "imposta `ANTHROPIC_API_KEY` o `OPENROUTER_API_KEY`."
+        )
+    else:
+        try:
+            with open(cfg_path) as _f:
+                _cfg = _json.load(_f)
+
+            _src = _cfg.get("source", "unknown")
+            if _src.startswith("anthropic"):
+                st.success(f"Configurazione generata da **Anthropic API** (source: `{_src}`)")
+            elif _src.startswith("openrouter"):
+                st.success(f"Configurazione generata da **OpenRouter** (source: `{_src}`)")
+            else:
+                st.warning(
+                    f"Configurazione di **default V5** (source: `{_src}`). "
+                    "Imposta `ANTHROPIC_API_KEY` o `OPENROUTER_API_KEY` per usare un modello AI."
+                )
+
+            # ── KPI cards ────────────────────────────────────────────────────
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("SL multiplier",  f"{_cfg.get('sl_mult', 2.0):.2f}×ATR")
+            c2.metric("TP multiplier",  f"{_cfg.get('tp_mult', 5.0):.2f}×ATR")
+            _ah = _cfg.get("active_hours", [6, 22])
+            c3.metric("Ore attive UTC", f"{_ah[0]:02d}:00 – {_ah[1]:02d}:00")
+            c4.metric("Commission/side", f"{_cfg.get('commission', 0.0001)*100:.3f}%")
+            c5.metric("Risk/trade",     f"{_cfg.get('risk_per_trade', 0.01)*100:.1f}%")
+
+            st.divider()
+
+            # ── Detail table ─────────────────────────────────────────────────
+            _rows = {
+                "SL multiplier (×ATR)":   _cfg.get("sl_mult", 2.0),
+                "TP multiplier (×ATR)":   _cfg.get("tp_mult", 5.0),
+                "Active hours start (UTC)": _ah[0],
+                "Active hours end (UTC)":   _ah[1],
+                "RSI overbought":         _cfg.get("rsi_ob", 70),
+                "RSI oversold":           _cfg.get("rsi_os", 30),
+                "Min ATR %":              _cfg.get("min_atr_pct", 0.003),
+                "GARCH filter":           _cfg.get("use_garch_filter", True),
+                "Commission/side":        _cfg.get("commission", 0.0001),
+                "Slippage/side":          _cfg.get("slippage", 0.0001),
+                "Risk per trade":         _cfg.get("risk_per_trade", 0.01),
+                "Source":                 _cfg.get("source", "default"),
+            }
+            _df_cfg = pd.DataFrame(
+                {"Parameter": list(_rows.keys()), "Value": list(_rows.values())}
+            )
+            st.dataframe(_df_cfg, hide_index=True, use_container_width=True)
+
+            # ── Rationale ────────────────────────────────────────────────────
+            st.divider()
+            st.markdown("### Ragionamento dell'Agent")
+            st.info(_cfg.get("rationale", "Nessun ragionamento disponibile."))
+
+            # ── Raw JSON ─────────────────────────────────────────────────────
+            with st.expander("Raw JSON config"):
+                st.json(_cfg)
+
+        except Exception as _e:
+            st.error(f"Errore lettura config agent: {_e}")
+
+
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.divider()
 st.caption("BTC Strategy Dashboard · Dati: sintetici (fallback) o Yahoo Finance via yfinance · "
-           "Strategia V5: ATR breakout + GARCH filter + maker fees")
+           "Agent Strategy: parametri ottimizzati da Claude claude-opus-4-7")

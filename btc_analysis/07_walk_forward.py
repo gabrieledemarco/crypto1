@@ -21,20 +21,29 @@ import seaborn as sns
 from scipy import stats
 from strategy_core import (
     load_hourly, compute_indicators_v2, generate_signals_v2,
-    backtest_v2, compute_metrics, OUTPUT_DIR
+    backtest_v2, compute_metrics, load_agent_config, OUTPUT_DIR
 )
 
 sns.set_theme(style="darkgrid")
 
 INITIAL_CAPITAL = 10_000
 RISK            = 0.01
-COMMISSION      = 0.0004
-SLIPPAGE        = 0.0001
-FIXED_HOURS     = (6, 22)
 HOURS_MONTH     = 24 * 30   # ~720 ore/mese
 
-# Griglia parametri
-PARAM_GRID = [(sl, tp) for sl in [1.0, 1.5, 2.0] for tp in [2.0, 2.5, 3.0]]
+# Load agent config — drives fixed hours and param grid centre
+_ACFG       = load_agent_config()
+COMMISSION  = _ACFG.get("commission", 0.0004)
+SLIPPAGE    = _ACFG.get("slippage",   0.0001)
+FIXED_HOURS = tuple(_ACFG["active_hours"])
+
+# Build param grid centred around agent-proposed SL/TP
+_sl_c = _ACFG["sl_mult"]
+_tp_c = _ACFG["tp_mult"]
+PARAM_GRID = [
+    (sl, tp)
+    for sl in sorted({max(0.5, _sl_c - 0.5), _sl_c, _sl_c + 0.5})
+    for tp in sorted({max(_sl_c + 0.5, _tp_c - 1.0), _tp_c, _tp_c + 1.0})
+]
 
 # Configurazioni IS/OOS da confrontare
 WINDOW_CONFIGS = [
