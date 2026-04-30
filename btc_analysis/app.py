@@ -6,6 +6,7 @@ Avvio:
 """
 
 import os
+import re
 import sys
 import subprocess
 import warnings
@@ -32,12 +33,58 @@ def _load_api_keys() -> dict:
             pass
     return {}
 
-def _save_api_keys(ant: str, ort: str, model: str) -> None:
+def _save_api_keys(keys: dict) -> None:
     import json as _j
     os.makedirs(OUTPUT, exist_ok=True)
-    _j.dump({"ANTHROPIC_API_KEY": ant, "OPENROUTER_API_KEY": ort,
-             "OPENROUTER_MODEL": model},
-            open(_KEYS_FILE, "w", encoding="utf-8"), indent=2)
+    _j.dump(keys, open(_KEYS_FILE, "w", encoding="utf-8"), indent=2)
+
+# ── Asset catalog & universe helpers ──────────────────────────────────────────
+
+ASSET_CATALOG: dict = {
+    "Crypto Majors": {
+        "BTC-USD": "Bitcoin",   "ETH-USD": "Ethereum",  "SOL-USD": "Solana",
+        "BNB-USD": "BNB",       "XRP-USD": "XRP",        "ADA-USD": "Cardano",
+        "DOGE-USD": "Dogecoin", "AVAX-USD": "Avalanche", "DOT-USD": "Polkadot",
+        "LINK-USD": "Chainlink",
+    },
+    "Commodities": {
+        "GC=F": "Gold", "SI=F": "Silver", "CL=F": "Crude Oil WTI",
+        "NG=F": "Natural Gas", "HG=F": "Copper",
+    },
+    "Stocks US": {
+        "SPY": "S&P 500 ETF", "QQQ": "Nasdaq ETF",
+        "AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA",
+        "TSLA": "Tesla", "GOOGL": "Alphabet", "AMZN": "Amazon", "META": "Meta",
+    },
+    "Stocks EU": {
+        "MC.PA": "LVMH", "SAP.DE": "SAP",    "ASML.AS": "ASML",
+        "SIE.DE": "Siemens", "ALV.DE": "Allianz", "SAN.PA": "Sanofi",
+        "BNP.PA": "BNP Paribas", "NESN.SW": "Nestlé",
+    },
+}
+_TICKER_ALIAS = {"BTC-USD": "btc", "ETH-USD": "eth", "SOL-USD": "sol"}
+_CATALOG_FLAT = {t: n for cat in ASSET_CATALOG.values() for t, n in cat.items()}
+
+def ticker_to_fname(ticker: str) -> str:
+    if ticker in _TICKER_ALIAS:
+        return _TICKER_ALIAS[ticker]
+    return re.sub(r"[^a-z0-9]", "_", ticker.lower()).strip("_")
+
+_SELECTED_FILE = os.path.join(OUTPUT, "selected_assets.json")
+
+def _load_selected_assets() -> list:
+    if os.path.exists(_SELECTED_FILE):
+        try:
+            import json as _j
+            return _j.load(open(_SELECTED_FILE, encoding="utf-8"))
+        except Exception:
+            pass
+    return ["BTC-USD", "ETH-USD", "SOL-USD"]
+
+def _save_selected_assets(tickers: list) -> None:
+    import json as _j
+    os.makedirs(OUTPUT, exist_ok=True)
+    _j.dump(tickers, open(_SELECTED_FILE, "w", encoding="utf-8"), indent=2)
 
 st.set_page_config(
     page_title="BTC Strategy Dashboard",
@@ -52,10 +99,17 @@ _REQUIRED = [
     "eth_hourly.csv", "sol_hourly.csv", "trades.csv",
 ]
 
-def _run_script(name: str):
+def _run_script(name: str, extra_env: dict = None):
+    env = os.environ.copy()
+    _k = _load_api_keys()
+    for _key in ("ALPACA_API_KEY", "ALPACA_SECRET_KEY"):
+        if _k.get(_key):
+            env[_key] = _k[_key]
+    if extra_env:
+        env.update(extra_env)
     subprocess.run(
         [sys.executable, os.path.join(BASE, name)],
-        check=True, capture_output=True,
+        check=True, capture_output=True, env=env,
     )
 
 def ensure_data():
@@ -90,19 +144,115 @@ ASSET_COLORS = {"BTC": C_LINE, "ETH": "#9c27b0", "SOL": C_ACC}
 with st.sidebar:
     st.header("⚙️ Impostazioni")
 
-    asset = st.selectbox(
-        "Asset",
-        options=["BTC", "ETH", "SOL"],
-        index=0,
-        help="Seleziona l'asset da analizzare nel tab Prezzi & Rendimenti",
-    )
-
-    st.divider()
     st.subheader("📅 Periodo prezzi")
     yr_from = st.number_input("Anno inizio", min_value=2015, max_value=2025,
                                value=2020, step=1)
     yr_to   = st.number_input("Anno fine",   min_value=2015, max_value=2025,
                                value=2025, step=1)
+
+    st.divider()
+
+    # ── Asset Universe ─────────────────────────────────────────────────────────
+    st.subheader("📊 Asset Universe")
+    _sel_saved = _load_selected_assets()
+    _downloaded = [t for t in _sel_saved
+                   if os.path.exists(os.path.join(OUTPUT, f"{ticker_to_fname(t)}_hourly.csv"))]
+
+    asset = st.selectbox(
+        "Asset (Tab Prezzi)",
+        options=_downloaded if _downloaded else ["BTC-USD"],
+        format_func=lambda t: f"{_CATALOG_FLAT.get(t, t)} ({t})",
+        help="Asset visualizzato nel tab Prezzi & Rendimenti",
+    )
+
+    with st.expander("➕ Aggiungi asset al universe"):
+        _new_sel: list = []
+        for _cat, _items in ASSET_CATALOG.items():
+            _defaults = [t for t in _sel_saved if t in _items]
+            _chosen = st.multiselect(
+                _cat, options=list(_items.keys()), default=_defaults,
+                format_func=lambda t, _i=_items: f"{_i.get(t, t)} ({t})",
+                key=f"univ_{_cat}",
+            )
+            _new_sel.extend(_chosen)
+        _uc1, _uc2 = st.columns(2)
+        with _uc1:
+            if st.button("💾 Salva", use_container_width=True, key="save_univ"):
+                _save_selected_assets(_new_sel)
+                st.success(f"{len(_new_sel)} salvati.")
+        with _uc2:
+            if st.button("⬇️ Scarica", use_container_width=True, key="dl_univ",
+                         help="Scarica CSV orari per i nuovi asset"):
+                _save_selected_assets(_new_sel)
+                _to_dl = [t for t in _new_sel
+                          if not os.path.exists(
+                              os.path.join(OUTPUT, f"{ticker_to_fname(t)}_hourly.csv"))]
+                if _to_dl:
+                    with st.spinner(f"Download {len(_to_dl)} asset…"):
+                        try:
+                            import importlib.util as _ilu
+                            _spec = _ilu.spec_from_file_location(
+                                "dl01", os.path.join(BASE, "01_data_download.py"))
+                            _dlm = _ilu.module_from_spec(_spec)
+                            _spec.loader.exec_module(_dlm)
+                            _r = _dlm.download_all_assets(_to_dl, skip_existing=True)
+                            _ok = sum(_r.values())
+                            st.success(f"OK {_ok}/{len(_to_dl)}")
+                            st.cache_data.clear()
+                        except Exception as _de:
+                            st.error(f"Errore: {_de}")
+                else:
+                    st.info("Dati già presenti.")
+                st.rerun()
+
+    st.divider()
+
+    # ── Chiavi API ────────────────────────────────────────────────────────────
+    st.subheader("🔑 Chiavi API")
+    _sk = _load_api_keys()
+
+    st.caption("🤖 Agent AI")
+    _ant_key = st.text_input(
+        "ANTHROPIC_API_KEY",
+        value=_sk.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", ""),
+        type="password", placeholder="sk-ant-…",
+        help="Claude claude-opus-4-7 con adaptive thinking",
+    )
+    _or_key = st.text_input(
+        "OPENROUTER_API_KEY",
+        value=_sk.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY", ""),
+        type="password", placeholder="sk-or-…",
+        help="Alternativa: Claude/GPT-4o/Gemini via OpenRouter",
+    )
+    _or_model = st.text_input(
+        "OPENROUTER_MODEL",
+        value=_sk.get("OPENROUTER_MODEL") or os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-4"),
+        help="Ignorato se si usa Anthropic diretto",
+    )
+
+    st.caption("📡 Dati (Alpaca Markets)")
+    _alp_key = st.text_input(
+        "ALPACA_API_KEY",
+        value=_sk.get("ALPACA_API_KEY") or os.environ.get("ALPACA_API_KEY", ""),
+        type="password", placeholder="PK…",
+        help="Fallback se Yahoo Finance non è disponibile",
+    )
+    _alp_sec = st.text_input(
+        "ALPACA_SECRET_KEY",
+        value=_sk.get("ALPACA_SECRET_KEY") or os.environ.get("ALPACA_SECRET_KEY", ""),
+        type="password", placeholder="…",
+    )
+
+    if st.button("💾 Salva tutte le chiavi", use_container_width=True,
+                 help="Salva in output/api_keys.json (escluso da git)"):
+        _save_api_keys({
+            "ANTHROPIC_API_KEY":  _ant_key,
+            "OPENROUTER_API_KEY": _or_key,
+            "OPENROUTER_MODEL":   _or_model,
+            "ALPACA_API_KEY":     _alp_key,
+            "ALPACA_SECRET_KEY":  _alp_sec,
+        })
+        st.success("Chiavi salvate.")
 
     st.divider()
 
@@ -119,39 +269,9 @@ with st.sidebar:
             pass
     st.caption(f"Config attuale: `{_cur_src}`")
 
-    _saved_keys = _load_api_keys()
-    _ant_key = st.text_input(
-        "ANTHROPIC_API_KEY",
-        value=_saved_keys.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", ""),
-        type="password",
-        placeholder="sk-ant-…",
-        help="Chiave Anthropic diretta — modello claude-opus-4-7",
-    )
-    _or_key = st.text_input(
-        "OPENROUTER_API_KEY",
-        value=_saved_keys.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY", ""),
-        type="password",
-        placeholder="sk-or-…",
-        help="Chiave OpenRouter — supporta Claude, GPT-4o, Gemini, …",
-    )
-    _or_model = st.text_input(
-        "OPENROUTER_MODEL",
-        value=_saved_keys.get("OPENROUTER_MODEL") or os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-4"),
-        help="Modello OpenRouter da usare (ignorato se si usa Anthropic diretto)",
-    )
-
-    _col1, _col2 = st.columns(2)
-    with _col1:
-        if st.button("💾 Salva chiavi", use_container_width=True,
-                     help="Salva le chiavi localmente in output/api_keys.json"):
-            _save_api_keys(_ant_key, _or_key, _or_model)
-            st.success("Chiavi salvate.")
-    with _col2:
-        _run_agent = st.button("▶ Esegui Agent", use_container_width=True)
-
-    if _run_agent:
+    if st.button("▶ Esegui Agent", use_container_width=True):
         if not _ant_key and not _or_key:
-            st.warning("Inserisci almeno una chiave API per eseguire l'agent.")
+            st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
         else:
             import sys as _sys
             _sys.path.insert(0, BASE)
@@ -165,10 +285,20 @@ with st.sidebar:
                         openrouter_model=_or_model,
                     )
                     _ag.save_outputs(_cfg_r, _code_r, _report_r)
-                    st.success(f"Strategia aggiornata — source: `{_cfg_r['source']}` | tipo: `{_cfg_r.get('strategy_type','')}`")
-                    st.rerun()
                 except Exception as _ae:
                     st.error(f"Errore agent: {_ae}")
+                    st.stop()
+            with st.spinner("Calcolo backtest con la nuova strategia…"):
+                try:
+                    _run_script("06_enhanced_strategy.py")
+                    st.cache_data.clear()
+                    st.success(
+                        f"✅ Strategia `{_cfg_r.get('strategy_type','')}` pronta. "
+                        "Vedi Tab **🤖 Agent Strategy** per i risultati."
+                    )
+                except subprocess.CalledProcessError as _be:
+                    st.warning(f"Backtest fallito: {_be.stderr.decode()[:300]}")
+            st.rerun()
 
     st.divider()
     st.subheader("ℹ️ Info")
@@ -185,7 +315,7 @@ with st.sidebar:
     st.caption(
         f"**Strategia**: {_info_name}\n"
         f"**Tipo**: {_info_type}\n"
-        "**Dati**: Yahoo Finance (yfinance) con fallback sintetico"
+        "**Dati**: Yahoo Finance · Alpaca Markets"
     )
     if st.button("🔄 Rigenera dati", use_container_width=True):
         st.cache_data.clear()
@@ -202,8 +332,8 @@ with st.sidebar:
 
 @st.cache_data
 def load_ohlcv_daily(sym: str) -> pd.DataFrame:
-    fname = f"{sym.lower()}_daily.csv" if sym != "BTC" else "btc_daily.csv"
-    path  = os.path.join(OUTPUT, fname)
+    fname = ticker_to_fname(sym)
+    path  = os.path.join(OUTPUT, f"{fname}_daily.csv")
     if not os.path.exists(path):
         path = os.path.join(OUTPUT, "btc_daily.csv")
     df = pd.read_csv(path, index_col=0, parse_dates=True)
@@ -212,7 +342,7 @@ def load_ohlcv_daily(sym: str) -> pd.DataFrame:
 
 @st.cache_data
 def load_ohlcv_hourly(sym: str) -> pd.DataFrame:
-    path = os.path.join(OUTPUT, f"{sym.lower()}_hourly.csv")
+    path = os.path.join(OUTPUT, f"{ticker_to_fname(sym)}_hourly.csv")
     df   = pd.read_csv(path, index_col=0, parse_dates=True)
     df.index.name = "Date"
     return df
@@ -262,7 +392,9 @@ def drawdown_series(eq: pd.Series) -> pd.Series:
 #  Header
 # ══════════════════════════════════════════════════════════════════════════════
 
-st.title(f"{'₿' if asset=='BTC' else '⟠' if asset=='ETH' else '◎'} {asset}/USD — Strategy Dashboard")
+_ASSET_EMOJI = {"BTC-USD": "₿", "ETH-USD": "⟠", "SOL-USD": "◎"}
+_aname = _CATALOG_FLAT.get(asset, asset)
+st.title(f"{_ASSET_EMOJI.get(asset, '📈')} {_aname} — Strategy Dashboard")
 st.caption("Analisi serie storica · Strategia V5 · Walk-Forward · Monte Carlo · Multi-Asset")
 
 try:
@@ -396,7 +528,7 @@ with tab1:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab2:
-    if asset != "BTC":
+    if ticker_to_fname(asset) != "btc":
         st.info("Il backtest della strategia V5 è calcolato su **BTC**. "
                 "I risultati per ETH e SOL sono disponibili nel tab 🌐 Multi-Asset.")
     try:
@@ -505,7 +637,7 @@ with tab2:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab3:
-    if asset != "BTC":
+    if ticker_to_fname(asset) != "btc":
         st.info("La Walk-Forward Optimization è calcolata su **BTC**. "
                 "I risultati per altri asset sono in sviluppo.")
     try:
@@ -606,7 +738,7 @@ with tab3:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab4:
-    if asset != "BTC":
+    if ticker_to_fname(asset) != "btc":
         st.info("La simulazione Monte Carlo è calcolata su **BTC**. "
                 "Seleziona BTC nella sidebar per la visione completa.")
     try:
@@ -794,6 +926,64 @@ with tab5:
     except Exception as e:
         st.error(f"Errore caricamento dati multi-asset: {e}")
 
+    # ── Asset Universe Performance ────────────────────────────────────────────
+    st.divider()
+    st.subheader("🌍 Asset Universe Performance")
+    _univ_sel = _load_selected_assets()
+    _univ_avail = [t for t in _univ_sel
+                   if os.path.exists(os.path.join(OUTPUT, f"{ticker_to_fname(t)}_hourly.csv"))]
+    if not _univ_avail:
+        st.info("Nessun asset scaricato. Usa **📊 Asset Universe** nel sidebar per aggiungerne.")
+    else:
+        _rets: dict = {}
+        for _t in _univ_avail:
+            try:
+                _dh = load_ohlcv_hourly(_t)
+                _dc = _dh["Close"].resample("D").last().dropna()
+                _rets[_CATALOG_FLAT.get(_t, _t)] = _dc.pct_change().dropna()
+            except Exception:
+                pass
+
+        if _rets:
+            # Cumulative return chart
+            _fig_u = go.Figure()
+            for _nm, _r in _rets.items():
+                _cum = (1 + _r).cumprod() - 1
+                _fig_u.add_trace(go.Scatter(
+                    x=_cum.index, y=(_cum * 100).values,
+                    name=_nm, mode="lines", line=dict(width=1.5),
+                ))
+            _fig_u.update_layout(
+                height=350, template="plotly_dark",
+                title="Rendimento cumulativo normalizzato (%)",
+                yaxis_ticksuffix="%",
+                legend=dict(orientation="h", y=-0.2),
+            )
+            st.plotly_chart(_fig_u, use_container_width=True)
+
+            # Performance table
+            _rows = {}
+            for _nm, _r in _rets.items():
+                _ann_ret = (1 + _r).prod() ** (252 / max(len(_r), 1)) - 1
+                _ann_vol = _r.std() * np.sqrt(252)
+                _sharpe  = _ann_ret / _ann_vol if _ann_vol > 0 else 0
+                _cum_s   = (1 + _r).cumprod()
+                _max_dd  = (_cum_s / _cum_s.cummax() - 1).min()
+                _rows[_nm] = {
+                    "Ann. Return %": round(_ann_ret * 100, 2),
+                    "Volatilità %":  round(_ann_vol * 100, 2),
+                    "Sharpe":        round(_sharpe, 2),
+                    "Max DD %":      round(_max_dd * 100, 2),
+                }
+            _pf = pd.DataFrame(_rows).T.sort_values("Sharpe", ascending=False)
+            st.dataframe(
+                _pf.style
+                   .background_gradient(subset=["Ann. Return %", "Sharpe"], cmap="RdYlGn")
+                   .background_gradient(subset=["Max DD %", "Volatilità %"], cmap="RdYlGn_r")
+                   .format("{:.2f}"),
+                use_container_width=True,
+            )
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TAB 6 — Agent Strategy
@@ -844,6 +1034,40 @@ with tab6:
             c3.metric("TP",               f"{_cfg.get('tp_mult', 5.0):.2f}×ATR")
             c4.metric("Ore attive UTC",   f"{_ah[0]:02d}:00–{_ah[1]:02d}:00")
             c5.metric("Risk/trade",       f"{_cfg.get('risk_per_trade', 0.01)*100:.1f}%")
+
+            # ── Backtest results from enhanced_strategy_comparison.csv ─────────
+            _comp_path = os.path.join(OUTPUT, "enhanced_strategy_comparison.csv")
+            if os.path.exists(_comp_path):
+                try:
+                    _comp = pd.read_csv(_comp_path)
+                    _vrow = _comp[_comp["version"] == "V_Agent"]
+                    if not _vrow.empty:
+                        _r = _vrow.iloc[0]
+                        st.subheader("📊 Backtest V_Agent")
+                        _bc1, _bc2, _bc3, _bc4, _bc5, _bc6 = st.columns(6)
+                        _bc1.metric("Return totale",  f"{_r['total_return_pct']:.1f}%")
+                        _bc2.metric("CAGR",           f"{_r['cagr_pct']:.1f}%")
+                        _bc3.metric("Sharpe",         f"{_r['sharpe_ratio']:.2f}")
+                        _bc4.metric("Max DD",         f"{_r['max_drawdown_pct']:.1f}%")
+                        _bc5.metric("Win rate",       f"{_r['win_rate_pct']:.1f}%")
+                        _bc6.metric("# Trade",        int(_r["n_trades"]))
+
+                        # compare V_Agent vs V4 (best baseline)
+                        _v4 = _comp[_comp["version"] == "V4 +GARCH+Costi"]
+                        if not _v4.empty:
+                            _v4r = _v4.iloc[0]
+                            st.markdown(
+                                f"**vs V4 baseline** — CAGR: "
+                                f"`{_r['cagr_pct']:.1f}%` vs `{_v4r['cagr_pct']:.1f}%` · "
+                                f"Sharpe: `{_r['sharpe_ratio']:.2f}` vs "
+                                f"`{_v4r['sharpe_ratio']:.2f}` · "
+                                f"Max DD: `{_r['max_drawdown_pct']:.1f}%` vs "
+                                f"`{_v4r['max_drawdown_pct']:.1f}%`"
+                            )
+                    else:
+                        st.info("Esegui **▶ Esegui Agent** per calcolare il backtest V_Agent.")
+                except Exception as _ce:
+                    st.warning(f"Errore lettura metriche backtest: {_ce}")
 
             st.divider()
 

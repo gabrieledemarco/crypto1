@@ -2,7 +2,8 @@
 01_data_download.py
 ===================
 Scarica dati OHLCV reali da Yahoo Finance via yfinance.
-Se la connessione non è disponibile, genera dati sintetici come fallback.
+Se yfinance non è disponibile, tenta Alpaca Markets (ALPACA_API_KEY / ALPACA_SECRET_KEY).
+Se entrambe le fonti falliscono, il processo termina con errore — nessun dato sintetico.
 
 Asset scaricati:
   BTC-USD  daily  2015-01-01 → oggi          → output/btc_daily.csv
@@ -11,10 +12,11 @@ Asset scaricati:
   SOL-USD  hourly ultimi 730 giorni          → output/sol_hourly.csv
 
 Dipendenze:
-  pip install yfinance pandas numpy
+  pip install yfinance pandas requests
 """
 
 import os
+import re
 import warnings
 import numpy as np
 import pandas as pd
@@ -34,6 +36,61 @@ TICKERS = {
 DAILY_START  = "2015-01-01"
 HOURLY_DAYS  = 730   # yfinance limita hourly a ~730 giorni
 HOURLY_START = "2023-01-01"
+
+# ── Asset catalog ──────────────────────────────────────────────────────────────
+
+ASSET_CATALOG: dict[str, dict[str, str]] = {
+    "Crypto Majors": {
+        "BTC-USD": "Bitcoin",  "ETH-USD": "Ethereum", "SOL-USD": "Solana",
+        "BNB-USD": "BNB",      "XRP-USD": "XRP",       "ADA-USD": "Cardano",
+        "DOGE-USD": "Dogecoin","AVAX-USD": "Avalanche","DOT-USD": "Polkadot",
+        "LINK-USD": "Chainlink",
+    },
+    "Commodities": {
+        "GC=F": "Gold", "SI=F": "Silver", "CL=F": "Crude Oil WTI",
+        "NG=F": "Natural Gas", "HG=F": "Copper",
+    },
+    "Stocks US": {
+        "SPY": "S&P 500 ETF", "QQQ": "Nasdaq ETF",
+        "AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA",
+        "TSLA": "Tesla", "GOOGL": "Alphabet", "AMZN": "Amazon", "META": "Meta",
+    },
+    "Stocks EU": {
+        "MC.PA": "LVMH", "SAP.DE": "SAP", "ASML.AS": "ASML",
+        "SIE.DE": "Siemens", "ALV.DE": "Allianz", "SAN.PA": "Sanofi",
+        "BNP.PA": "BNP Paribas", "NESN.SW": "Nestlé",
+    },
+}
+
+_TICKER_ALIAS = {"BTC-USD": "btc", "ETH-USD": "eth", "SOL-USD": "sol"}
+
+
+def ticker_to_fname(ticker: str) -> str:
+    """Convert ticker symbol to CSV filename prefix (no extension)."""
+    if ticker in _TICKER_ALIAS:
+        return _TICKER_ALIAS[ticker]
+    return re.sub(r"[^a-z0-9]", "_", ticker.lower()).strip("_")
+
+
+def download_all_assets(tickers: list, skip_existing: bool = True) -> dict:
+    """Download hourly CSV for each ticker. Returns {ticker: True/False}."""
+    results: dict = {}
+    for t in tickers:
+        fname = ticker_to_fname(t)
+        fpath = os.path.join(OUTPUT_DIR, f"{fname}_hourly.csv")
+        if skip_existing and os.path.exists(fpath):
+            results[t] = True
+            continue
+        try:
+            print(f"  {t} → {fname}_hourly.csv …")
+            df = _download(t, "1h", start=HOURLY_START)
+            df.to_csv(fpath)
+            print(f"    OK: {len(df)} righe, ultimo close: {df['Close'].iloc[-1]:.2f}")
+            results[t] = True
+        except Exception as exc:
+            print(f"    ERRORE {t}: {exc}")
+            results[t] = False
+    return results
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -110,7 +167,83 @@ def download_real() -> bool:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  FALLBACK: generazione dati sintetici
+#  DOWNLOAD via Alpaca Markets (fallback a yfinance)
+# ══════════════════════════════════════════════════════════════════════════════
+
+ALPACA_BASE = "https://data.alpaca.markets"
+_ALPACA_SYMBOLS = {"btc": "BTC/USD", "eth": "ETH/USD", "sol": "SOL/USD"}
+
+
+def _alpaca_bars(api_key: str, secret_key: str,
+                 symbol: str, timeframe: str, start: str) -> pd.DataFrame:
+    """Download paginated bars from Alpaca crypto data API v1beta3."""
+    import requests
+    headers = {
+        "APCA-API-KEY-ID": api_key,
+        "APCA-API-SECRET-KEY": secret_key,
+        "Accept": "application/json",
+    }
+    params: dict = {"symbols": symbol, "timeframe": timeframe,
+                    "start": start, "limit": 10000}
+    rows: list = []
+    url = f"{ALPACA_BASE}/v1beta3/crypto/bars"
+    while True:
+        resp = requests.get(url, headers=headers, params=params, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+        batch = data.get("bars", {}).get(symbol, [])
+        rows.extend(batch)
+        npt = data.get("next_page_token")
+        if not npt:
+            break
+        params["page_token"] = npt
+    if not rows:
+        raise ValueError(f"Nessun dato Alpaca per {symbol} ({timeframe})")
+    df = pd.DataFrame(rows)
+    df.index = pd.to_datetime(df["t"]).dt.tz_localize(None)
+    df.index.name = "Date"
+    df = df.rename(columns={"o": "Open", "h": "High", "l": "Low",
+                             "c": "Close", "v": "Volume"})
+    return df[["Open", "High", "Low", "Close", "Volume"]].copy()
+
+
+def download_alpaca(api_key: str, secret_key: str) -> bool:
+    """Scarica OHLCV da Alpaca Markets. Ritorna True se tutto è riuscito."""
+    try:
+        import requests  # noqa: F401
+    except ImportError:
+        print("  requests non installato — usa: pip install requests")
+        return False
+    try:
+        print(f"Download BTC/USD daily da Alpaca ({DAILY_START} → oggi)...")
+        btc_d = _alpaca_bars(api_key, secret_key, "BTC/USD", "1Day", DAILY_START)
+        btc_d.to_csv(os.path.join(OUTPUT_DIR, "btc_daily.csv"))
+        print(f"  OK: {len(btc_d)} righe  "
+              f"${btc_d['Close'].iloc[-1]:,.0f}")
+
+        print(f"Download BTC/USD hourly da Alpaca ({HOURLY_START} → oggi)...")
+        btc_h = _alpaca_bars(api_key, secret_key, "BTC/USD", "1Hour", HOURLY_START)
+        btc_h.to_csv(os.path.join(OUTPUT_DIR, "btc_hourly.csv"))
+        print(f"  OK: {len(btc_h)} righe")
+
+        print("Download ETH/USD hourly da Alpaca...")
+        eth_h = _alpaca_bars(api_key, secret_key, "ETH/USD", "1Hour", HOURLY_START)
+        eth_h.to_csv(os.path.join(OUTPUT_DIR, "eth_hourly.csv"))
+        print(f"  OK: {len(eth_h)} righe")
+
+        print("Download SOL/USD hourly da Alpaca...")
+        sol_h = _alpaca_bars(api_key, secret_key, "SOL/USD", "1Hour", HOURLY_START)
+        sol_h.to_csv(os.path.join(OUTPUT_DIR, "sol_hourly.csv"))
+        print(f"  OK: {len(sol_h)} righe")
+
+        return True
+    except Exception as exc:
+        print(f"  Errore Alpaca: {exc}")
+        return False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  DATI SINTETICI (solo per sviluppo/test — non usare in produzione)
 # ══════════════════════════════════════════════════════════════════════════════
 
 np.random.seed(42)
@@ -282,16 +415,28 @@ def generate_synthetic():
 # ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
+    import sys
     print("=" * 60)
     print("  01_data_download.py — BTC/ETH/SOL OHLCV")
     print("=" * 60)
 
-    ok = download_real()
-    if ok:
-        print("\nDati reali scaricati con successo.")
-    else:
-        print("\nDownload non riuscito — uso dati sintetici.")
-        generate_synthetic()
+    ok = download_real()   # prova yfinance
+
+    if not ok:
+        alp_key = os.environ.get("ALPACA_API_KEY", "").strip()
+        alp_sec = os.environ.get("ALPACA_SECRET_KEY", "").strip()
+        if alp_key and alp_sec:
+            print("\nYahoo Finance non disponibile — tentativo via Alpaca Markets...")
+            ok = download_alpaca(alp_key, alp_sec)
+        else:
+            print("\n  Nessuna chiave Alpaca configurata"
+                  " (ALPACA_API_KEY / ALPACA_SECRET_KEY).")
+
+    if not ok:
+        print("\nERRORE: impossibile scaricare dati reali.")
+        print("  • Verifica la connessione a Yahoo Finance, oppure")
+        print("  • Configura ALPACA_API_KEY e ALPACA_SECRET_KEY nel dashboard.")
+        sys.exit(1)
 
     print("\nFile generati:")
     for f in sorted(os.listdir(OUTPUT_DIR)):
