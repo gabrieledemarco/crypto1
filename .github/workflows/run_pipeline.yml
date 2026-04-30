@@ -30,6 +30,14 @@ jobs:
       - name: Run pipeline
         run: python3 btc_analysis/run_all.py
 
+      - name: Smoke-test Streamlit app
+        run: |
+          timeout 15 streamlit run btc_analysis/app.py \
+            --server.headless true \
+            --server.port 8501 \
+            -- --server.runOnSave false \
+          || true
+
       - name: Upload output artifacts
         if: always()
         uses: actions/upload-artifact@v4
