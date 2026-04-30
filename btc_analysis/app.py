@@ -6,6 +6,8 @@ Avvio:
 """
 
 import os
+import sys
+import subprocess
 import warnings
 import numpy as np
 import pandas as pd
@@ -16,21 +18,91 @@ import streamlit as st
 
 warnings.filterwarnings("ignore")
 
-OUTPUT = os.path.join(os.path.dirname(__file__), "output")
+BASE   = os.path.dirname(os.path.abspath(__file__))
+OUTPUT = os.path.join(BASE, "output")
 
 st.set_page_config(
     page_title="BTC Strategy Dashboard",
     page_icon="₿",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
+
+# ── Genera dati se mancanti ────────────────────────────────────────────────────
+_REQUIRED = [
+    "btc_daily.csv", "btc_hourly.csv",
+    "eth_hourly.csv", "sol_hourly.csv", "trades.csv",
+]
+
+def _run_script(name: str):
+    subprocess.run(
+        [sys.executable, os.path.join(BASE, name)],
+        check=True, capture_output=True,
+    )
+
+def ensure_data():
+    os.makedirs(OUTPUT, exist_ok=True)
+    missing = [f for f in _REQUIRED if not os.path.exists(os.path.join(OUTPUT, f))]
+    if not missing:
+        return
+    with st.spinner(f"Prima esecuzione: generazione dati ({', '.join(missing)})…"):
+        try:
+            _run_script("01_data_download.py")
+            if "trades.csv" in missing:
+                _run_script("04_strategy.py")
+                _run_script("06_enhanced_strategy.py")
+        except subprocess.CalledProcessError as e:
+            st.error(f"Errore generazione dati: {e.stderr.decode()[:400]}")
+            st.stop()
+    st.rerun()
+
+ensure_data()
 
 # ── Palette ───────────────────────────────────────────────────────────────────
 C_UP   = "#26a69a"
 C_DOWN = "#ef5350"
 C_LINE = "#2196f3"
 C_ACC  = "#ff9800"
-BG     = "#0e1117"
+ASSET_COLORS = {"BTC": C_LINE, "ETH": "#9c27b0", "SOL": C_ACC}
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Sidebar
+# ══════════════════════════════════════════════════════════════════════════════
+
+with st.sidebar:
+    st.header("⚙️ Impostazioni")
+
+    asset = st.selectbox(
+        "Asset",
+        options=["BTC", "ETH", "SOL"],
+        index=0,
+        help="Seleziona l'asset da analizzare nel tab Prezzi & Rendimenti",
+    )
+
+    st.divider()
+    st.subheader("📅 Periodo prezzi")
+    yr_from = st.number_input("Anno inizio", min_value=2015, max_value=2025,
+                               value=2020, step=1)
+    yr_to   = st.number_input("Anno fine",   min_value=2015, max_value=2025,
+                               value=2025, step=1)
+
+    st.divider()
+    st.subheader("ℹ️ Info")
+    st.caption(
+        "**Strategia V5**\n"
+        "ATR breakout · GARCH filter\n"
+        "SL=2×ATR · TP=5×ATR\n"
+        "Maker fee 0.01%\n\n"
+        "**Dati**: Yahoo Finance (yfinance)\n"
+        "con fallback sintetico GARCH"
+    )
+    if st.button("🔄 Rigenera dati"):
+        st.cache_data.clear()
+        for f in _REQUIRED:
+            p = os.path.join(OUTPUT, f)
+            if os.path.exists(p):
+                os.remove(p)
+        st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -38,14 +110,19 @@ BG     = "#0e1117"
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data
-def load_daily():
-    df = pd.read_csv(f"{OUTPUT}/btc_daily.csv", index_col=0, parse_dates=True)
+def load_ohlcv_daily(sym: str) -> pd.DataFrame:
+    fname = f"{sym.lower()}_daily.csv" if sym != "BTC" else "btc_daily.csv"
+    path  = os.path.join(OUTPUT, fname)
+    if not os.path.exists(path):
+        path = os.path.join(OUTPUT, "btc_daily.csv")
+    df = pd.read_csv(path, index_col=0, parse_dates=True)
     df.index.name = "Date"
     return df
 
 @st.cache_data
-def load_hourly():
-    df = pd.read_csv(f"{OUTPUT}/btc_hourly.csv", index_col=0, parse_dates=True)
+def load_ohlcv_hourly(sym: str) -> pd.DataFrame:
+    path = os.path.join(OUTPUT, f"{sym.lower()}_hourly.csv")
+    df   = pd.read_csv(path, index_col=0, parse_dates=True)
     df.index.name = "Date"
     return df
 
@@ -78,7 +155,7 @@ def load_optimization():
     return pd.read_csv(f"{OUTPUT}/optimization_results.csv")
 
 
-# ── Equity from trades ────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def equity_curve(trades: pd.DataFrame, capital: float = 10_000) -> pd.Series:
     eq = capital + trades["pnl"].cumsum()
@@ -94,14 +171,12 @@ def drawdown_series(eq: pd.Series) -> pd.Series:
 #  Header
 # ══════════════════════════════════════════════════════════════════════════════
 
-st.title("₿ BTC/USD — Strategy Dashboard")
+st.title(f"{'₿' if asset=='BTC' else '⟠' if asset=='ETH' else '◎'} {asset}/USD — Strategy Dashboard")
 st.caption("Analisi serie storica · Strategia V5 · Walk-Forward · Monte Carlo · Multi-Asset")
 
-# ── Top KPIs (versione migliore per Sharpe) ────────────────────────────────
 try:
     cmp  = load_strategy_comparison()
     best = cmp.loc[cmp["sharpe_ratio"].idxmax()]
-
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("CAGR",         f"{best['cagr_pct']:.1f}%")
     col2.metric("Sharpe",       f"{best['sharpe_ratio']:.2f}")
@@ -112,10 +187,6 @@ except Exception:
     pass
 
 st.divider()
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  Tabs
-# ══════════════════════════════════════════════════════════════════════════════
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Prezzi & Rendimenti",
@@ -131,104 +202,101 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab1:
-    daily = load_daily()
+    from scipy import stats as scipy_stats
 
-    # ── Filtro data ───────────────────────────────────────────────────────────
-    col_a, col_b = st.columns([3, 1])
-    with col_b:
-        years = sorted(daily.index.year.unique())
-        yr_from, yr_to = st.select_slider(
-            "Periodo", options=years, value=(years[0], years[-1])
-        )
+    a_color = ASSET_COLORS.get(asset, C_LINE)
+    daily   = load_ohlcv_daily(asset)
     d = daily[(daily.index.year >= yr_from) & (daily.index.year <= yr_to)]
 
-    # ── Candlestick + Volume ──────────────────────────────────────────────────
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                        row_heights=[0.75, 0.25], vertical_spacing=0.03)
-    fig.add_trace(go.Candlestick(
-        x=d.index, open=d["Open"], high=d["High"],
-        low=d["Low"],  close=d["Close"],
-        increasing_line_color=C_UP, decreasing_line_color=C_DOWN,
-        name="BTC/USD",
-    ), row=1, col=1)
-    colors = [C_UP if c >= o else C_DOWN
-              for c, o in zip(d["Close"], d["Open"])]
-    fig.add_trace(go.Bar(x=d.index, y=d["Volume"],
-                         marker_color=colors, name="Volume",
-                         showlegend=False), row=2, col=1)
-    fig.update_layout(height=500, xaxis_rangeslider_visible=False,
-                      margin=dict(l=0, r=0, t=30, b=0),
-                      template="plotly_dark", title="BTC/USD — Candlestick giornaliero")
-    fig.update_yaxes(title_text="Prezzo (USD)", row=1, col=1)
-    fig.update_yaxes(title_text="Volume", row=2, col=1)
-    st.plotly_chart(fig, use_container_width=True)
+    if d.empty:
+        st.warning("Nessun dato per il periodo selezionato.")
+    else:
+        # ── Candlestick + Volume ──────────────────────────────────────────────
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                            row_heights=[0.75, 0.25], vertical_spacing=0.03)
+        fig.add_trace(go.Candlestick(
+            x=d.index, open=d["Open"], high=d["High"],
+            low=d["Low"], close=d["Close"],
+            increasing_line_color=C_UP, decreasing_line_color=C_DOWN,
+            name=f"{asset}/USD",
+        ), row=1, col=1)
+        bar_colors = [C_UP if c >= o else C_DOWN
+                      for c, o in zip(d["Close"], d["Open"])]
+        fig.add_trace(go.Bar(x=d.index, y=d["Volume"],
+                             marker_color=bar_colors,
+                             showlegend=False, name="Volume"), row=2, col=1)
+        fig.update_layout(height=500, xaxis_rangeslider_visible=False,
+                          margin=dict(l=0, r=0, t=30, b=0),
+                          template="plotly_dark",
+                          title=f"{asset}/USD — Candlestick giornaliero")
+        fig.update_yaxes(title_text="Prezzo (USD)", row=1, col=1)
+        fig.update_yaxes(title_text="Volume",       row=2, col=1)
+        st.plotly_chart(fig, use_container_width=True)
 
-    # ── Log-returns + Distribuzione ───────────────────────────────────────────
-    log_ret = np.log(d["Close"] / d["Close"].shift(1)).dropna()
+        # ── Log-returns + Distribuzione ───────────────────────────────────────
+        log_ret = np.log(d["Close"] / d["Close"].shift(1)).dropna()
+        col_l, col_r = st.columns(2)
 
-    col_l, col_r = st.columns(2)
+        with col_l:
+            fig2 = go.Figure(go.Scatter(
+                x=log_ret.index, y=log_ret.values,
+                mode="lines", line=dict(color=a_color, width=1),
+                name="Log-return",
+            ))
+            fig2.update_layout(height=300, template="plotly_dark",
+                                title="Log-returns giornalieri",
+                                margin=dict(l=0, r=0, t=40, b=0),
+                                yaxis_title="Log-return")
+            st.plotly_chart(fig2, use_container_width=True)
 
-    with col_l:
-        fig2 = go.Figure()
-        fig2.add_trace(go.Scatter(x=log_ret.index, y=log_ret.values,
-                                  mode="lines", line=dict(color=C_LINE, width=1),
-                                  name="Log-return"))
-        fig2.update_layout(height=300, template="plotly_dark",
-                            title="Log-returns giornalieri",
-                            margin=dict(l=0, r=0, t=40, b=0),
-                            yaxis_title="Log-return")
-        st.plotly_chart(fig2, use_container_width=True)
+        with col_r:
+            mu, sigma = log_ret.mean(), log_ret.std()
+            x_n = np.linspace(log_ret.min(), log_ret.max(), 200)
+            y_n = (np.exp(-0.5 * ((x_n - mu) / sigma) ** 2)
+                   / (sigma * np.sqrt(2 * np.pi))
+                   * len(log_ret) * (log_ret.max() - log_ret.min()) / 80)
+            fig3 = go.Figure()
+            fig3.add_trace(go.Histogram(x=log_ret.values, nbinsx=80,
+                                        marker_color=a_color, opacity=0.75,
+                                        name="Empirica"))
+            fig3.add_trace(go.Scatter(x=x_n, y=y_n, mode="lines",
+                                      line=dict(color=C_ACC, width=2),
+                                      name="Normale"))
+            fig3.update_layout(height=300, template="plotly_dark",
+                                title="Distribuzione log-returns",
+                                margin=dict(l=0, r=0, t=40, b=0))
+            st.plotly_chart(fig3, use_container_width=True)
 
-    with col_r:
-        fig3 = go.Figure()
-        fig3.add_trace(go.Histogram(x=log_ret.values, nbinsx=80,
-                                    marker_color=C_LINE, opacity=0.8,
-                                    name="Distribuzione"))
-        # Gaussian overlay
-        mu, sigma = log_ret.mean(), log_ret.std()
-        x_norm = np.linspace(log_ret.min(), log_ret.max(), 200)
-        y_norm = (np.exp(-0.5 * ((x_norm - mu) / sigma)**2)
-                  / (sigma * np.sqrt(2 * np.pi))) * len(log_ret) * (log_ret.max() - log_ret.min()) / 80
-        fig3.add_trace(go.Scatter(x=x_norm, y=y_norm, mode="lines",
-                                  line=dict(color=C_ACC, width=2),
-                                  name="Normale"))
-        fig3.update_layout(height=300, template="plotly_dark",
-                            title="Distribuzione log-returns",
-                            margin=dict(l=0, r=0, t=40, b=0))
-        st.plotly_chart(fig3, use_container_width=True)
+        # ── Statistiche ───────────────────────────────────────────────────────
+        kurt    = float(scipy_stats.kurtosis(log_ret, fisher=True))
+        skew_v  = float(scipy_stats.skew(log_ret))
+        _, jb_p = scipy_stats.jarque_bera(log_ret)
+        ann_vol = log_ret.std() * np.sqrt(252) * 100
 
-    # ── Statistiche descrittive ───────────────────────────────────────────────
-    from scipy import stats as scipy_stats
-    kurt   = float(scipy_stats.kurtosis(log_ret, fisher=True))
-    skew   = float(scipy_stats.skew(log_ret))
-    jb_s, jb_p = scipy_stats.jarque_bera(log_ret)
-    ann_vol = log_ret.std() * np.sqrt(252) * 100
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Volatilità annua",  f"{ann_vol:.1f}%")
+        c2.metric("Curtosi (excess)",  f"{kurt:.2f}")
+        c3.metric("Skewness",          f"{skew_v:.3f}")
+        c4.metric("Jarque-Bera p-val", f"{jb_p:.4f}")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Volatilità annua",  f"{ann_vol:.1f}%")
-    c2.metric("Curtosi (excess)",  f"{kurt:.2f}")
-    c3.metric("Skewness",          f"{skew:.3f}")
-    c4.metric("Jarque-Bera p-val", f"{jb_p:.4f}")
-
-    # ── Rendimenti medi per ora del giorno ────────────────────────────────────
-    st.subheader("Pattern intraday (dati orari)")
-    try:
-        hourly = load_hourly()
-        hourly["log_ret"] = np.log(hourly["Close"] / hourly["Close"].shift(1))
-        hourly["hour"] = hourly.index.hour
-        by_hour = hourly.groupby("hour")["log_ret"].mean() * 1e4  # in basis points
-
-        fig4 = go.Figure(go.Bar(
-            x=by_hour.index, y=by_hour.values,
-            marker_color=[C_UP if v >= 0 else C_DOWN for v in by_hour.values],
-        ))
-        fig4.update_layout(height=280, template="plotly_dark",
-                            title="Rendimento medio per ora del giorno (UTC) — basis points",
-                            xaxis_title="Ora (UTC)", yaxis_title="Rendimento medio (bp)",
-                            margin=dict(l=0, r=0, t=40, b=0))
-        st.plotly_chart(fig4, use_container_width=True)
-    except Exception:
-        st.info("Dati orari non disponibili.")
+        # ── Pattern intraday ──────────────────────────────────────────────────
+        st.subheader(f"Pattern intraday {asset} (dati orari)")
+        try:
+            hourly = load_ohlcv_hourly(asset)
+            hourly["log_ret"] = np.log(hourly["Close"] / hourly["Close"].shift(1))
+            by_hour = hourly.groupby(hourly.index.hour)["log_ret"].mean() * 1e4
+            fig4 = go.Figure(go.Bar(
+                x=by_hour.index, y=by_hour.values,
+                marker_color=[C_UP if v >= 0 else C_DOWN for v in by_hour.values],
+            ))
+            fig4.update_layout(height=280, template="plotly_dark",
+                                title=f"Rendimento medio per ora del giorno (UTC) — {asset}",
+                                xaxis_title="Ora (UTC)",
+                                yaxis_title="Rendimento medio (bp)",
+                                margin=dict(l=0, r=0, t=40, b=0))
+            st.plotly_chart(fig4, use_container_width=True)
+        except Exception:
+            st.info("Dati orari non disponibili.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -236,6 +304,9 @@ with tab1:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab2:
+    if asset != "BTC":
+        st.info("Il backtest della strategia V5 è calcolato su **BTC**. "
+                "I risultati per ETH e SOL sono disponibili nel tab 🌐 Multi-Asset.")
     try:
         trades = load_trades()
         cmp    = load_strategy_comparison()
@@ -342,6 +413,9 @@ with tab2:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab3:
+    if asset != "BTC":
+        st.info("La Walk-Forward Optimization è calcolata su **BTC**. "
+                "I risultati per altri asset sono in sviluppo.")
     try:
         wfo = load_wfo()
 
@@ -440,8 +514,11 @@ with tab3:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab4:
+    if asset != "BTC":
+        st.info("La simulazione Monte Carlo è calcolata su **BTC**. "
+                "Seleziona BTC nella sidebar per la visione completa.")
     try:
-        mc   = load_mc_bootstrap()
+        mc     = load_mc_bootstrap()
         stress = load_mc_stress()
 
         # ── Fan chart dai percentili bootstrap ────────────────────────────────
@@ -564,10 +641,14 @@ with tab5:
                                vertical_spacing=0.18,
                                horizontal_spacing=0.1)
         positions = [(1,1),(1,2),(2,1),(2,2)]
-        asset_colors = {"BTC": C_LINE, "ETH": "#9c27b0", "SOL": C_ACC}
 
         for (r, c), met, lab in zip(positions, metrics, labels):
-            bar_colors = [asset_colors.get(a, "gray") for a in ma["asset"]]
+            # Evidenzia l'asset selezionato nella sidebar
+            bar_colors = [
+                ASSET_COLORS.get(a, "gray") if a == asset
+                else f"rgba({','.join(str(int(ASSET_COLORS.get(a,'#888888').lstrip('#')[i:i+2],16)) for i in (0,2,4))},0.35)"
+                for a in ma["asset"]
+            ]
             fig_ma.add_trace(
                 go.Bar(x=ma["asset"], y=ma[met],
                        marker_color=bar_colors,
@@ -606,9 +687,10 @@ with tab5:
         fig_alloc = go.Figure(go.Pie(
             labels=ma["asset"],
             values=ma["capital_share"],
-            marker_colors=[asset_colors.get(a, "gray") for a in ma["asset"]],
+            marker_colors=[ASSET_COLORS.get(a, "gray") for a in ma["asset"]],
             hole=0.5,
             textinfo="label+percent",
+            pull=[0.08 if a == asset else 0 for a in ma["asset"]],
         ))
         fig_alloc.update_layout(
             height=300, template="plotly_dark",
