@@ -174,27 +174,34 @@ def generate_asset_hourly(asset: str,
 
 
 def generate_all_assets() -> dict:
-    """Genera BTC (già esistente), ETH e SOL con innovazioni correlate."""
+    """Load BTC/ETH/SOL from real CSVs; generate synthetic only if CSV is missing."""
     btc = load_hourly("BTC")
     dates = btc.index
-
     T = len(dates)
-    L = np.linalg.cholesky(CORR_MATRIX)
 
+    L = np.linalg.cholesky(CORR_MATRIX)
     nu = 5.0
     indep = np.random.standard_t(df=nu, size=(3, T)) / np.sqrt(nu / (nu - 2))
-    correlated = (L @ indep)  # shape (3, T)
+    correlated = (L @ indep)
 
     dfs = {"BTC": btc}
 
     for i, asset in enumerate(["ETH", "SOL"]):
-        print(f"  Generazione {asset}/USD...")
-        df = generate_asset_hourly(asset, correlated[i], dates)
         path = os.path.join(OUTPUT_DIR, f"{asset.lower()}_hourly.csv")
-        df.to_csv(path)
+        if os.path.exists(path):
+            try:
+                df = load_hourly(asset)
+                df = df.reindex(dates).ffill().bfill().dropna()
+                if len(df) > 100:
+                    print(f"  [{asset}] Caricamento reale: {len(df)} righe "
+                          f"${df['Close'].iloc[-1]:,.0f}")
+                    dfs[asset] = df
+                    continue
+            except Exception:
+                pass
+        print(f"  [{asset}] Generazione sintetica (CSV non trovato)…")
+        df = generate_asset_hourly(asset, correlated[i], dates)
         dfs[asset] = df
-        print(f"    Prezzo: ${df['Close'].iloc[0]:,.0f} → ${df['Close'].iloc[-1]:,.0f}  "
-              f"| Vol ann ≈ {df['Close'].pct_change().std()*np.sqrt(24*365)*100:.0f}%")
 
     return dfs
 

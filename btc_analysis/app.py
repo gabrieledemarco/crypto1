@@ -6,6 +6,7 @@ Avvio:
 """
 
 import os
+import re
 import sys
 import subprocess
 import warnings
@@ -36,6 +37,54 @@ def _save_api_keys(keys: dict) -> None:
     import json as _j
     os.makedirs(OUTPUT, exist_ok=True)
     _j.dump(keys, open(_KEYS_FILE, "w", encoding="utf-8"), indent=2)
+
+# ── Asset catalog & universe helpers ──────────────────────────────────────────
+
+ASSET_CATALOG: dict = {
+    "Crypto Majors": {
+        "BTC-USD": "Bitcoin",   "ETH-USD": "Ethereum",  "SOL-USD": "Solana",
+        "BNB-USD": "BNB",       "XRP-USD": "XRP",        "ADA-USD": "Cardano",
+        "DOGE-USD": "Dogecoin", "AVAX-USD": "Avalanche", "DOT-USD": "Polkadot",
+        "LINK-USD": "Chainlink",
+    },
+    "Commodities": {
+        "GC=F": "Gold", "SI=F": "Silver", "CL=F": "Crude Oil WTI",
+        "NG=F": "Natural Gas", "HG=F": "Copper",
+    },
+    "Stocks US": {
+        "SPY": "S&P 500 ETF", "QQQ": "Nasdaq ETF",
+        "AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA",
+        "TSLA": "Tesla", "GOOGL": "Alphabet", "AMZN": "Amazon", "META": "Meta",
+    },
+    "Stocks EU": {
+        "MC.PA": "LVMH", "SAP.DE": "SAP",    "ASML.AS": "ASML",
+        "SIE.DE": "Siemens", "ALV.DE": "Allianz", "SAN.PA": "Sanofi",
+        "BNP.PA": "BNP Paribas", "NESN.SW": "Nestlé",
+    },
+}
+_TICKER_ALIAS = {"BTC-USD": "btc", "ETH-USD": "eth", "SOL-USD": "sol"}
+_CATALOG_FLAT = {t: n for cat in ASSET_CATALOG.values() for t, n in cat.items()}
+
+def ticker_to_fname(ticker: str) -> str:
+    if ticker in _TICKER_ALIAS:
+        return _TICKER_ALIAS[ticker]
+    return re.sub(r"[^a-z0-9]", "_", ticker.lower()).strip("_")
+
+_SELECTED_FILE = os.path.join(OUTPUT, "selected_assets.json")
+
+def _load_selected_assets() -> list:
+    if os.path.exists(_SELECTED_FILE):
+        try:
+            import json as _j
+            return _j.load(open(_SELECTED_FILE, encoding="utf-8"))
+        except Exception:
+            pass
+    return ["BTC-USD", "ETH-USD", "SOL-USD"]
+
+def _save_selected_assets(tickers: list) -> None:
+    import json as _j
+    os.makedirs(OUTPUT, exist_ok=True)
+    _j.dump(tickers, open(_SELECTED_FILE, "w", encoding="utf-8"), indent=2)
 
 st.set_page_config(
     page_title="BTC Strategy Dashboard",
@@ -95,19 +144,66 @@ ASSET_COLORS = {"BTC": C_LINE, "ETH": "#9c27b0", "SOL": C_ACC}
 with st.sidebar:
     st.header("⚙️ Impostazioni")
 
-    asset = st.selectbox(
-        "Asset",
-        options=["BTC", "ETH", "SOL"],
-        index=0,
-        help="Seleziona l'asset da analizzare nel tab Prezzi & Rendimenti",
-    )
-
-    st.divider()
     st.subheader("📅 Periodo prezzi")
     yr_from = st.number_input("Anno inizio", min_value=2015, max_value=2025,
                                value=2020, step=1)
     yr_to   = st.number_input("Anno fine",   min_value=2015, max_value=2025,
                                value=2025, step=1)
+
+    st.divider()
+
+    # ── Asset Universe ─────────────────────────────────────────────────────────
+    st.subheader("📊 Asset Universe")
+    _sel_saved = _load_selected_assets()
+    _downloaded = [t for t in _sel_saved
+                   if os.path.exists(os.path.join(OUTPUT, f"{ticker_to_fname(t)}_hourly.csv"))]
+
+    asset = st.selectbox(
+        "Asset (Tab Prezzi)",
+        options=_downloaded if _downloaded else ["BTC-USD"],
+        format_func=lambda t: f"{_CATALOG_FLAT.get(t, t)} ({t})",
+        help="Asset visualizzato nel tab Prezzi & Rendimenti",
+    )
+
+    with st.expander("➕ Aggiungi asset al universe"):
+        _new_sel: list = []
+        for _cat, _items in ASSET_CATALOG.items():
+            _defaults = [t for t in _sel_saved if t in _items]
+            _chosen = st.multiselect(
+                _cat, options=list(_items.keys()), default=_defaults,
+                format_func=lambda t, _i=_items: f"{_i.get(t, t)} ({t})",
+                key=f"univ_{_cat}",
+            )
+            _new_sel.extend(_chosen)
+        _uc1, _uc2 = st.columns(2)
+        with _uc1:
+            if st.button("💾 Salva", use_container_width=True, key="save_univ"):
+                _save_selected_assets(_new_sel)
+                st.success(f"{len(_new_sel)} salvati.")
+        with _uc2:
+            if st.button("⬇️ Scarica", use_container_width=True, key="dl_univ",
+                         help="Scarica CSV orari per i nuovi asset"):
+                _save_selected_assets(_new_sel)
+                _to_dl = [t for t in _new_sel
+                          if not os.path.exists(
+                              os.path.join(OUTPUT, f"{ticker_to_fname(t)}_hourly.csv"))]
+                if _to_dl:
+                    with st.spinner(f"Download {len(_to_dl)} asset…"):
+                        try:
+                            import importlib.util as _ilu
+                            _spec = _ilu.spec_from_file_location(
+                                "dl01", os.path.join(BASE, "01_data_download.py"))
+                            _dlm = _ilu.module_from_spec(_spec)
+                            _spec.loader.exec_module(_dlm)
+                            _r = _dlm.download_all_assets(_to_dl, skip_existing=True)
+                            _ok = sum(_r.values())
+                            st.success(f"OK {_ok}/{len(_to_dl)}")
+                            st.cache_data.clear()
+                        except Exception as _de:
+                            st.error(f"Errore: {_de}")
+                else:
+                    st.info("Dati già presenti.")
+                st.rerun()
 
     st.divider()
 
@@ -236,8 +332,8 @@ with st.sidebar:
 
 @st.cache_data
 def load_ohlcv_daily(sym: str) -> pd.DataFrame:
-    fname = f"{sym.lower()}_daily.csv" if sym != "BTC" else "btc_daily.csv"
-    path  = os.path.join(OUTPUT, fname)
+    fname = ticker_to_fname(sym)
+    path  = os.path.join(OUTPUT, f"{fname}_daily.csv")
     if not os.path.exists(path):
         path = os.path.join(OUTPUT, "btc_daily.csv")
     df = pd.read_csv(path, index_col=0, parse_dates=True)
@@ -246,7 +342,7 @@ def load_ohlcv_daily(sym: str) -> pd.DataFrame:
 
 @st.cache_data
 def load_ohlcv_hourly(sym: str) -> pd.DataFrame:
-    path = os.path.join(OUTPUT, f"{sym.lower()}_hourly.csv")
+    path = os.path.join(OUTPUT, f"{ticker_to_fname(sym)}_hourly.csv")
     df   = pd.read_csv(path, index_col=0, parse_dates=True)
     df.index.name = "Date"
     return df
@@ -296,7 +392,9 @@ def drawdown_series(eq: pd.Series) -> pd.Series:
 #  Header
 # ══════════════════════════════════════════════════════════════════════════════
 
-st.title(f"{'₿' if asset=='BTC' else '⟠' if asset=='ETH' else '◎'} {asset}/USD — Strategy Dashboard")
+_ASSET_EMOJI = {"BTC-USD": "₿", "ETH-USD": "⟠", "SOL-USD": "◎"}
+_aname = _CATALOG_FLAT.get(asset, asset)
+st.title(f"{_ASSET_EMOJI.get(asset, '📈')} {_aname} — Strategy Dashboard")
 st.caption("Analisi serie storica · Strategia V5 · Walk-Forward · Monte Carlo · Multi-Asset")
 
 try:
@@ -430,7 +528,7 @@ with tab1:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab2:
-    if asset != "BTC":
+    if ticker_to_fname(asset) != "btc":
         st.info("Il backtest della strategia V5 è calcolato su **BTC**. "
                 "I risultati per ETH e SOL sono disponibili nel tab 🌐 Multi-Asset.")
     try:
@@ -539,7 +637,7 @@ with tab2:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab3:
-    if asset != "BTC":
+    if ticker_to_fname(asset) != "btc":
         st.info("La Walk-Forward Optimization è calcolata su **BTC**. "
                 "I risultati per altri asset sono in sviluppo.")
     try:
@@ -640,7 +738,7 @@ with tab3:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab4:
-    if asset != "BTC":
+    if ticker_to_fname(asset) != "btc":
         st.info("La simulazione Monte Carlo è calcolata su **BTC**. "
                 "Seleziona BTC nella sidebar per la visione completa.")
     try:
@@ -827,6 +925,64 @@ with tab5:
 
     except Exception as e:
         st.error(f"Errore caricamento dati multi-asset: {e}")
+
+    # ── Asset Universe Performance ────────────────────────────────────────────
+    st.divider()
+    st.subheader("🌍 Asset Universe Performance")
+    _univ_sel = _load_selected_assets()
+    _univ_avail = [t for t in _univ_sel
+                   if os.path.exists(os.path.join(OUTPUT, f"{ticker_to_fname(t)}_hourly.csv"))]
+    if not _univ_avail:
+        st.info("Nessun asset scaricato. Usa **📊 Asset Universe** nel sidebar per aggiungerne.")
+    else:
+        _rets: dict = {}
+        for _t in _univ_avail:
+            try:
+                _dh = load_ohlcv_hourly(_t)
+                _dc = _dh["Close"].resample("D").last().dropna()
+                _rets[_CATALOG_FLAT.get(_t, _t)] = _dc.pct_change().dropna()
+            except Exception:
+                pass
+
+        if _rets:
+            # Cumulative return chart
+            _fig_u = go.Figure()
+            for _nm, _r in _rets.items():
+                _cum = (1 + _r).cumprod() - 1
+                _fig_u.add_trace(go.Scatter(
+                    x=_cum.index, y=(_cum * 100).values,
+                    name=_nm, mode="lines", line=dict(width=1.5),
+                ))
+            _fig_u.update_layout(
+                height=350, template="plotly_dark",
+                title="Rendimento cumulativo normalizzato (%)",
+                yaxis_ticksuffix="%",
+                legend=dict(orientation="h", y=-0.2),
+            )
+            st.plotly_chart(_fig_u, use_container_width=True)
+
+            # Performance table
+            _rows = {}
+            for _nm, _r in _rets.items():
+                _ann_ret = (1 + _r).prod() ** (252 / max(len(_r), 1)) - 1
+                _ann_vol = _r.std() * np.sqrt(252)
+                _sharpe  = _ann_ret / _ann_vol if _ann_vol > 0 else 0
+                _cum_s   = (1 + _r).cumprod()
+                _max_dd  = (_cum_s / _cum_s.cummax() - 1).min()
+                _rows[_nm] = {
+                    "Ann. Return %": round(_ann_ret * 100, 2),
+                    "Volatilità %":  round(_ann_vol * 100, 2),
+                    "Sharpe":        round(_sharpe, 2),
+                    "Max DD %":      round(_max_dd * 100, 2),
+                }
+            _pf = pd.DataFrame(_rows).T.sort_values("Sharpe", ascending=False)
+            st.dataframe(
+                _pf.style
+                   .background_gradient(subset=["Ann. Return %", "Sharpe"], cmap="RdYlGn")
+                   .background_gradient(subset=["Max DD %", "Volatilità %"], cmap="RdYlGn_r")
+                   .format("{:.2f}"),
+                use_container_width=True,
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════════════

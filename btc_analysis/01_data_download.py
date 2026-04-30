@@ -16,6 +16,7 @@ Dipendenze:
 """
 
 import os
+import re
 import warnings
 import numpy as np
 import pandas as pd
@@ -35,6 +36,61 @@ TICKERS = {
 DAILY_START  = "2015-01-01"
 HOURLY_DAYS  = 730   # yfinance limita hourly a ~730 giorni
 HOURLY_START = "2023-01-01"
+
+# ── Asset catalog ──────────────────────────────────────────────────────────────
+
+ASSET_CATALOG: dict[str, dict[str, str]] = {
+    "Crypto Majors": {
+        "BTC-USD": "Bitcoin",  "ETH-USD": "Ethereum", "SOL-USD": "Solana",
+        "BNB-USD": "BNB",      "XRP-USD": "XRP",       "ADA-USD": "Cardano",
+        "DOGE-USD": "Dogecoin","AVAX-USD": "Avalanche","DOT-USD": "Polkadot",
+        "LINK-USD": "Chainlink",
+    },
+    "Commodities": {
+        "GC=F": "Gold", "SI=F": "Silver", "CL=F": "Crude Oil WTI",
+        "NG=F": "Natural Gas", "HG=F": "Copper",
+    },
+    "Stocks US": {
+        "SPY": "S&P 500 ETF", "QQQ": "Nasdaq ETF",
+        "AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA",
+        "TSLA": "Tesla", "GOOGL": "Alphabet", "AMZN": "Amazon", "META": "Meta",
+    },
+    "Stocks EU": {
+        "MC.PA": "LVMH", "SAP.DE": "SAP", "ASML.AS": "ASML",
+        "SIE.DE": "Siemens", "ALV.DE": "Allianz", "SAN.PA": "Sanofi",
+        "BNP.PA": "BNP Paribas", "NESN.SW": "Nestlé",
+    },
+}
+
+_TICKER_ALIAS = {"BTC-USD": "btc", "ETH-USD": "eth", "SOL-USD": "sol"}
+
+
+def ticker_to_fname(ticker: str) -> str:
+    """Convert ticker symbol to CSV filename prefix (no extension)."""
+    if ticker in _TICKER_ALIAS:
+        return _TICKER_ALIAS[ticker]
+    return re.sub(r"[^a-z0-9]", "_", ticker.lower()).strip("_")
+
+
+def download_all_assets(tickers: list, skip_existing: bool = True) -> dict:
+    """Download hourly CSV for each ticker. Returns {ticker: True/False}."""
+    results: dict = {}
+    for t in tickers:
+        fname = ticker_to_fname(t)
+        fpath = os.path.join(OUTPUT_DIR, f"{fname}_hourly.csv")
+        if skip_existing and os.path.exists(fpath):
+            results[t] = True
+            continue
+        try:
+            print(f"  {t} → {fname}_hourly.csv …")
+            df = _download(t, "1h", start=HOURLY_START)
+            df.to_csv(fpath)
+            print(f"    OK: {len(df)} righe, ultimo close: {df['Close'].iloc[-1]:.2f}")
+            results[t] = True
+        except Exception as exc:
+            print(f"    ERRORE {t}: {exc}")
+            results[t] = False
+    return results
 
 
 # ══════════════════════════════════════════════════════════════════════════════
