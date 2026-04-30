@@ -26,7 +26,7 @@ import seaborn as sns
 from strategy_core import (
     load_hourly, compute_indicators_v2, generate_signals_v2,
     backtest_v2, compute_metrics, fit_garch11, compute_garch_regime,
-    load_agent_config, OUTPUT_DIR
+    load_agent_config, load_agent_strategy, OUTPUT_DIR
 )
 
 sns.set_theme(style="darkgrid")
@@ -47,7 +47,7 @@ _A_RISK       = _ACFG.get("risk_per_trade", RISK)
 
 
 def run_versions(df_ind: pd.DataFrame) -> dict:
-    """Esegue le 4 versioni della strategia e ritorna i risultati."""
+    """Esegue le versioni della strategia (V1-V4 + V_Agent) e ritorna i risultati."""
     results = {}
 
     configs = {
@@ -68,6 +68,18 @@ def run_versions(df_ind: pd.DataFrame) -> dict:
                           commission=cfg["commission"], slippage=cfg["slippage"])
         metrics = compute_metrics(res, INITIAL_CAPITAL)
         results[name] = {"result": res, "metrics": metrics, "df": df_sig}
+
+    # V_Agent: strategia generata dall'AI agent
+    print("  Esecuzione V_Agent (agent-designed strategy)...")
+    try:
+        _agent_fn = load_agent_strategy()
+        df_agent  = _agent_fn(df_ind)
+        res_agent = backtest_v2(df_agent, INITIAL_CAPITAL, _A_RISK,
+                                commission=_A_COMMISSION, slippage=_A_SLIPPAGE)
+        m_agent   = compute_metrics(res_agent, INITIAL_CAPITAL)
+        results["V_Agent"] = {"result": res_agent, "metrics": m_agent, "df": df_agent}
+    except Exception as exc:
+        print(f"  [V_Agent] errore: {exc} — skip")
 
     return results
 

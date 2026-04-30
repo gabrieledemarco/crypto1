@@ -1,27 +1,19 @@
 """
 agent_strategy.py
 =================
-Claude AI agent that reads statistical analysis results and proposes the
-optimal trading strategy configuration.
+AI agent that analyses BTC/USD statistical results and designs a trading
+strategy FROM SCRATCH — choosing the best strategy type (trend following,
+mean reversion, breakout, range trading) based on the time-series properties.
 
-Runs after: 01_data_download → 02_timeseries_analysis → 03_pattern_analysis
-Outputs:    output/agent_strategy_config.json
+Outputs:
+  output/agent_strategy_config.json  — strategy metadata + parameters
+  output/agent_strategy_code.py      — Python function generate_signals_agent(df)
+  output/agent_strategy_report.md    — markdown explanation of the choice
 
 Provider priority (first key found wins):
-  1. ANTHROPIC_API_KEY  → Anthropic SDK, claude-opus-4-7,
-                          adaptive thinking + prompt caching
-  2. OPENROUTER_API_KEY → OpenRouter HTTP API (OpenAI-compatible),
-                          model controlled by OPENROUTER_MODEL env var
-                          (default: anthropic/claude-opus-4)
-  3. Neither            → V5 default parameters (no API call)
-
-Environment variables:
-  ANTHROPIC_API_KEY   Anthropic direct access
-  OPENROUTER_API_KEY  OpenRouter access
-  OPENROUTER_MODEL    Model string for OpenRouter (optional)
-                      e.g. "anthropic/claude-opus-4"
-                           "openai/gpt-4o"
-                           "google/gemini-pro-1.5"
+  1. ANTHROPIC_API_KEY  → claude-opus-4-7, adaptive thinking + prompt caching
+  2. OPENROUTER_API_KEY → OpenRouter HTTP (model via OPENROUTER_MODEL env var)
+  3. Neither            → V5 ATR-breakout defaults, no API call
 """
 
 import os
@@ -32,20 +24,19 @@ import warnings
 warnings.filterwarnings("ignore")
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
-
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_API_URL     = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_DEFAULT_MODEL = "anthropic/claude-opus-4"
 
-V5_DEFAULT = {
+# ── V5 default config (used as fallback) ──────────────────────────────────────
+
+V5_DEFAULT_CONFIG = {
+    "strategy_type": "breakout",
+    "strategy_name": "ATR Breakout + GARCH Filter (V5 Default)",
     "sl_mult": 2.0,
     "tp_mult": 5.0,
     "active_hours": [6, 22],
-    "rsi_ob": 70.0,
-    "rsi_os": 30.0,
-    "min_atr_pct": 0.003,
-    "use_garch_filter": True,
     "commission": 0.0001,
-    "slippage": 0.0001,
+    "slippage":   0.0001,
     "risk_per_trade": 0.01,
     "rationale": (
         "Default V5: ATR breakout + GARCH filter, SL=2×ATR, TP=5×ATR, "
@@ -54,47 +45,57 @@ V5_DEFAULT = {
     "source": "default",
 }
 
-SYSTEM_PROMPT = """You are an expert quantitative trading strategist specialising in crypto markets.
+# ── Fallback strategy code (mirrors V5 generate_signals_v2) ──────────────────
 
-Your task: analyse the BTC/USD statistical results below and output the optimal
-configuration for an ATR-based intraday breakout strategy.
+DEFAULT_CODE = """\
+def generate_signals_agent(df):
+    \"\"\"Default V5 strategy: ATR breakout + GARCH filter.\"\"\"
+    df = df.copy()
+    time_ok     = (df["hour"] >= 6) & (df["hour"] <= 22)
+    vol_ok      = df["ATR_pct"] > 0.003
+    trend_long  = df["EMA50"] > df["EMA200"]
+    trend_short = df["EMA50"] < df["EMA200"]
+    bo_long     = df["Close"] > df["RollHigh6"]
+    bo_short    = df["Close"] < df["RollLow6"]
+    rsi_ok_l    = df["RSI14"] < 70
+    rsi_ok_s    = df["RSI14"] > 30
+    if "garch_regime" in df.columns:
+        regime_ok = df["garch_regime"] != "LOW"
+    else:
+        regime_ok = True
+    df["signal"] = 0
+    df.loc[bo_long  & trend_long  & rsi_ok_l & time_ok & vol_ok & regime_ok, "signal"] =  1
+    df.loc[bo_short & trend_short & rsi_ok_s & time_ok & vol_ok & regime_ok, "signal"] = -1
+    df["SL_dist"] = df["ATR14"] * 2.0
+    df["TP_dist"] = df["ATR14"] * 5.0
+    return df
+"""
 
-Strategy mechanics:
-• Entry  : close breaks above (LONG) or below (SHORT) the rolling 6-bar high/low
-• Trend  : EMA50 vs EMA200 alignment
-• Vol    : optional GARCH(1,1) regime filter — skip trades in LOW-vol regime
-• SL     : entry ± sl_mult × ATR14
-• TP     : entry ± tp_mult × ATR14
-• Hours  : only trade within [active_hours[0], active_hours[1]] UTC
-• RSI    : skip longs when RSI ≥ rsi_ob; skip shorts when RSI ≤ rsi_os
+DEFAULT_REPORT = """\
+# Strategy Report: ATR Breakout + GARCH Filter (V5 Default)
 
-Respond with ONLY a JSON object in this exact format (no prose, no markdown):
-{
-  "sl_mult": <float 0.5–5.0>,
-  "tp_mult": <float > sl_mult, max 10.0>,
-  "active_hours": [<start 0–23>, <end 0–23>],
-  "rsi_ob": <float 60–90>,
-  "rsi_os": <float 10–40>,
-  "min_atr_pct": <float 0.001–0.02>,
-  "use_garch_filter": <true|false>,
-  "commission": <float, e.g. 0.0001 maker or 0.0004 taker>,
-  "slippage": <float, e.g. 0.0001>,
-  "risk_per_trade": <float 0.005–0.05>,
-  "rationale": "<one concise sentence explaining the choices>"
-}"""
+## Note
+This is the default V5 strategy used when no API key is configured.
+Set `ANTHROPIC_API_KEY` or `OPENROUTER_API_KEY` to let the AI agent design
+a custom strategy from the statistical analysis results.
 
+## Strategy Summary
+- **Type**: Breakout
+- **Entry**: price breaks 6-bar rolling high/low with EMA trend alignment
+- **SL**: 2×ATR14  |  **TP**: 5×ATR14
+- **Filter**: GARCH regime (skip LOW-vol periods), RSI, active hours 06-22 UTC
+"""
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── File helpers ──────────────────────────────────────────────────────────────
 
 def _read_safe(path: str, max_chars: int = 6000) -> str:
     if not os.path.exists(path):
         return f"[not found: {os.path.basename(path)}]"
     try:
-        with open(path, encoding="utf-8") as f:
-            txt = f.read(max_chars)
+        txt = open(path, encoding="utf-8").read(max_chars)
         return txt + ("\n[truncated]" if len(txt) == max_chars else "")
     except Exception as exc:
-        return f"[error reading {os.path.basename(path)}: {exc}]"
+        return f"[error: {exc}]"
 
 
 def _build_context() -> str:
@@ -105,156 +106,248 @@ def _build_context() -> str:
         ("Monte Carlo Bootstrap",        "mc_bootstrap_results.csv"),
         ("Grid-Search Optimization",     "optimization_results.csv"),
     ]
-    parts = []
-    for title, fname in files:
-        content = _read_safe(os.path.join(OUTPUT_DIR, fname))
-        parts.append(f"### {title}\n```\n{content}\n```")
-    return "\n\n".join(parts)
+    return "\n\n".join(
+        f"### {title}\n```\n{_read_safe(os.path.join(OUTPUT_DIR, fname))}\n```"
+        for title, fname in files
+    )
 
 
-def _extract_json(text: str) -> dict:
-    for pat in [r"```json\s*([\s\S]+?)\s*```", r"```\s*([\s\S]+?)\s*```", r"\{[\s\S]+\}"]:
-        m = re.search(pat, text)
-        if m:
-            try:
-                raw = m.group(1) if "```" in pat else m.group(0)
-                return json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-    raise ValueError("No valid JSON found in response")
+def _extract_block(text: str, lang: str) -> str:
+    """Return the content of the first fenced block tagged with *lang*."""
+    m = re.search(rf"```{lang}\s*([\s\S]+?)\s*```", text)
+    return m.group(1).strip() if m else ""
 
+# ── Validation ────────────────────────────────────────────────────────────────
 
-def _validate(cfg: dict, source: str = "agent") -> dict:
-    d = V5_DEFAULT
-    sl = max(0.5, min(5.0, float(cfg.get("sl_mult", d["sl_mult"]))))
-    tp = max(sl + 0.5, min(10.0, float(cfg.get("tp_mult", d["tp_mult"]))))
-
-    ah = cfg.get("active_hours", d["active_hours"])
+def _validate_config(raw: dict, source: str = "agent") -> dict:
+    d  = V5_DEFAULT_CONFIG
+    sl = max(0.5, min(5.0,  float(raw.get("sl_mult",       d["sl_mult"]))))
+    tp = max(sl + 0.5, min(10.0, float(raw.get("tp_mult",  d["tp_mult"]))))
+    ah = raw.get("active_hours", d["active_hours"])
     if isinstance(ah, (list, tuple)) and len(ah) == 2:
         h0 = max(0, min(23, int(ah[0])))
         h1 = max(h0 + 1, min(23, int(ah[1])))
     else:
         h0, h1 = d["active_hours"]
-
     return {
-        "sl_mult":         sl,
-        "tp_mult":         tp,
-        "active_hours":    [h0, h1],
-        "rsi_ob":          max(60.0, min(90.0, float(cfg.get("rsi_ob",  d["rsi_ob"])))),
-        "rsi_os":          max(10.0, min(40.0, float(cfg.get("rsi_os",  d["rsi_os"])))),
-        "min_atr_pct":     max(0.001, min(0.02, float(cfg.get("min_atr_pct", d["min_atr_pct"])))),
-        "use_garch_filter": bool(cfg.get("use_garch_filter", d["use_garch_filter"])),
-        "commission":      max(0.0, min(0.005, float(cfg.get("commission", d["commission"])))),
-        "slippage":        max(0.0, min(0.005, float(cfg.get("slippage",   d["slippage"])))),
-        "risk_per_trade":  max(0.005, min(0.05, float(cfg.get("risk_per_trade", d["risk_per_trade"])))),
-        "rationale":       str(cfg.get("rationale", d["rationale"])),
-        "source":          source,
+        "strategy_type":  str(raw.get("strategy_type", d["strategy_type"])),
+        "strategy_name":  str(raw.get("strategy_name", d["strategy_name"])),
+        "sl_mult":        sl,
+        "tp_mult":        tp,
+        "active_hours":   [h0, h1],
+        "commission":     max(0.0, min(0.005, float(raw.get("commission",    d["commission"])))),
+        "slippage":       max(0.0, min(0.005, float(raw.get("slippage",      d["slippage"])))),
+        "risk_per_trade": max(0.005, min(0.05, float(raw.get("risk_per_trade", d["risk_per_trade"])))),
+        "rationale":      str(raw.get("rationale", d["rationale"])),
+        "source":         source,
     }
 
 
-# ── Backend: Anthropic SDK ────────────────────────────────────────────────────
+def _validate_code(code: str) -> str:
+    """Compile-check and smoke-test the generated strategy function."""
+    import numpy as np
+    import pandas as pd
 
-def _call_anthropic(api_key: str, context: str) -> dict:
+    # 1. syntax check
+    compile(code, "<agent_code>", "exec")
+
+    # 2. execute in isolated namespace
+    ns: dict = {"np": np, "pd": pd}
+    exec(code, ns)                                          # noqa: S102
+    if "generate_signals_agent" not in ns:
+        raise ValueError("generate_signals_agent not defined in generated code")
+
+    # 3. smoke-test with a tiny synthetic DataFrame
+    n   = 60
+    idx = pd.date_range("2023-01-01", periods=n, freq="h")
+    rng = np.random.default_rng(0)
+    base = 30_000 + rng.standard_normal(n).cumsum() * 200
+    df = pd.DataFrame({
+        "Open":   base,  "High": base + 50,
+        "Low":    base - 50, "Close": base,
+        "Volume": rng.uniform(1, 10, n),
+        "ATR14":  rng.uniform(100, 400, n),
+        "RSI14":  rng.uniform(20, 80, n),
+        "EMA50":  base * 0.99, "EMA200": base * 0.98,
+        "RollHigh6": base + 100, "RollLow6": base - 100,
+        "ATR_pct": rng.uniform(0.002, 0.01, n),
+        "hour":    np.tile(np.arange(24), 3)[:n],
+        "dow":     rng.integers(0, 7, n),
+        "ret":     rng.standard_normal(n) * 0.01,
+        "garch_h": rng.uniform(1e-6, 1e-4, n),
+        "garch_regime": np.random.choice(["LOW", "MED", "HIGH"], n),
+        "size_mult": np.random.choice([0.0, 0.5, 1.0], n),
+    }, index=idx)
+
+    result = ns["generate_signals_agent"](df)
+    missing = [c for c in ("signal", "SL_dist", "TP_dist") if c not in result.columns]
+    if missing:
+        raise ValueError(f"Missing output columns: {missing}")
+    return code
+
+# ── System prompt ─────────────────────────────────────────────────────────────
+
+SYSTEM_PROMPT = """\
+You are an expert quantitative trading strategist and Python developer for crypto markets.
+
+## TASK
+Analyse the BTC/USD statistical analysis results supplied by the user and:
+1. Choose the optimal **strategy TYPE** based on the time-series properties.
+2. Write a Python function `generate_signals_agent(df)` implementing that strategy.
+3. Write a Markdown report explaining your analysis and choices.
+
+## STRATEGY-TYPE SELECTION GUIDE
+| Statistical signal | Recommended strategy |
+|---|---|
+| Hurst exponent > 0.55 | TREND FOLLOWING — EMA crossover, momentum breakout |
+| Hurst exponent < 0.45 | MEAN REVERSION — Bollinger Bands, RSI reversal, Z-score |
+| 0.45 ≤ Hurst ≤ 0.55 | BREAKOUT or RANGE TRADING |
+| Positive ACF lag-1 | Strengthen trend case |
+| Negative ACF lag-1 | Strengthen mean-reversion case |
+| High kurtosis (> 5) | Widen SL to avoid fat-tail stop-outs |
+| Strong intraday pattern | Restrict active_hours to the best window |
+| Many LOW GARCH periods | Add GARCH regime filter |
+
+## FUNCTION CONTRACT
+The function receives `df` already processed by `compute_indicators_v2()`.
+Available columns: Open, High, Low, Close, Volume, ATR14, RSI14, EMA50, EMA200,
+RollHigh6, RollLow6, ATR_pct, hour, dow, ret, garch_h, garch_regime, size_mult.
+
+The function **must**:
+- Start with `df = df.copy()`
+- Set `df["signal"]` to 1 (long), -1 (short), or 0 (flat) for every row
+- Set `df["SL_dist"]` = stop-loss distance in absolute price units
+- Set `df["TP_dist"]` = take-profit distance in absolute price units
+- Return `df`
+- Use only `numpy` (as `np`) and `pandas` (as `pd`) — both are pre-imported
+
+## RESPONSE FORMAT
+Return **exactly** these three fenced blocks in order — nothing else:
+
+```json
+{
+  "strategy_type": "<trend_following|mean_reversion|breakout|range_trading|momentum>",
+  "strategy_name": "<descriptive name>",
+  "sl_mult": <float, ATR multiple for SL>,
+  "tp_mult": <float, ATR multiple for TP>,
+  "active_hours": [<start 0-23>, <end 0-23>],
+  "commission": <float e.g. 0.0001>,
+  "slippage":   <float e.g. 0.0001>,
+  "risk_per_trade": <float e.g. 0.01>,
+  "rationale": "<one sentence>"
+}
+```
+
+```python
+def generate_signals_agent(df):
+    df = df.copy()
+    # ... implementation ...
+    return df
+```
+
+```markdown
+# Strategy Report: <strategy_name>
+
+## Statistical Analysis Summary
+[Key findings: Hurst, ACF, kurtosis, GARCH regimes, intraday patterns]
+
+## Strategy Choice Rationale
+[Why this type is optimal for these statistical properties]
+
+## Implementation Details
+[Entry/exit logic, filters, position sizing]
+
+## Risk Parameters
+[SL/TP rationale, active hours justification]
+
+## Expected Edge
+[Why this strategy should be profitable given the data]
+```
+"""
+
+# ── Response parsing ──────────────────────────────────────────────────────────
+
+def _parse_response(text: str, source: str) -> tuple:
+    """Return (config_dict, code_str, report_str) from Claude's response."""
+    json_raw = _extract_block(text, "json")
+    if not json_raw:
+        raise ValueError("No ```json block found in response")
+    config = _validate_config(json.loads(json_raw), source=source)
+
+    code = _extract_block(text, "python")
+    if not code:
+        raise ValueError("No ```python block found in response")
+    _validate_code(code)
+
+    report = _extract_block(text, "markdown")
+    return config, code, report
+
+
+# ── Anthropic backend ─────────────────────────────────────────────────────────
+
+def _call_anthropic(api_key: str, context: str) -> tuple:
     try:
         import anthropic
     except ImportError:
-        raise RuntimeError("anthropic package not installed — run: pip install anthropic")
+        raise RuntimeError("Run: pip install anthropic")
 
     user_msg = (
-        "Analyse the BTC/USD statistical results and return the optimal strategy "
-        "configuration JSON.\n\n"
+        "Analyse the BTC/USD results and design the optimal strategy.\n\n"
         + context
-        + "\n\nReturn ONLY the JSON object, no other text."
+        + "\n\nReturn exactly the three fenced blocks specified."
     )
-
     client = anthropic.Anthropic(api_key=api_key)
-    print("  [agent_strategy] Calling Anthropic claude-opus-4-7 (adaptive thinking + cache)...")
-
-    response = client.messages.create(
+    print("  [agent] Calling claude-opus-4-7 (adaptive thinking + cache)...")
+    resp = client.messages.create(
         model="claude-opus-4-7",
-        max_tokens=2048,
+        max_tokens=8192,
         thinking={"type": "adaptive"},
-        system=[
-            {
-                "type": "text",
-                "text": SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": user_msg,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-            }
-        ],
+        system=[{"type": "text", "text": SYSTEM_PROMPT,
+                 "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": [
+            {"type": "text", "text": user_msg,
+             "cache_control": {"type": "ephemeral"}}
+        ]}],
     )
-
-    text_out = next((b.text for b in response.content if b.type == "text"), "")
-    if not text_out:
-        raise ValueError("Empty text response from Anthropic API")
-
-    usage = response.usage
-    cache_info = (
-        f" cache_read={usage.cache_read_input_tokens}"
-        if getattr(usage, "cache_read_input_tokens", 0)
-        else ""
-    )
-    print(f"  [agent_strategy] Tokens in={usage.input_tokens} out={usage.output_tokens}{cache_info}")
-
-    return _validate(_extract_json(text_out), source="anthropic")
+    text = next((b.text for b in resp.content if b.type == "text"), "")
+    if not text:
+        raise ValueError("Empty Anthropic response")
+    u = resp.usage
+    cr = getattr(u, "cache_read_input_tokens", 0)
+    print(f"  [agent] tokens in={u.input_tokens} out={u.output_tokens}"
+          + (f" cache_read={cr}" if cr else ""))
+    return _parse_response(text, source="anthropic")
 
 
-# ── Backend: OpenRouter HTTP ──────────────────────────────────────────────────
+# ── OpenRouter backend ────────────────────────────────────────────────────────
 
-def _call_openrouter(api_key: str, context: str, model: str = "") -> dict:
+def _call_openrouter(api_key: str, context: str, model: str = "") -> tuple:
     import requests as _req
-
     model = model or os.environ.get("OPENROUTER_MODEL", OPENROUTER_DEFAULT_MODEL)
-    print(f"  [agent_strategy] Calling OpenRouter model={model}...")
-
+    print(f"  [agent] Calling OpenRouter model={model}...")
     user_msg = (
-        "Analyse the BTC/USD statistical results and return the optimal strategy "
-        "configuration JSON.\n\n"
+        "Analyse the BTC/USD results and design the optimal strategy.\n\n"
         + context
-        + "\n\nReturn ONLY the JSON object, no other text."
+        + "\n\nReturn exactly the three fenced blocks specified."
     )
-
-    payload = {
-        "model": model,
-        "max_tokens": 2048,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": user_msg},
-        ],
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/gabrieledemarco/crypto1",
-        "X-Title": "BTC Strategy Agent",
-    }
-
-    resp = _req.post(OPENROUTER_API_URL, headers=headers, json=payload, timeout=120)
+    resp = _req.post(
+        OPENROUTER_API_URL,
+        headers={"Authorization": f"Bearer {api_key}",
+                 "Content-Type": "application/json",
+                 "HTTP-Referer": "https://github.com/gabrieledemarco/crypto1",
+                 "X-Title": "BTC Strategy Agent"},
+        json={"model": model, "max_tokens": 8192,
+              "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+                           {"role": "user",   "content": user_msg}]},
+        timeout=180,
+    )
     resp.raise_for_status()
     data = resp.json()
-
-    text_out = data["choices"][0]["message"]["content"]
-    if not text_out:
-        raise ValueError("Empty response from OpenRouter")
-
-    usage = data.get("usage", {})
-    print(
-        f"  [agent_strategy] Tokens in={usage.get('prompt_tokens', '?')} "
-        f"out={usage.get('completion_tokens', '?')}"
-    )
-
-    return _validate(_extract_json(text_out), source=f"openrouter/{model}")
+    text = data["choices"][0]["message"]["content"]
+    u = data.get("usage", {})
+    print(f"  [agent] tokens in={u.get('prompt_tokens','?')} "
+          f"out={u.get('completion_tokens','?')}")
+    return _parse_response(text, source=f"openrouter/{model}")
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -263,77 +356,77 @@ def run_agent(
     anthropic_key: str = "",
     openrouter_key: str = "",
     openrouter_model: str = "",
-) -> dict:
+) -> tuple:
     """
-    Determine available provider and call the LLM.
+    Returns (config: dict, code: str, report: str).
     Priority: Anthropic → OpenRouter → V5 defaults.
-
-    Explicit key parameters override environment variables, allowing callers
-    (e.g. the Streamlit sidebar) to supply keys without touching os.environ.
     """
-    ant_key = (anthropic_key or "").strip()  or os.environ.get("ANTHROPIC_API_KEY",  "").strip()
-    or_key  = (openrouter_key or "").strip() or os.environ.get("OPENROUTER_API_KEY", "").strip()
+    ant = (anthropic_key or "").strip() or os.environ.get("ANTHROPIC_API_KEY",  "").strip()
+    ort = (openrouter_key or "").strip() or os.environ.get("OPENROUTER_API_KEY", "").strip()
 
-    if not ant_key and not or_key:
-        print(
-            "  [agent_strategy] No API key found "
-            "(ANTHROPIC_API_KEY or OPENROUTER_API_KEY) — using V5 defaults."
-        )
-        return {**V5_DEFAULT, "source": "default"}
+    if not ant and not ort:
+        print("  [agent] No API key — using V5 defaults.")
+        return V5_DEFAULT_CONFIG.copy(), DEFAULT_CODE, DEFAULT_REPORT
 
-    print("  [agent_strategy] Building analysis context...")
-    context = _build_context()
+    print("  [agent] Building analysis context...")
+    ctx = _build_context()
 
-    if ant_key:
+    if ant:
         try:
-            return _call_anthropic(ant_key, context)
+            return _call_anthropic(ant, ctx)
         except Exception as exc:
-            print(f"  [agent_strategy] Anthropic error: {exc}")
-            if or_key:
-                print("  [agent_strategy] Retrying via OpenRouter...")
-            else:
-                print("  [agent_strategy] Falling back to V5 defaults.")
-                return {**V5_DEFAULT, "source": "default_fallback"}
+            print(f"  [agent] Anthropic error: {exc}")
+            if not ort:
+                print("  [agent] Falling back to V5 defaults.")
+                return V5_DEFAULT_CONFIG.copy(), DEFAULT_CODE, DEFAULT_REPORT
+            print("  [agent] Retrying via OpenRouter...")
 
-    # Reached here only if Anthropic failed and or_key is set,
-    # OR if only or_key was set from the start.
     try:
-        return _call_openrouter(or_key, context, model=openrouter_model)
+        return _call_openrouter(ort, ctx, model=openrouter_model)
     except Exception as exc:
-        print(f"  [agent_strategy] OpenRouter error: {exc}")
-        print("  [agent_strategy] Falling back to V5 defaults.")
-        return {**V5_DEFAULT, "source": "default_fallback"}
+        print(f"  [agent] OpenRouter error: {exc}")
+        print("  [agent] Falling back to V5 defaults.")
+        return V5_DEFAULT_CONFIG.copy(), DEFAULT_CODE, DEFAULT_REPORT
+
+# ── Save helpers ──────────────────────────────────────────────────────────────
+
+def save_outputs(config: dict, code: str, report: str) -> None:
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    with open(os.path.join(OUTPUT_DIR, "agent_strategy_config.json"), "w") as f:
+        json.dump(config, f, indent=2)
+
+    header = (
+        f'"""\nAgent strategy: {config.get("strategy_name","")}\n'
+        f'Type: {config.get("strategy_type","")}  |  '
+        f'Source: {config.get("source","")}\n"""\n'
+        "import numpy as np\nimport pandas as pd\n\n"
+    )
+    with open(os.path.join(OUTPUT_DIR, "agent_strategy_code.py"), "w") as f:
+        f.write(header + code + "\n")
+
+    if report:
+        with open(os.path.join(OUTPUT_DIR, "agent_strategy_report.md"), "w") as f:
+            f.write(report)
 
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
 
-def main():
+def main() -> None:
     print("=" * 60)
-    print("  AGENT STRATEGY — Analisi e configurazione ottimale")
+    print("  AGENT STRATEGY — Analisi e generazione strategia")
     print("=" * 60)
 
-    cfg = run_agent()
+    config, code, report = run_agent()
+    save_outputs(config, code, report)
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    out_path = os.path.join(OUTPUT_DIR, "agent_strategy_config.json")
-    with open(out_path, "w") as f:
-        json.dump(cfg, f, indent=2)
-
-    ah = cfg["active_hours"]
-    print(f"\n  Config salvata: {out_path}")
-    print(f"\n  Parametri strategia suggeriti:")
-    print(f"    SL multiplier   : {cfg['sl_mult']:.2f}×ATR")
-    print(f"    TP multiplier   : {cfg['tp_mult']:.2f}×ATR")
-    print(f"    Ore attive (UTC): {ah[0]:02d}:00 – {ah[1]:02d}:00")
-    print(f"    RSI overbought  : {cfg['rsi_ob']:.0f}")
-    print(f"    RSI oversold    : {cfg['rsi_os']:.0f}")
-    print(f"    Min ATR%%        : {cfg['min_atr_pct']:.4f}")
-    print(f"    GARCH filter    : {cfg['use_garch_filter']}")
-    print(f"    Commission/side : {cfg['commission']*100:.3f}%%")
-    print(f"    Slippage/side   : {cfg['slippage']*100:.3f}%%")
-    print(f"    Risk/trade      : {cfg['risk_per_trade']*100:.1f}%%")
-    print(f"    Source          : {cfg['source']}")
-    print(f"\n  Rationale: {cfg['rationale']}")
+    ah = config["active_hours"]
+    print(f"\n  Strategia : {config.get('strategy_name','')}")
+    print(f"  Tipo      : {config.get('strategy_type','')}")
+    print(f"  SL/TP     : {config['sl_mult']:.2f}×ATR / {config['tp_mult']:.2f}×ATR")
+    print(f"  Ore UTC   : {ah[0]:02d}:00 – {ah[1]:02d}:00")
+    print(f"  Source    : {config.get('source','')}")
+    print(f"\n  Rationale : {config.get('rationale','')}")
     print("=" * 60)
 
 

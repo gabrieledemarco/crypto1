@@ -20,8 +20,8 @@ import matplotlib.gridspec as gridspec
 import seaborn as sns
 from scipy import stats
 from strategy_core import (
-    load_hourly, compute_indicators_v2, generate_signals_v2,
-    backtest_v2, compute_metrics, load_agent_config, OUTPUT_DIR
+    load_hourly, compute_indicators_v2,
+    backtest_v2, compute_metrics, load_agent_config, load_agent_strategy, OUTPUT_DIR
 )
 
 sns.set_theme(style="darkgrid")
@@ -36,14 +36,12 @@ COMMISSION  = _ACFG.get("commission", 0.0004)
 SLIPPAGE    = _ACFG.get("slippage",   0.0001)
 FIXED_HOURS = tuple(_ACFG["active_hours"])
 
-# Build param grid centred around agent-proposed SL/TP
-_sl_c = _ACFG["sl_mult"]
-_tp_c = _ACFG["tp_mult"]
-PARAM_GRID = [
-    (sl, tp)
-    for sl in sorted({max(0.5, _sl_c - 0.5), _sl_c, _sl_c + 0.5})
-    for tp in sorted({max(_sl_c + 0.5, _tp_c - 1.0), _tp_c, _tp_c + 1.0})
-]
+# SL/TP scale grid: the agent strategy sets its own SL_dist/TP_dist;
+# WFO searches for the best multiplicative scale factor around 1.0
+SL_TP_SCALES = [0.75, 1.0, 1.25]
+
+# Load agent signal function once at module level
+_AGENT_FN = load_agent_strategy()
 
 # Configurazioni IS/OOS da confrontare
 WINDOW_CONFIGS = [
@@ -56,9 +54,11 @@ WINDOW_CONFIGS = [
 
 # ── Core: singolo backtest ────────────────────────────────────────────────────
 
-def _run(df_win: pd.DataFrame, sl: float, tp: float, cap: float) -> dict:
-    df_s = generate_signals_v2(df_win, atr_mult_sl=sl, atr_mult_tp=tp,
-                                active_hours=FIXED_HOURS, use_garch_filter=True)
+def _run(df_win: pd.DataFrame, sl_scale: float, tp_scale: float, cap: float) -> dict:
+    """Run agent strategy with SL/TP scaled by the given multipliers."""
+    df_s = _AGENT_FN(df_win)
+    df_s["SL_dist"] = df_s["SL_dist"] * sl_scale
+    df_s["TP_dist"] = df_s["TP_dist"] * tp_scale
     res = backtest_v2(df_s, cap, RISK, COMMISSION, SLIPPAGE)
     return compute_metrics(res, cap), res
 
@@ -92,12 +92,13 @@ def walk_forward(df_ind: pd.DataFrame, train_m: int, test_m: int, step_m: int,
         if len(df_train) < 200 or len(df_test) < 24:
             break
 
-        # ── IS optimisation ──────────────────────────────────────────────────
-        best_sh, best_p, best_res_is = -np.inf, PARAM_GRID[0], None
-        for sl, tp in PARAM_GRID:
-            m, res = _run(df_train, sl, tp, INITIAL_CAPITAL)
-            if "error" not in m and m["sharpe_ratio"] > best_sh:
-                best_sh, best_p, best_res_is = m["sharpe_ratio"], (sl, tp), res
+        # ── IS optimisation: search SL/TP scale factors ──────────────────────
+        best_sh, best_p, best_res_is = -np.inf, (1.0, 1.0), None
+        for sl_s in SL_TP_SCALES:
+            for tp_s in SL_TP_SCALES:
+                m, res = _run(df_train, sl_s, tp_s, INITIAL_CAPITAL)
+                if "error" not in m and m["sharpe_ratio"] > best_sh:
+                    best_sh, best_p, best_res_is = m["sharpe_ratio"], (sl_s, tp_s), res
 
         # ── OOS test ─────────────────────────────────────────────────────────
         m_oos, res_oos = _run(df_test, *best_p, cap=oos_capital)
@@ -110,8 +111,8 @@ def walk_forward(df_ind: pd.DataFrame, train_m: int, test_m: int, step_m: int,
             "train_start": df_train.index[0],
             "test_start":  df_test.index[0],
             "test_end":    df_test.index[-1],
-            "best_sl":     best_p[0],
-            "best_tp":     best_p[1],
+            "best_sl_scale": best_p[0],
+            "best_tp_scale": best_p[1],
             "is_sharpe":   best_sh,
             "oos_sharpe":  m_oos.get("sharpe_ratio", 0),
             "is_cagr":     compute_metrics(best_res_is, INITIAL_CAPITAL).get("cagr_pct", 0)

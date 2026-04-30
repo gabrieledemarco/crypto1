@@ -30,11 +30,12 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import seaborn as sns
 from strategy_core import (
-    load_hourly, compute_indicators_v2, generate_signals_v2,
-    backtest_v2, compute_metrics, load_agent_config, OUTPUT_DIR
+    load_hourly, compute_indicators_v2,
+    backtest_v2, compute_metrics, load_agent_config, load_agent_strategy, OUTPUT_DIR
 )
 
-_ACFG = load_agent_config()
+_ACFG     = load_agent_config()
+_AGENT_FN = load_agent_strategy()
 
 np.random.seed(2024)
 sns.set_theme(style="darkgrid")
@@ -214,14 +215,9 @@ def run_asset_strategy(df_raw: pd.DataFrame, asset: str,
     commission = _ACFG.get("commission", 0.0004)
     slippage   = _ACFG.get("slippage",   0.0002)
     risk       = _ACFG.get("risk_per_trade", 0.01)
-    print(f"  [{asset}] Calcolo indicatori + strategia...")
+    print(f"  [{asset}] Calcolo indicatori + strategia agent...")
     df_ind = compute_indicators_v2(df_raw, fit_garch=True)
-    df_sig = generate_signals_v2(df_ind, atr_mult_sl=sl, atr_mult_tp=tp,
-                                  active_hours=hours,
-                                  use_garch_filter=_ACFG.get("use_garch_filter", True),
-                                  rsi_ob=_ACFG.get("rsi_ob", 70),
-                                  rsi_os=_ACFG.get("rsi_os", 30),
-                                  min_atr_pct=_ACFG.get("min_atr_pct", 0.003))
+    df_sig = _AGENT_FN(df_ind)
     res = backtest_v2(df_sig, capital, risk, commission, slippage)
     metrics = compute_metrics(res, capital)
     return {"result": res, "metrics": metrics, "df_ind": df_ind}
