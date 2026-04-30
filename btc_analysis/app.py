@@ -261,13 +261,26 @@ with st.sidebar:
 
     _cfg_path = os.path.join(OUTPUT, "agent_strategy_config.json")
     _cur_src  = "—"
+    _cur_asset = "BTC-USD"
     if os.path.exists(_cfg_path):
         try:
             import json as _j
-            _cur_src = _j.load(open(_cfg_path)).get("source", "?")
+            _ac = _j.load(open(_cfg_path))
+            _cur_src   = _ac.get("source", "?")
+            _cur_asset = _ac.get("asset", "BTC-USD")
         except Exception:
             pass
-    st.caption(f"Config attuale: `{_cur_src}`")
+    st.caption(f"Config attuale: `{_cur_src}` | asset: `{_cur_asset}`")
+
+    _strat_opts = list(dict.fromkeys(["BTC-USD"] + _downloaded))
+    _strat_idx  = _strat_opts.index(_cur_asset) if _cur_asset in _strat_opts else 0
+    _strategy_asset = st.selectbox(
+        "Asset per la strategia",
+        options=_strat_opts,
+        index=_strat_idx,
+        format_func=lambda t: f"{_CATALOG_FLAT.get(t, t)} ({t})",
+        help="L'agent progetterà e backtesterà la strategia su questo asset",
+    )
 
     if st.button("▶ Esegui Agent", use_container_width=True):
         if not _ant_key and not _or_key:
@@ -277,24 +290,26 @@ with st.sidebar:
             _sys.path.insert(0, BASE)
             import importlib, agent_strategy as _ag
             importlib.reload(_ag)
-            with st.spinner("L'agent sta analizzando i risultati…"):
+            with st.spinner(f"L'agent sta analizzando {_strategy_asset}…"):
                 try:
                     _cfg_r, _code_r, _report_r = _ag.run_agent(
                         anthropic_key=_ant_key,
                         openrouter_key=_or_key,
                         openrouter_model=_or_model,
+                        asset=_strategy_asset,
                     )
                     _ag.save_outputs(_cfg_r, _code_r, _report_r)
                 except Exception as _ae:
                     st.error(f"Errore agent: {_ae}")
                     st.stop()
-            with st.spinner("Calcolo backtest con la nuova strategia…"):
+            with st.spinner(f"Backtest {_strategy_asset}…"):
                 try:
-                    _run_script("06_enhanced_strategy.py")
+                    _run_script("06_enhanced_strategy.py",
+                                extra_env={"STRATEGY_ASSET": _strategy_asset})
                     st.cache_data.clear()
                     st.success(
-                        f"✅ Strategia `{_cfg_r.get('strategy_type','')}` pronta. "
-                        "Vedi Tab **🤖 Agent Strategy** per i risultati."
+                        f"✅ Strategia `{_cfg_r.get('strategy_type','')}` su "
+                        f"`{_strategy_asset}` pronta. Vedi Tab **🤖 Agent Strategy**."
                     )
                 except subprocess.CalledProcessError as _be:
                     st.warning(f"Backtest fallito: {_be.stderr.decode()[:300]}")
