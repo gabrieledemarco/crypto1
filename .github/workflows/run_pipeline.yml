@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - claude/btc-price-analysis-strategy-zARFu
-      - main
+      - master
   workflow_dispatch:
 
 jobs:
