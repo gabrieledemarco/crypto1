@@ -26,7 +26,7 @@ import seaborn as sns
 from strategy_core import (
     load_hourly, compute_indicators_v2, generate_signals_v2,
     backtest_v2, compute_metrics, fit_garch11, compute_garch_regime,
-    OUTPUT_DIR
+    load_agent_config, OUTPUT_DIR
 )
 
 sns.set_theme(style="darkgrid")
@@ -35,9 +35,15 @@ INITIAL_CAPITAL = 10_000
 RISK = 0.01
 COMMISSION = 0.0004   # 0.04% Binance taker fee (VIP 0)
 SLIPPAGE = 0.0001     # 0.01% market impact BTC/USDT
-BEST_SL = 1.0
-BEST_TP = 2.5
-BEST_HOURS = (6, 22)
+
+# Load agent-proposed config; fall back to V5 defaults if not available
+_ACFG    = load_agent_config()
+BEST_SL  = _ACFG["sl_mult"]
+BEST_TP  = _ACFG["tp_mult"]
+BEST_HOURS = tuple(_ACFG["active_hours"])
+_A_COMMISSION = _ACFG["commission"]
+_A_SLIPPAGE   = _ACFG["slippage"]
+_A_RISK       = _ACFG.get("risk_per_trade", RISK)
 
 
 def run_versions(df_ind: pd.DataFrame) -> dict:
@@ -274,15 +280,23 @@ if __name__ == "__main__":
         print(f"  {c*100:>9.3f}%  {slip*100:>9.3f}%  {rt:>10.3f}%  "
               f"{m_c.get('cagr_pct',0):>8.1f}  {m_c.get('sharpe_ratio',0):>8.2f}{flag}")
 
-    # ── V5: Wider stops + maker fees ─────────────────────────────────────────
+    # ── V5 (Agent): uses agent-proposed parameters ────────────────────────────
+    _src = _ACFG.get("source", "default")
     print(f"\n{'═'*60}")
-    print("  V5: Stop 2×ATR + TP 5×ATR + Maker Fee (0.01%+0.01%)")
-    print(f"  (Leva ridotta ≈ 1.5×, costo round-trip ≈ 0.04%)")
+    print(f"  V5 (Agent config — source: {_src})")
+    print(f"  SL={BEST_SL}×ATR  TP={BEST_TP}×ATR  "
+          f"comm={_A_COMMISSION*100:.3f}%  slip={_A_SLIPPAGE*100:.3f}%")
     print(f"{'═'*60}")
-    df_v5 = generate_signals_v2(df_ind, atr_mult_sl=2.0, atr_mult_tp=5.0,
-                                 active_hours=BEST_HOURS, use_garch_filter=True)
-    res_v5 = backtest_v2(df_v5, INITIAL_CAPITAL, RISK,
-                          commission=0.0001, slippage=0.0001)
+    df_v5 = generate_signals_v2(df_ind,
+                                 atr_mult_sl=BEST_SL,
+                                 atr_mult_tp=BEST_TP,
+                                 active_hours=BEST_HOURS,
+                                 use_garch_filter=_ACFG.get("use_garch_filter", True),
+                                 rsi_ob=_ACFG.get("rsi_ob", 70),
+                                 rsi_os=_ACFG.get("rsi_os", 30),
+                                 min_atr_pct=_ACFG.get("min_atr_pct", 0.003))
+    res_v5 = backtest_v2(df_v5, INITIAL_CAPITAL, _A_RISK,
+                          commission=_A_COMMISSION, slippage=_A_SLIPPAGE)
     m_v5 = compute_metrics(res_v5, INITIAL_CAPITAL)
     for k, v in m_v5.items():
         if isinstance(v, float):

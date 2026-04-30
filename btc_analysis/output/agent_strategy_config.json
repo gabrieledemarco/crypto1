@@ -1,0 +1,17 @@
+{
+  "sl_mult": 2.0,
+  "tp_mult": 5.0,
+  "active_hours": [
+    6,
+    22
+  ],
+  "rsi_ob": 70.0,
+  "rsi_os": 30.0,
+  "min_atr_pct": 0.003,
+  "use_garch_filter": true,
+  "commission": 0.0001,
+  "slippage": 0.0001,
+  "risk_per_trade": 0.01,
+  "rationale": "Default V5: ATR breakout + GARCH filter, SL=2\u00d7ATR, TP=5\u00d7ATR, maker fee 0.01%/side, active hours 06-22 UTC.",
+  "source": "default"
+}

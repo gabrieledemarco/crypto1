@@ -344,6 +344,39 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
     }
 
 
+# ── Agent config loader ───────────────────────────────────────────────────────
+
+_AGENT_CONFIG_DEFAULTS = {
+    "sl_mult": 2.0,
+    "tp_mult": 5.0,
+    "active_hours": [6, 22],
+    "rsi_ob": 70.0,
+    "rsi_os": 30.0,
+    "min_atr_pct": 0.003,
+    "use_garch_filter": True,
+    "commission": 0.0001,
+    "slippage": 0.0001,
+    "risk_per_trade": 0.01,
+}
+
+def load_agent_config() -> dict:
+    """
+    Load agent-proposed strategy config from output/agent_strategy_config.json.
+    Falls back to V5 defaults if the file does not exist.
+    """
+    import json
+    path = os.path.join(OUTPUT_DIR, "agent_strategy_config.json")
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                cfg = json.load(f)
+            cfg.setdefault("active_hours", _AGENT_CONFIG_DEFAULTS["active_hours"])
+            return cfg
+        except Exception:
+            pass
+    return dict(_AGENT_CONFIG_DEFAULTS)
+
+
 # ── Data loader ───────────────────────────────────────────────────────────────
 
 def load_hourly(asset: str = "BTC") -> pd.DataFrame:
