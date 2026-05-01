@@ -270,7 +270,7 @@ The function **must**:
 Return **exactly** these three fenced blocks in order — nothing else:
 
 ```json
-{
+{{
   "strategy_type": "<trend_following|mean_reversion|breakout|range_trading|momentum>",
   "strategy_name": "<descriptive name>",
   "sl_mult": <float, ATR multiple for SL>,
@@ -280,7 +280,7 @@ Return **exactly** these three fenced blocks in order — nothing else:
   "slippage":   <float e.g. 0.0001>,
   "risk_per_trade": <float e.g. 0.01>,
   "rationale": "<one sentence>"
-}
+}}
 ```
 
 ```python
