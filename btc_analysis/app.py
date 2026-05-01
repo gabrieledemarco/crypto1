@@ -478,98 +478,107 @@ with tab1:
         )
 
     a_color = ASSET_COLORS.get(asset, C_LINE)
-    daily   = load_ohlcv_daily(asset)
-    d = daily[(daily.index.year >= yr_from) & (daily.index.year <= yr_to)]
+    try:
+        daily = load_ohlcv_daily(asset)
+    except FileNotFoundError:
+        st.warning(
+            f"Dati giornalieri per **{_CATALOG_FLAT.get(asset, asset)} ({asset})** "
+            "non ancora scaricati. Clicca **▶ Esegui Agent** nel sidebar per scaricarli."
+        )
+        daily = None
 
-    if d.empty:
-        st.warning("Nessun dato per il periodo selezionato.")
-    else:
-        # ── Candlestick + Volume ──────────────────────────────────────────────
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                            row_heights=[0.75, 0.25], vertical_spacing=0.03)
-        fig.add_trace(go.Candlestick(
-            x=d.index, open=d["Open"], high=d["High"],
-            low=d["Low"], close=d["Close"],
-            increasing_line_color=C_UP, decreasing_line_color=C_DOWN,
-            name=f"{asset}/USD",
-        ), row=1, col=1)
-        bar_colors = [C_UP if c >= o else C_DOWN
-                      for c, o in zip(d["Close"], d["Open"])]
-        fig.add_trace(go.Bar(x=d.index, y=d["Volume"],
-                             marker_color=bar_colors,
-                             showlegend=False, name="Volume"), row=2, col=1)
-        fig.update_layout(height=500, xaxis_rangeslider_visible=False,
-                          margin=dict(l=0, r=0, t=30, b=0),
-                          template="plotly_dark",
-                          title=f"{asset}/USD — Candlestick giornaliero")
-        fig.update_yaxes(title_text="Prezzo (USD)", row=1, col=1)
-        fig.update_yaxes(title_text="Volume",       row=2, col=1)
-        st.plotly_chart(fig, use_container_width=True)
+    if daily is not None:
+        d = daily[(daily.index.year >= yr_from) & (daily.index.year <= yr_to)]
 
-        # ── Log-returns + Distribuzione ───────────────────────────────────────
-        log_ret = np.log(d["Close"] / d["Close"].shift(1)).dropna()
-        col_l, col_r = st.columns(2)
+        if d.empty:
+            st.warning("Nessun dato per il periodo selezionato.")
+        else:
+            # ── Candlestick + Volume ──────────────────────────────────────────────
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                                row_heights=[0.75, 0.25], vertical_spacing=0.03)
+            fig.add_trace(go.Candlestick(
+                x=d.index, open=d["Open"], high=d["High"],
+                low=d["Low"], close=d["Close"],
+                increasing_line_color=C_UP, decreasing_line_color=C_DOWN,
+                name=f"{asset}/USD",
+            ), row=1, col=1)
+            bar_colors = [C_UP if c >= o else C_DOWN
+                          for c, o in zip(d["Close"], d["Open"])]
+            fig.add_trace(go.Bar(x=d.index, y=d["Volume"],
+                                 marker_color=bar_colors,
+                                 showlegend=False, name="Volume"), row=2, col=1)
+            fig.update_layout(height=500, xaxis_rangeslider_visible=False,
+                              margin=dict(l=0, r=0, t=30, b=0),
+                              template="plotly_dark",
+                              title=f"{asset}/USD — Candlestick giornaliero")
+            fig.update_yaxes(title_text="Prezzo (USD)", row=1, col=1)
+            fig.update_yaxes(title_text="Volume",       row=2, col=1)
+            st.plotly_chart(fig, use_container_width=True)
 
-        with col_l:
-            fig2 = go.Figure(go.Scatter(
-                x=log_ret.index, y=log_ret.values,
-                mode="lines", line=dict(color=a_color, width=1),
-                name="Log-return",
-            ))
-            fig2.update_layout(height=300, template="plotly_dark",
-                                title="Log-returns giornalieri",
-                                margin=dict(l=0, r=0, t=40, b=0),
-                                yaxis_title="Log-return")
-            st.plotly_chart(fig2, use_container_width=True)
+            # ── Log-returns + Distribuzione ───────────────────────────────────────
+            log_ret = np.log(d["Close"] / d["Close"].shift(1)).dropna()
+            col_l, col_r = st.columns(2)
 
-        with col_r:
-            mu, sigma = log_ret.mean(), log_ret.std()
-            x_n = np.linspace(log_ret.min(), log_ret.max(), 200)
-            y_n = (np.exp(-0.5 * ((x_n - mu) / sigma) ** 2)
-                   / (sigma * np.sqrt(2 * np.pi))
-                   * len(log_ret) * (log_ret.max() - log_ret.min()) / 80)
-            fig3 = go.Figure()
-            fig3.add_trace(go.Histogram(x=log_ret.values, nbinsx=80,
-                                        marker_color=a_color, opacity=0.75,
-                                        name="Empirica"))
-            fig3.add_trace(go.Scatter(x=x_n, y=y_n, mode="lines",
-                                      line=dict(color=C_ACC, width=2),
-                                      name="Normale"))
-            fig3.update_layout(height=300, template="plotly_dark",
-                                title="Distribuzione log-returns",
-                                margin=dict(l=0, r=0, t=40, b=0))
-            st.plotly_chart(fig3, use_container_width=True)
+            with col_l:
+                fig2 = go.Figure(go.Scatter(
+                    x=log_ret.index, y=log_ret.values,
+                    mode="lines", line=dict(color=a_color, width=1),
+                    name="Log-return",
+                ))
+                fig2.update_layout(height=300, template="plotly_dark",
+                                    title="Log-returns giornalieri",
+                                    margin=dict(l=0, r=0, t=40, b=0),
+                                    yaxis_title="Log-return")
+                st.plotly_chart(fig2, use_container_width=True)
 
-        # ── Statistiche ───────────────────────────────────────────────────────
-        kurt    = float(scipy_stats.kurtosis(log_ret, fisher=True))
-        skew_v  = float(scipy_stats.skew(log_ret))
-        _, jb_p = scipy_stats.jarque_bera(log_ret)
-        ann_vol = log_ret.std() * np.sqrt(252) * 100
+            with col_r:
+                mu, sigma = log_ret.mean(), log_ret.std()
+                x_n = np.linspace(log_ret.min(), log_ret.max(), 200)
+                y_n = (np.exp(-0.5 * ((x_n - mu) / sigma) ** 2)
+                       / (sigma * np.sqrt(2 * np.pi))
+                       * len(log_ret) * (log_ret.max() - log_ret.min()) / 80)
+                fig3 = go.Figure()
+                fig3.add_trace(go.Histogram(x=log_ret.values, nbinsx=80,
+                                            marker_color=a_color, opacity=0.75,
+                                            name="Empirica"))
+                fig3.add_trace(go.Scatter(x=x_n, y=y_n, mode="lines",
+                                          line=dict(color=C_ACC, width=2),
+                                          name="Normale"))
+                fig3.update_layout(height=300, template="plotly_dark",
+                                    title="Distribuzione log-returns",
+                                    margin=dict(l=0, r=0, t=40, b=0))
+                st.plotly_chart(fig3, use_container_width=True)
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Volatilità annua",  f"{ann_vol:.1f}%")
-        c2.metric("Curtosi (excess)",  f"{kurt:.2f}")
-        c3.metric("Skewness",          f"{skew_v:.3f}")
-        c4.metric("Jarque-Bera p-val", f"{jb_p:.4f}")
+            # ── Statistiche ───────────────────────────────────────────────────────
+            kurt    = float(scipy_stats.kurtosis(log_ret, fisher=True))
+            skew_v  = float(scipy_stats.skew(log_ret))
+            _, jb_p = scipy_stats.jarque_bera(log_ret)
+            ann_vol = log_ret.std() * np.sqrt(252) * 100
 
-        # ── Pattern intraday ──────────────────────────────────────────────────
-        st.subheader(f"Pattern intraday {asset} (dati orari)")
-        try:
-            hourly = load_ohlcv_hourly(asset)
-            hourly["log_ret"] = np.log(hourly["Close"] / hourly["Close"].shift(1))
-            by_hour = hourly.groupby(hourly.index.hour)["log_ret"].mean() * 1e4
-            fig4 = go.Figure(go.Bar(
-                x=by_hour.index, y=by_hour.values,
-                marker_color=[C_UP if v >= 0 else C_DOWN for v in by_hour.values],
-            ))
-            fig4.update_layout(height=280, template="plotly_dark",
-                                title=f"Rendimento medio per ora del giorno (UTC) — {asset}",
-                                xaxis_title="Ora (UTC)",
-                                yaxis_title="Rendimento medio (bp)",
-                                margin=dict(l=0, r=0, t=40, b=0))
-            st.plotly_chart(fig4, use_container_width=True)
-        except Exception:
-            st.info("Dati orari non disponibili.")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Volatilità annua",  f"{ann_vol:.1f}%")
+            c2.metric("Curtosi (excess)",  f"{kurt:.2f}")
+            c3.metric("Skewness",          f"{skew_v:.3f}")
+            c4.metric("Jarque-Bera p-val", f"{jb_p:.4f}")
+
+            # ── Pattern intraday ──────────────────────────────────────────────────
+            st.subheader(f"Pattern intraday {asset} (dati orari)")
+            try:
+                hourly = load_ohlcv_hourly(asset)
+                hourly["log_ret"] = np.log(hourly["Close"] / hourly["Close"].shift(1))
+                by_hour = hourly.groupby(hourly.index.hour)["log_ret"].mean() * 1e4
+                fig4 = go.Figure(go.Bar(
+                    x=by_hour.index, y=by_hour.values,
+                    marker_color=[C_UP if v >= 0 else C_DOWN for v in by_hour.values],
+                ))
+                fig4.update_layout(height=280, template="plotly_dark",
+                                    title=f"Rendimento medio per ora del giorno (UTC) — {asset}",
+                                    xaxis_title="Ora (UTC)",
+                                    yaxis_title="Rendimento medio (bp)",
+                                    margin=dict(l=0, r=0, t=40, b=0))
+                st.plotly_chart(fig4, use_container_width=True)
+            except Exception:
+                st.info("Dati orari non disponibili.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
