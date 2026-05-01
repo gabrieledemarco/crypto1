@@ -13,7 +13,7 @@ Analisi aggiuntiva:
   - Impatto costi per N trade
 """
 
-import sys, os
+import sys, os, json
 sys.path.insert(0, os.path.dirname(__file__))
 
 import numpy as np
@@ -359,4 +359,8 @@ if __name__ == "__main__":
     fig2.savefig(os.path.join(OUTPUT_DIR, "04b_v5_comparison.png"), dpi=150, bbox_inches="tight")
     plt.close(fig2)
     print("\n  Saved: 04b_v5_comparison.png")
+    meta_path = os.path.join(OUTPUT_DIR, "strategy_meta.json")
+    with open(meta_path, "w") as _f:
+        json.dump({"asset": STRATEGY_ASSET}, _f)
+
     print("\nAnalisi enhanced strategy completata.")

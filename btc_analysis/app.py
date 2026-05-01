@@ -410,6 +410,16 @@ def load_optimization():
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _strategy_asset() -> str:
+    """Return the asset the last strategy run was calculated on."""
+    import json as _json
+    _meta = os.path.join(OUTPUT, "strategy_meta.json")
+    try:
+        with open(_meta) as _f:
+            return _json.load(_f).get("asset", "BTC-USD")
+    except Exception:
+        return "BTC-USD"
+
 def equity_curve(trades: pd.DataFrame, capital: float = 10_000) -> pd.Series:
     eq = capital + trades["pnl"].cumsum()
     eq.index = trades["exit_time"]
@@ -567,9 +577,16 @@ with tab1:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab2:
-    if ticker_to_fname(asset) != "btc":
-        st.info("Il backtest della strategia V5 è calcolato su **BTC**. "
-                "I risultati per ETH e SOL sono disponibili nel tab 🌐 Multi-Asset.")
+    _strat_asset = _strategy_asset()
+    _strat_name  = _CATALOG_FLAT.get(_strat_asset, _strat_asset)
+    if _strat_asset != asset:
+        st.info(
+            f"Il backtest è calcolato su **{_strat_name}** ({_strat_asset}). "
+            f"Per calcolarlo su **{_CATALOG_FLAT.get(asset, asset)}** ({asset}), "
+            "seleziona l'asset e premi ▶ Esegui Agent nella sidebar."
+        )
+    elif _strat_asset != "BTC-USD":
+        st.success(f"Backtest calcolato su **{_strat_name}** ({_strat_asset}).")
     try:
         trades = load_trades()
         cmp    = load_strategy_comparison()
@@ -676,9 +693,16 @@ with tab2:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab3:
-    if ticker_to_fname(asset) != "btc":
-        st.info("La Walk-Forward Optimization è calcolata su **BTC**. "
-                "I risultati per altri asset sono in sviluppo.")
+    _strat_asset3 = _strategy_asset()
+    _strat_name3  = _CATALOG_FLAT.get(_strat_asset3, _strat_asset3)
+    if _strat_asset3 != asset:
+        st.info(
+            f"La Walk-Forward è calcolata su **{_strat_name3}** ({_strat_asset3}). "
+            f"Per calcolarla su **{_CATALOG_FLAT.get(asset, asset)}** ({asset}), "
+            "esegui l'Agent AI nella sidebar."
+        )
+    elif _strat_asset3 != "BTC-USD":
+        st.success(f"Walk-Forward calcolata su **{_strat_name3}** ({_strat_asset3}).")
     try:
         wfo = load_wfo()
 
@@ -777,9 +801,16 @@ with tab3:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab4:
-    if ticker_to_fname(asset) != "btc":
-        st.info("La simulazione Monte Carlo è calcolata su **BTC**. "
-                "Seleziona BTC nella sidebar per la visione completa.")
+    _strat_asset4 = _strategy_asset()
+    _strat_name4  = _CATALOG_FLAT.get(_strat_asset4, _strat_asset4)
+    if _strat_asset4 != asset:
+        st.info(
+            f"Il Monte Carlo è calcolato su **{_strat_name4}** ({_strat_asset4}). "
+            f"Per calcolarlo su **{_CATALOG_FLAT.get(asset, asset)}** ({asset}), "
+            "esegui l'Agent AI nella sidebar."
+        )
+    elif _strat_asset4 != "BTC-USD":
+        st.success(f"Monte Carlo calcolato su **{_strat_name4}** ({_strat_asset4}).")
     try:
         mc     = load_mc_bootstrap()
         stress = load_mc_stress()
