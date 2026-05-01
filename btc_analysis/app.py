@@ -87,8 +87,8 @@ def _save_selected_assets(tickers: list) -> None:
     _j.dump(tickers, open(_SELECTED_FILE, "w", encoding="utf-8"), indent=2)
 
 st.set_page_config(
-    page_title="BTC Strategy Dashboard",
-    page_icon="₿",
+    page_title="Crypto Strategy Dashboard",
+    page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -367,7 +367,7 @@ def load_ohlcv_daily(sym: str) -> pd.DataFrame:
     fname = ticker_to_fname(sym)
     path  = os.path.join(OUTPUT, f"{fname}_daily.csv")
     if not os.path.exists(path):
-        path = os.path.join(OUTPUT, "btc_daily.csv")
+        raise FileNotFoundError(f"Daily CSV not found for {sym}: {path}")
     df = pd.read_csv(path, index_col=0, parse_dates=True)
     df.index.name = "Date"
     return df
@@ -409,6 +409,16 @@ def load_optimization():
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _strategy_asset() -> str:
+    """Return the asset the last strategy run was calculated on."""
+    import json as _json
+    _meta = os.path.join(OUTPUT, "strategy_meta.json")
+    try:
+        with open(_meta) as _f:
+            return _json.load(_f).get("asset", "BTC-USD")
+    except Exception:
+        return "BTC-USD"
 
 def equity_curve(trades: pd.DataFrame, capital: float = 10_000) -> pd.Series:
     eq = capital + trades["pnl"].cumsum()
@@ -567,9 +577,16 @@ with tab1:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab2:
-    if ticker_to_fname(asset) != "btc":
-        st.info("Il backtest della strategia V5 è calcolato su **BTC**. "
-                "I risultati per ETH e SOL sono disponibili nel tab 🌐 Multi-Asset.")
+    _strat_asset = _strategy_asset()
+    _strat_name  = _CATALOG_FLAT.get(_strat_asset, _strat_asset)
+    if _strat_asset != asset:
+        st.info(
+            f"Il backtest è calcolato su **{_strat_name}** ({_strat_asset}). "
+            f"Per calcolarlo su **{_CATALOG_FLAT.get(asset, asset)}** ({asset}), "
+            "seleziona l'asset e premi ▶ Esegui Agent nella sidebar."
+        )
+    elif _strat_asset != "BTC-USD":
+        st.success(f"Backtest calcolato su **{_strat_name}** ({_strat_asset}).")
     try:
         trades = load_trades()
         cmp    = load_strategy_comparison()
@@ -676,9 +693,16 @@ with tab2:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab3:
-    if ticker_to_fname(asset) != "btc":
-        st.info("La Walk-Forward Optimization è calcolata su **BTC**. "
-                "I risultati per altri asset sono in sviluppo.")
+    _strat_asset3 = _strategy_asset()
+    _strat_name3  = _CATALOG_FLAT.get(_strat_asset3, _strat_asset3)
+    if _strat_asset3 != asset:
+        st.info(
+            f"La Walk-Forward è calcolata su **{_strat_name3}** ({_strat_asset3}). "
+            f"Per calcolarla su **{_CATALOG_FLAT.get(asset, asset)}** ({asset}), "
+            "esegui l'Agent AI nella sidebar."
+        )
+    elif _strat_asset3 != "BTC-USD":
+        st.success(f"Walk-Forward calcolata su **{_strat_name3}** ({_strat_asset3}).")
     try:
         wfo = load_wfo()
 
@@ -777,9 +801,16 @@ with tab3:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab4:
-    if ticker_to_fname(asset) != "btc":
-        st.info("La simulazione Monte Carlo è calcolata su **BTC**. "
-                "Seleziona BTC nella sidebar per la visione completa.")
+    _strat_asset4 = _strategy_asset()
+    _strat_name4  = _CATALOG_FLAT.get(_strat_asset4, _strat_asset4)
+    if _strat_asset4 != asset:
+        st.info(
+            f"Il Monte Carlo è calcolato su **{_strat_name4}** ({_strat_asset4}). "
+            f"Per calcolarlo su **{_CATALOG_FLAT.get(asset, asset)}** ({asset}), "
+            "esegui l'Agent AI nella sidebar."
+        )
+    elif _strat_asset4 != "BTC-USD":
+        st.success(f"Monte Carlo calcolato su **{_strat_name4}** ({_strat_asset4}).")
     try:
         mc     = load_mc_bootstrap()
         stress = load_mc_stress()
@@ -1131,5 +1162,5 @@ with tab6:
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.divider()
-st.caption("BTC Strategy Dashboard · Dati: sintetici (fallback) o Yahoo Finance via yfinance · "
+st.caption(f"{_CATALOG_FLAT.get(asset, asset)} Strategy Dashboard · Dati: Yahoo Finance via yfinance · "
            "Agent Strategy: parametri ottimizzati da Claude claude-opus-4-7")
