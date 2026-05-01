@@ -226,7 +226,7 @@ def plot_comparison(results: dict, df_ind: pd.DataFrame):
     ax7.set_ylabel("Drawdown (%)")
     ax7.legend(fontsize=8)
 
-    fig.suptitle("BTC/USD — Enhanced Strategy: GARCH Filter + Costi Transazione",
+    fig.suptitle(f"{STRATEGY_ASSET} — Enhanced Strategy: GARCH Filter + Costi Transazione",
                  fontsize=15, fontweight="bold")
     plt.savefig(os.path.join(OUTPUT_DIR, "04_enhanced_strategy.png"),
                 dpi=150, bbox_inches="tight")
