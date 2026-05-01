@@ -101,7 +101,7 @@ def _read_safe(path: str, max_chars: int = 6000) -> str:
 
 def _build_context(asset: str = "BTC-USD") -> str:
     files = [
-        ("Statistical Report (BTC reference)", "REPORT.txt"),
+        ("Statistical Report", "REPORT.txt"),
         ("Enhanced Strategy Comparison",        "enhanced_strategy_comparison.csv"),
         ("Walk-Forward Results",                "walk_forward_results.csv"),
         ("Monte Carlo Bootstrap",               "mc_bootstrap_results.csv"),
@@ -231,11 +231,12 @@ def _validate_code(code: str) -> str:
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """\
+def _make_system_prompt(asset: str = "BTC-USD") -> str:
+    return f"""\
 You are an expert quantitative trading strategist and Python developer for crypto markets.
 
 ## TASK
-Analyse the BTC/USD statistical analysis results supplied by the user and:
+Analyse the {asset} statistical analysis results supplied by the user and:
 1. Choose the optimal **strategy TYPE** based on the time-series properties.
 2. Write a Python function `generate_signals_agent(df)` implementing that strategy.
 3. Write a Markdown report explaining your analysis and choices.
@@ -309,6 +310,8 @@ def generate_signals_agent(df):
 ```
 """
 
+SYSTEM_PROMPT = _make_system_prompt()  # default (BTC-USD) for backward compat
+
 # ── Response parsing ──────────────────────────────────────────────────────────
 
 def _parse_response(text: str, source: str) -> tuple:
@@ -329,14 +332,14 @@ def _parse_response(text: str, source: str) -> tuple:
 
 # ── Anthropic backend ─────────────────────────────────────────────────────────
 
-def _call_anthropic(api_key: str, context: str) -> tuple:
+def _call_anthropic(api_key: str, context: str, asset: str = "BTC-USD") -> tuple:
     try:
         import anthropic
     except ImportError:
         raise RuntimeError("Run: pip install anthropic")
 
     user_msg = (
-        "Analyse the BTC/USD results and design the optimal strategy.\n\n"
+        f"Analyse the {asset} results and design the optimal strategy.\n\n"
         + context
         + "\n\nReturn exactly the three fenced blocks specified."
     )
@@ -346,7 +349,7 @@ def _call_anthropic(api_key: str, context: str) -> tuple:
         model="claude-opus-4-7",
         max_tokens=8192,
         thinking={"type": "adaptive"},
-        system=[{"type": "text", "text": SYSTEM_PROMPT,
+        system=[{"type": "text", "text": _make_system_prompt(asset),
                  "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": [
             {"type": "text", "text": user_msg,
@@ -365,12 +368,12 @@ def _call_anthropic(api_key: str, context: str) -> tuple:
 
 # ── OpenRouter backend ────────────────────────────────────────────────────────
 
-def _call_openrouter(api_key: str, context: str, model: str = "") -> tuple:
+def _call_openrouter(api_key: str, context: str, model: str = "", asset: str = "BTC-USD") -> tuple:
     import requests as _req
     model = model or os.environ.get("OPENROUTER_MODEL", OPENROUTER_DEFAULT_MODEL)
     print(f"  [agent] Calling OpenRouter model={model}...")
     user_msg = (
-        "Analyse the BTC/USD results and design the optimal strategy.\n\n"
+        f"Analyse the {asset} results and design the optimal strategy.\n\n"
         + context
         + "\n\nReturn exactly the three fenced blocks specified."
     )
@@ -379,9 +382,9 @@ def _call_openrouter(api_key: str, context: str, model: str = "") -> tuple:
         headers={"Authorization": f"Bearer {api_key}",
                  "Content-Type": "application/json",
                  "HTTP-Referer": "https://github.com/gabrieledemarco/crypto1",
-                 "X-Title": "BTC Strategy Agent"},
+                 "X-Title": "Crypto Strategy Agent"},
         json={"model": model, "max_tokens": 8192,
-              "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+              "messages": [{"role": "system", "content": _make_system_prompt(asset)},
                            {"role": "user",   "content": user_msg}]},
         timeout=180,
     )
@@ -420,7 +423,7 @@ def run_agent(
 
     if ant:
         try:
-            return _call_anthropic(ant, ctx)
+            return _call_anthropic(ant, ctx, asset=asset)
         except Exception as exc:
             print(f"  [agent] Anthropic error: {exc}")
             if not ort:
@@ -429,7 +432,7 @@ def run_agent(
             print("  [agent] Retrying via OpenRouter...")
 
     try:
-        return _call_openrouter(ort, ctx, model=openrouter_model)
+        return _call_openrouter(ort, ctx, model=openrouter_model, asset=asset)
     except Exception as exc:
         print(f"  [agent] OpenRouter error: {exc}")
         print("  [agent] Falling back to V5 defaults.")

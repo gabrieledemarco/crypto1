@@ -87,8 +87,8 @@ def _save_selected_assets(tickers: list) -> None:
     _j.dump(tickers, open(_SELECTED_FILE, "w", encoding="utf-8"), indent=2)
 
 st.set_page_config(
-    page_title="BTC Strategy Dashboard",
-    page_icon="₿",
+    page_title="Crypto Strategy Dashboard",
+    page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -367,7 +367,7 @@ def load_ohlcv_daily(sym: str) -> pd.DataFrame:
     fname = ticker_to_fname(sym)
     path  = os.path.join(OUTPUT, f"{fname}_daily.csv")
     if not os.path.exists(path):
-        path = os.path.join(OUTPUT, "btc_daily.csv")
+        raise FileNotFoundError(f"Daily CSV not found for {sym}: {path}")
     df = pd.read_csv(path, index_col=0, parse_dates=True)
     df.index.name = "Date"
     return df
@@ -1162,5 +1162,5 @@ with tab6:
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.divider()
-st.caption("BTC Strategy Dashboard · Dati: sintetici (fallback) o Yahoo Finance via yfinance · "
+st.caption(f"{_CATALOG_FLAT.get(asset, asset)} Strategy Dashboard · Dati: Yahoo Finance via yfinance · "
            "Agent Strategy: parametri ottimizzati da Claude claude-opus-4-7")
