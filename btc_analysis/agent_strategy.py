@@ -100,12 +100,55 @@ def _read_safe(path: str, max_chars: int = 6000) -> str:
 
 
 def _build_context(asset: str = "BTC-USD") -> str:
+    # Prefer structured analysis_report.json (from 02_analyze.py)
+    report_json = os.path.join(OUTPUT_DIR, "analysis_report.json")
+    if os.path.exists(report_json):
+        try:
+            with open(report_json) as f:
+                rpt = json.load(f)
+            s  = rpt.get("statistics", {})
+            g  = rpt.get("garch", {})
+            v4 = rpt.get("v4_baseline", {})
+            target_sharpe = max(0.5, v4.get("sharpe_ratio", -999) + 0.5)
+            target_cagr   = max(0.0, v4.get("cagr_pct", -999) + 5)
+            ctx = (
+                f"### Asset: {rpt['asset']}\n"
+                f"Periodo: {rpt['period_start']} → {rpt['period_end']}  "
+                f"({rpt['n_bars_hourly']} barre orarie)\n\n"
+                f"### Proprietà statistiche\n"
+                f"- Hurst exponent: {s.get('hurst_exponent','?')}  →  **{s.get('regime','?').upper()}**\n"
+                f"  {s.get('regime_description','')}\n"
+                f"- ACF lag-1: {s.get('acf_lag1','?')}  "
+                f"({'momentum' if float(s.get('acf_lag1', 0)) > 0 else 'mean-reversion'})\n"
+                f"- Kurtosis (excess): {s.get('excess_kurtosis','?')}  "
+                f"({'fat tails — widen SL' if float(s.get('excess_kurtosis', 0)) > 5 else 'normal tails'})\n"
+                f"- Vol annualizzata: {s.get('ann_vol_pct','?')}%\n"
+                f"- Ore UTC migliori (avg return +): {s.get('best_hours_utc','?')}\n"
+                f"- Ore UTC peggiori (avg return -): {s.get('worst_hours_utc','?')}\n\n"
+                f"### GARCH(1,1)\n"
+                f"- alpha={g.get('alpha','?')}  beta={g.get('beta','?')}  "
+                f"persistence={g.get('persistence','?')}  (< 1 = stazionario)\n"
+                f"- Regimi: {g.get('regime_pct','?')}\n\n"
+                f"### Baseline V4 da battere (ATR breakout + GARCH filter, taker 0.04%)\n"
+                f"- CAGR: {v4.get('cagr_pct','?')}%\n"
+                f"- Sharpe Ratio: {v4.get('sharpe_ratio','?')}\n"
+                f"- Max Drawdown: {v4.get('max_drawdown_pct','?')}%\n"
+                f"- Win Rate: {v4.get('win_rate_pct','?')}%  |  N. Trade: {v4.get('n_trades','?')}\n"
+                f"- Profit Factor: {v4.get('profit_factor','?')}\n\n"
+                f"### OBIETTIVO\n"
+                f"Progetta una strategia con **Sharpe > {target_sharpe:.2f}** "
+                f"e **CAGR > {target_cagr:.1f}%** sfruttando le proprietà statistiche riportate.\n"
+                f"Il tipo di strategia è suggerito dall'esponente di Hurst — rispettalo!\n"
+            )
+            return ctx
+        except Exception:
+            pass
+
+    # Fallback: leggi i file CSV/TXT come prima
     files = [
-        ("Statistical Report", "REPORT.txt"),
-        ("Enhanced Strategy Comparison",        "enhanced_strategy_comparison.csv"),
-        ("Walk-Forward Results",                "walk_forward_results.csv"),
-        ("Monte Carlo Bootstrap",               "mc_bootstrap_results.csv"),
-        ("Grid-Search Optimization",            "optimization_results.csv"),
+        ("Statistical Report",           "REPORT.txt"),
+        ("Enhanced Strategy Comparison", "enhanced_strategy_comparison.csv"),
+        ("Walk-Forward Results",         "walk_forward_results.csv"),
     ]
     ctx = "\n\n".join(
         f"### {title}\n```\n{_read_safe(os.path.join(OUTPUT_DIR, fname))}\n```"
@@ -397,6 +440,49 @@ def _call_openrouter(api_key: str, context: str, model: str = "", asset: str = "
     return _parse_response(text, source=f"openrouter/{model}")
 
 
+# ── Quick backtest for refinement loop ───────────────────────────────────────
+
+def _quick_backtest_code(code: str, asset: str) -> dict:
+    """Run a fast in-sample backtest on agent-generated code. Returns metrics dict."""
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(__file__))
+        from strategy_core import (load_hourly, compute_indicators_v2,
+                                   backtest_v2, compute_metrics)
+        import numpy as _np, pandas as _pd
+
+        df     = load_hourly(asset)
+        df_ind = compute_indicators_v2(df, fit_garch=True)
+
+        ns: dict = {"np": _np, "pd": _pd}
+        exec(code, ns)                                    # noqa: S102
+        fn     = ns["generate_signals_agent"]
+        df_sig = fn(df_ind)
+        res    = backtest_v2(df_sig, 10_000, 0.01, commission=0.0001, slippage=0.0001)
+        m      = compute_metrics(res, 10_000)
+        return {
+            "sharpe":    m.get("sharpe_ratio",     -999),
+            "cagr_pct":  m.get("cagr_pct",         -999),
+            "max_dd":    m.get("max_drawdown_pct",  -999),
+            "n_trades":  m.get("n_trades",           0),
+            "win_rate":  m.get("win_rate_pct",       0),
+            "error":     None,
+        }
+    except Exception as exc:
+        return {"sharpe": -999, "cagr_pct": -999, "n_trades": 0, "error": str(exc)}
+
+
+def _get_v4_baseline_sharpe() -> float:
+    """Read V4 Sharpe from analysis_report.json if available."""
+    path = os.path.join(OUTPUT_DIR, "analysis_report.json")
+    try:
+        with open(path) as f:
+            rpt = json.load(f)
+        return float(rpt.get("v4_baseline", {}).get("sharpe_ratio", -999))
+    except Exception:
+        return -999
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def run_agent(
@@ -404,10 +490,12 @@ def run_agent(
     openrouter_key: str = "",
     openrouter_model: str = "",
     asset: str = "BTC-USD",
+    max_refinements: int = 3,
 ) -> tuple:
     """
     Returns (config: dict, code: str, report: str).
     Priority: Anthropic → OpenRouter → V5 defaults.
+    Runs up to max_refinements iterations if the strategy underperforms V4.
     """
     ant = (anthropic_key or "").strip() or os.environ.get("ANTHROPIC_API_KEY",  "").strip()
     ort = (openrouter_key or "").strip() or os.environ.get("OPENROUTER_API_KEY", "").strip()
@@ -418,25 +506,80 @@ def run_agent(
         cfg["asset"] = asset
         return cfg, DEFAULT_CODE, DEFAULT_REPORT
 
+    v4_sharpe     = _get_v4_baseline_sharpe()
+    target_sharpe = max(0.3, v4_sharpe + 0.3)
+    print(f"  [agent] V4 baseline Sharpe: {v4_sharpe:.3f}  |  Target: > {target_sharpe:.3f}")
     print(f"  [agent] Building analysis context for {asset}...")
     ctx = _build_context(asset)
 
-    if ant:
+    config = code = report = None
+    for attempt in range(1, max_refinements + 1):
+        print(f"  [agent] Attempt {attempt}/{max_refinements}...")
         try:
-            return _call_anthropic(ant, ctx, asset=asset)
+            if ant:
+                config, code, report = _call_anthropic(ant, ctx, asset=asset)
+            else:
+                config, code, report = _call_openrouter(ort, ctx,
+                                                         model=openrouter_model, asset=asset)
         except Exception as exc:
-            print(f"  [agent] Anthropic error: {exc}")
-            if not ort:
-                print("  [agent] Falling back to V5 defaults.")
-                return V5_DEFAULT_CONFIG.copy(), DEFAULT_CODE, DEFAULT_REPORT
-            print("  [agent] Retrying via OpenRouter...")
+            print(f"  [agent] Error on attempt {attempt}: {exc}")
+            if ant and ort and attempt == 1:
+                print("  [agent] Trying OpenRouter as fallback...")
+                try:
+                    config, code, report = _call_openrouter(ort, ctx,
+                                                             model=openrouter_model, asset=asset)
+                except Exception as exc2:
+                    print(f"  [agent] OpenRouter also failed: {exc2}")
+            break
 
-    try:
-        return _call_openrouter(ort, ctx, model=openrouter_model, asset=asset)
-    except Exception as exc:
-        print(f"  [agent] OpenRouter error: {exc}")
-        print("  [agent] Falling back to V5 defaults.")
-        return V5_DEFAULT_CONFIG.copy(), DEFAULT_CODE, DEFAULT_REPORT
+        # Quick backtest to evaluate quality
+        metrics = _quick_backtest_code(code, asset)
+        sharpe   = metrics.get("sharpe",   -999)
+        n_trades = metrics.get("n_trades", 0)
+        print(f"  [agent] Quick backtest → "
+              f"Sharpe: {sharpe:.3f} (target >{target_sharpe:.3f})  "
+              f"CAGR: {metrics.get('cagr_pct',-999):.1f}%  "
+              f"N_trades: {n_trades}")
+        if metrics.get("error"):
+            print(f"  [agent] Backtest error: {metrics['error']}")
+
+        if sharpe >= target_sharpe and n_trades >= 15:
+            print(f"  [agent] ✓ Strategy meets target on attempt {attempt}!")
+            break
+
+        if attempt < max_refinements:
+            diagnosis = []
+            if n_trades < 15:
+                diagnosis.append(
+                    f"Too few trades ({n_trades}): relax entry conditions, "
+                    "expand active_hours, or reduce filters.")
+            if sharpe < 0:
+                diagnosis.append(
+                    f"Negative Sharpe ({sharpe:.3f}): signals are systematically wrong. "
+                    "Consider reversing direction or switching strategy type completely.")
+            elif sharpe < target_sharpe:
+                diagnosis.append(
+                    f"Sharpe {sharpe:.3f} below target {target_sharpe:.3f}: "
+                    "improve entry timing or SL/TP ratio.")
+            if metrics.get("error"):
+                diagnosis.append(f"Runtime error: {metrics['error']}")
+            refinement = (
+                f"\n\n### Attempt {attempt} Result — NEEDS IMPROVEMENT\n"
+                f"Sharpe: {sharpe:.3f} (target: >{target_sharpe:.3f})  "
+                f"CAGR: {metrics.get('cagr_pct',-999):.1f}%  "
+                f"N_trades: {n_trades}\n"
+                + ("\n".join(f"- {d}" for d in diagnosis) if diagnosis else "")
+                + "\n\n**Redesign the strategy addressing the issues above.**\n"
+            )
+            ctx = _build_context(asset) + refinement
+
+    if config is None:
+        print("  [agent] All attempts failed — using V5 defaults.")
+        cfg = V5_DEFAULT_CONFIG.copy()
+        cfg["asset"] = asset
+        return cfg, DEFAULT_CODE, DEFAULT_REPORT
+
+    return config, code, report
 
 # ── Save helpers ──────────────────────────────────────────────────────────────
 

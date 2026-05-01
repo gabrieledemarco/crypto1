@@ -286,9 +286,11 @@ with st.sidebar:
         if not _ant_key and not _or_key:
             st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
         else:
-            # Download asset data if missing
+            _env = {"STRATEGY_ASSET": asset}
+
+            # ── Step 0: download se mancante ──────────────────────────────────
             if not os.path.exists(_asset_csv):
-                with st.spinner(f"Download dati {asset}…"):
+                with st.spinner(f"⬇️ Download dati {asset}…"):
                     try:
                         import importlib.util as _ilu2
                         _spec2 = _ilu2.spec_from_file_location(
@@ -303,11 +305,20 @@ with st.sidebar:
                     except Exception as _de2:
                         st.error(f"Errore download {asset}: {_de2}")
                         st.stop()
+
+            # ── Step 1: analisi statistica ────────────────────────────────────
+            with st.spinner(f"📊 Step 1/4 — Analisi statistica {asset}…"):
+                try:
+                    _run_script("02_analyze.py", extra_env=_env)
+                except subprocess.CalledProcessError as _e1:
+                    st.warning(f"Analisi statistica fallita: {_e1.stderr.decode()[:300]}")
+
+            # ── Step 2: agent progetta strategia ─────────────────────────────
             import sys as _sys
             _sys.path.insert(0, BASE)
             import importlib, agent_strategy as _ag
             importlib.reload(_ag)
-            with st.spinner(f"L'agent sta analizzando {asset}…"):
+            with st.spinner(f"🤖 Step 2/4 — Agent progetta strategia {asset}…"):
                 try:
                     _cfg_r, _code_r, _report_r = _ag.run_agent(
                         anthropic_key=_ant_key,
@@ -319,17 +330,26 @@ with st.sidebar:
                 except Exception as _ae:
                     st.error(f"Errore agent: {_ae}")
                     st.stop()
-            with st.spinner(f"Backtest {asset}…"):
+
+            # ── Step 3: backtest + WFO + ottimizzazione ───────────────────────
+            with st.spinner(f"📈 Step 3/4 — Backtest + Walk-Forward {asset}…"):
                 try:
-                    _run_script("06_enhanced_strategy.py",
-                                extra_env={"STRATEGY_ASSET": asset})
-                    st.cache_data.clear()
-                    st.success(
-                        f"✅ Strategia `{_cfg_r.get('strategy_type','')}` su "
-                        f"`{asset}` pronta. Vedi Tab **🤖 Agent Strategy**."
-                    )
+                    _run_script("04_backtest.py", extra_env=_env)
                 except subprocess.CalledProcessError as _be:
                     st.warning(f"Backtest fallito: {_be.stderr.decode()[:300]}")
+
+            # ── Step 4: Monte Carlo ───────────────────────────────────────────
+            with st.spinner(f"🎲 Step 4/4 — Monte Carlo {asset}…"):
+                try:
+                    _run_script("05_montecarlo.py", extra_env=_env)
+                except subprocess.CalledProcessError as _me:
+                    st.warning(f"Monte Carlo fallito: {_me.stderr.decode()[:300]}")
+
+            st.cache_data.clear()
+            st.success(
+                f"✅ Pipeline completata — strategia `{_cfg_r.get('strategy_type','')}` "
+                f"su `{asset}`. Vedi Tab **🤖 Agent Strategy**."
+            )
             st.rerun()
 
     st.divider()
