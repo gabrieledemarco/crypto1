@@ -294,8 +294,9 @@ with st.sidebar:
                     _dlm2 = _ilu2.module_from_spec(_spec2)
                     _spec2.loader.exec_module(_dlm2)
                     _r2 = _dlm2.download_all_assets([asset], skip_existing=False)
-                    if not _r2.get(asset):
-                        st.error(f"Impossibile scaricare i dati per {asset}.")
+                    _r2_val = _r2.get(asset)
+                    if _r2_val is not True:
+                        st.error(f"Impossibile scaricare {asset}: {_r2_val or 'errore sconosciuto'}")
                         return False
                     st.cache_data.clear()
                 except Exception as _de:
@@ -520,11 +521,12 @@ with tab1:
                         _t1mod = _t1ilu.module_from_spec(_t1spec)
                         _t1spec.loader.exec_module(_t1mod)
                         _t1r = _t1mod.download_all_assets([asset], skip_existing=False)
-                        if _t1r.get(asset):
+                        _t1_val = _t1r.get(asset)
+                        if _t1_val is True:
                             st.cache_data.clear()
                             st.success(f"✅ Dati scaricati per {asset}.")
                         else:
-                            st.error(f"Impossibile scaricare i dati per {asset}.")
+                            st.error(f"Impossibile scaricare {asset}: {_t1_val or 'errore sconosciuto'}")
                     except Exception as _t1e:
                         st.error(f"Errore download: {_t1e}")
         with _t1c2:

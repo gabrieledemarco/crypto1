@@ -18,6 +18,7 @@ Dipendenze:
 import os
 import re
 import warnings
+from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 
@@ -34,8 +35,8 @@ TICKERS = {
 }
 
 DAILY_START  = "2015-01-01"
-HOURLY_DAYS  = 730   # yfinance limita hourly a ~730 giorni
-HOURLY_START = "2023-01-01"
+HOURLY_DAYS  = 720   # yfinance limita hourly a ~730 giorni
+HOURLY_START = (datetime.today() - timedelta(days=HOURLY_DAYS)).strftime("%Y-%m-%d")
 
 # ── Asset catalog ──────────────────────────────────────────────────────────────
 
@@ -73,7 +74,7 @@ def ticker_to_fname(ticker: str) -> str:
 
 
 def download_all_assets(tickers: list, skip_existing: bool = True) -> dict:
-    """Download hourly CSV for each ticker. Returns {ticker: True/False}."""
+    """Download hourly CSV for each ticker. Returns {ticker: True | error_string}."""
     results: dict = {}
     for t in tickers:
         fname = ticker_to_fname(t)
@@ -89,7 +90,7 @@ def download_all_assets(tickers: list, skip_existing: bool = True) -> dict:
             results[t] = True
         except Exception as exc:
             print(f"    ERRORE {t}: {exc}")
-            results[t] = False
+            results[t] = str(exc)
     return results
 
 
