@@ -51,9 +51,8 @@ def run_analysis(asset: str) -> dict:
     kurt = float(ret.kurtosis())
     vol  = float(ret.std() * np.sqrt(24 * 365) * 100)
 
-    # Intraday pattern (allineato su stesso indice)
-    hour_idx = pd.to_datetime(df.index).hour
-    by_hour  = ret.groupby(hour_idx[ret.index]).mean()
+    # Intraday pattern — group by hour of ret.index directly
+    by_hour     = ret.groupby(pd.to_datetime(ret.index).hour).mean()
     best_hours  = sorted(by_hour.nlargest(8).index.tolist())
     worst_hours = sorted(by_hour.nsmallest(3).index.tolist())
     hourly_bps  = {int(h): round(float(v * 10_000), 3) for h, v in by_hour.items()}
