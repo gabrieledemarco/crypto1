@@ -187,6 +187,33 @@ with st.sidebar:
     if not os.path.exists(_asset_csv):
         st.caption(f"⬇️ `{asset}` non ancora scaricato — download automatico al primo utilizzo.")
 
+    # ── Timeframe dati orari ───────────────────────────────────────────────────
+    _YFINANCE_LIMIT = 720   # giorni massimi supportati da yfinance per dati orari
+    _TF_OPTIONS = {
+        "3 mesi  (90 gg)":    90,
+        "6 mesi  (180 gg)":  180,
+        "1 anno  (365 gg)":  365,
+        "2 anni  (730 gg)":  730,
+    }
+    _tf_label = st.selectbox(
+        "📅 Finestra dati orari",
+        options=list(_TF_OPTIONS.keys()),
+        index=2,
+        help="Periodo di storia scaricato per l'analisi e il backtest (dati orari).",
+    )
+    _tf_requested = _TF_OPTIONS[_tf_label]
+    if _tf_requested > _YFINANCE_LIMIT:
+        _tf_actual = _YFINANCE_LIMIT
+        st.warning(
+            f"⚠️ yfinance fornisce dati orari per massimo ~730 giorni. "
+            f"La finestra verrà ridotta da **{_tf_requested}** a **{_tf_actual} giorni** "
+            f"({_tf_actual // 30} mesi circa, dal "
+            f"{(pd.Timestamp.today() - pd.Timedelta(days=_tf_actual)).strftime('%d/%m/%Y')}"
+            " ad oggi)."
+        )
+    else:
+        _tf_actual = _tf_requested
+
     with st.expander("➕ Aggiungi asset al universe"):
         _new_sel: list = []
         for _cat, _items in ASSET_CATALOG.items():
@@ -217,9 +244,17 @@ with st.sidebar:
                                 "dl01", os.path.join(BASE, "01_data_download.py"))
                             _dlm = _ilu.module_from_spec(_spec)
                             _spec.loader.exec_module(_dlm)
+                            _dlm.HOURLY_DAYS  = _tf_actual
+                            _dlm.HOURLY_START = (
+                                pd.Timestamp.today() - pd.Timedelta(days=_tf_actual)
+                            ).strftime("%Y-%m-%d")
                             _r = _dlm.download_all_assets(_to_dl, skip_existing=True)
-                            _ok = sum(_r.values())
+                            _ok = sum(1 for v in _r.values() if v is True)
+                            _errs = {t: v for t, v in _r.items() if v is not True}
                             st.success(f"OK {_ok}/{len(_to_dl)}")
+                            if _errs:
+                                for _et, _emsg in _errs.items():
+                                    st.error(f"{_et}: {_emsg}")
                             st.cache_data.clear()
                         except Exception as _de:
                             st.error(f"Errore: {_de}")
@@ -282,20 +317,29 @@ with st.sidebar:
     st.subheader("🤖 Agent AI")
     st.caption(f"Config attuale: `{_cur_src}` | asset: `{_cur_asset}`")
 
-    _env = {"STRATEGY_ASSET": asset}
+    _env = {"STRATEGY_ASSET": asset, "HOURLY_DAYS": str(_tf_actual)}
+
+    def _do_download_module(tickers_list, skip_existing=False):
+        """Load 01_data_download.py as module, inject timeframe, run download."""
+        import importlib.util as _ilux
+        _specx = _ilux.spec_from_file_location(
+            "dl01x", os.path.join(BASE, "01_data_download.py"))
+        _dlmx = _ilux.module_from_spec(_specx)
+        _specx.loader.exec_module(_dlmx)
+        _dlmx.HOURLY_DAYS  = _tf_actual
+        _dlmx.HOURLY_START = (
+            pd.Timestamp.today() - pd.Timedelta(days=_tf_actual)
+        ).strftime("%Y-%m-%d")
+        return _dlmx.download_all_assets(tickers_list, skip_existing=skip_existing)
 
     def _ensure_download():
         if not os.path.exists(_asset_csv):
             with st.spinner(f"⬇️ Download dati {asset}…"):
                 try:
-                    import importlib.util as _ilu2
-                    _spec2 = _ilu2.spec_from_file_location(
-                        "dl01b", os.path.join(BASE, "01_data_download.py"))
-                    _dlm2 = _ilu2.module_from_spec(_spec2)
-                    _spec2.loader.exec_module(_dlm2)
-                    _r2 = _dlm2.download_all_assets([asset], skip_existing=False)
-                    if not _r2.get(asset):
-                        st.error(f"Impossibile scaricare i dati per {asset}.")
+                    _r2 = _do_download_module([asset], skip_existing=False)
+                    _r2_val = _r2.get(asset)
+                    if _r2_val is not True:
+                        st.error(f"Impossibile scaricare {asset}: {_r2_val or 'errore sconosciuto'}")
                         return False
                     st.cache_data.clear()
                 except Exception as _de:
@@ -512,19 +556,20 @@ with tab1:
         _t1c1, _t1c2 = st.columns(2)
         with _t1c1:
             if st.button("⬇️ Scarica Dati", use_container_width=True, key="t1_download"):
-                with st.spinner(f"⬇️ Download dati {asset}…"):
+                with st.spinner(f"⬇️ Download {asset} ({_tf_actual} giorni)…"):
                     try:
-                        import importlib.util as _t1ilu
-                        _t1spec = _t1ilu.spec_from_file_location(
-                            "dl01c", os.path.join(BASE, "01_data_download.py"))
-                        _t1mod = _t1ilu.module_from_spec(_t1spec)
-                        _t1spec.loader.exec_module(_t1mod)
-                        _t1r = _t1mod.download_all_assets([asset], skip_existing=False)
-                        if _t1r.get(asset):
+                        _t1r = _do_download_module([asset], skip_existing=False)
+                        _t1_val = _t1r.get(asset)
+                        if _t1_val is True:
                             st.cache_data.clear()
-                            st.success(f"✅ Dati scaricati per {asset}.")
+                            st.success(
+                                f"✅ Dati scaricati per {asset} "
+                                f"({_tf_actual} giorni, dal "
+                                f"{(pd.Timestamp.today() - pd.Timedelta(days=_tf_actual)).strftime('%d/%m/%Y')}"
+                                " ad oggi)."
+                            )
                         else:
-                            st.error(f"Impossibile scaricare i dati per {asset}.")
+                            st.error(f"Impossibile scaricare {asset}: {_t1_val or 'errore sconosciuto'}")
                     except Exception as _t1e:
                         st.error(f"Errore download: {_t1e}")
         with _t1c2:
@@ -534,7 +579,7 @@ with tab1:
                 else:
                     with st.spinner(f"📊 Analisi statistica {asset}…"):
                         try:
-                            _run_script("02_analyze.py", extra_env={"STRATEGY_ASSET": asset})
+                            _run_script("02_analyze.py", extra_env=_env)
                             st.cache_data.clear()
                             st.success(f"✅ Analisi completata per {asset}.")
                         except subprocess.CalledProcessError as _t1ae:
