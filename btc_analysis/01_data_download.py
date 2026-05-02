@@ -35,7 +35,8 @@ TICKERS = {
 }
 
 DAILY_START  = "2015-01-01"
-HOURLY_DAYS  = 720   # yfinance limita hourly a ~730 giorni
+_YFINANCE_HOURLY_LIMIT = 730   # yfinance non serve dati orari oltre ~730 giorni
+HOURLY_DAYS  = min(int(os.environ.get("HOURLY_DAYS", "720")), _YFINANCE_HOURLY_LIMIT)
 HOURLY_START = (datetime.today() - timedelta(days=HOURLY_DAYS)).strftime("%Y-%m-%d")
 
 # ── Asset catalog ──────────────────────────────────────────────────────────────
