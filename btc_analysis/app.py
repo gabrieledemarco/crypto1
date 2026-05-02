@@ -164,6 +164,22 @@ with st.sidebar:
         pd.Timestamp.today() - pd.Timedelta(days=_chart_days)
     ) if _chart_days is not None else None
 
+    _INTERVALS = {
+        "1 min  (max 7 gg)":    ("1m",  7),
+        "15 min (max 60 gg)":   ("15m", 60),
+        "30 min (max 60 gg)":   ("30m", 60),
+        "1 ora":                ("1h",  720),
+        "4 ore":                ("4h",  720),
+        "Giornaliero":          ("1d",  None),
+    }
+    chart_interval_label = st.selectbox(
+        "🕯️ Intervallo candele",
+        options=list(_INTERVALS.keys()),
+        index=3,
+        help="Granularità delle candele nei grafici. Intervalli < 1h richiedono download separato.",
+    )
+    chart_interval, _interval_max_days = _INTERVALS[chart_interval_label]
+
     st.divider()
 
     # ── Asset Universe ─────────────────────────────────────────────────────────
@@ -477,6 +493,63 @@ def load_ohlcv_hourly(sym: str) -> pd.DataFrame:
     df.index.name = "Date"
     return df
 
+_RESAMPLE_AGG = {"Open": "first", "High": "max", "Low": "min",
+                 "Close": "last", "Volume": "sum"}
+
+@st.cache_data
+def load_ohlcv_interval(sym: str, interval: str) -> pd.DataFrame:
+    """Load OHLCV at any supported interval.
+    1h   → hourly CSV
+    4h   → resample from hourly
+    1d   → daily CSV (or resample from hourly)
+    1m/15m/30m → dedicated CSV (must be downloaded first)
+    """
+    fname = ticker_to_fname(sym)
+    if interval == "1h":
+        return load_ohlcv_hourly(sym)
+    if interval == "4h":
+        df = load_ohlcv_hourly(sym)
+        return df.resample("4h").agg(_RESAMPLE_AGG).dropna()
+    if interval == "1d":
+        return load_ohlcv_daily(sym)
+    # Fine-grain: 1m, 15m, 30m
+    path = os.path.join(OUTPUT, f"{fname}_{interval}.csv")
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Dati {interval} non trovati per {sym}: {path}")
+    df = pd.read_csv(path, index_col=0, parse_dates=True)
+    df.index.name = "Date"
+    return df
+
+def download_fine_grain(sym: str, interval: str, max_days: int) -> str | bool:
+    """Download fine-grain data and save as {fname}_{interval}.csv.
+    Returns True on success or an error string.
+    """
+    import importlib.util as _ilufg
+    _spec = _ilufg.spec_from_file_location("dl01fg", os.path.join(BASE, "01_data_download.py"))
+    _mod  = _ilufg.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    import yfinance as yf
+    fname = ticker_to_fname(sym)
+    fpath = os.path.join(OUTPUT, f"{fname}_{interval}.csv")
+    try:
+        period_str = f"{max_days}d"
+        df = yf.download(sym, period=period_str, interval=interval,
+                         auto_adjust=True, progress=False)
+        if df.empty:
+            return f"Nessun dato ricevuto per {sym} ({interval})"
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+        df.index = pd.to_datetime(df.index)
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+        df.index.name = "Date"
+        df.dropna(inplace=True)
+        df.to_csv(fpath)
+        return True
+    except Exception as exc:
+        return str(exc)
+
 @st.cache_data
 def load_trades():
     return pd.read_csv(f"{OUTPUT}/trades.csv", parse_dates=["entry_time","exit_time"])
@@ -603,19 +676,47 @@ with tab1:
                     st.error(f"Analisi fallita:\n```\n{_t1ae.stderr.decode()[:400]}\n```")
 
     # ── Price charts ──────────────────────────────────────────────────────────
-    try:
-        daily = load_ohlcv_daily(asset)
-    except FileNotFoundError:
-        daily = None
+    # Warn + auto-cap when display window exceeds interval's data limit
+    if _interval_max_days is not None and _chart_days is not None and _chart_days > _interval_max_days:
+        st.warning(
+            f"⚠️ L'intervallo **{chart_interval_label.strip()}** supporta al massimo "
+            f"**{_interval_max_days} giorni** di storia. "
+            f"Il timeframe verrà ridotto da {_chart_days} a {_interval_max_days} giorni."
+        )
+        _effective_start = pd.Timestamp.today() - pd.Timedelta(days=_interval_max_days)
+    else:
+        _effective_start = chart_start
 
-    if daily is not None:
-        d = daily[daily.index >= chart_start] if chart_start is not None else daily
+    # Fine-grain intervals need a separate download
+    _fine_grain = chart_interval in ("1m", "15m", "30m")
+    _fine_path  = os.path.join(OUTPUT, f"{ticker_to_fname(asset)}_{chart_interval}.csv")
+
+    if _fine_grain and not os.path.exists(_fine_path):
+        st.info(
+            f"I dati **{chart_interval_label.strip()}** per {asset} non sono ancora stati scaricati."
+        )
+        if st.button(f"⬇️ Scarica dati {chart_interval}", key="t1_dl_fine"):
+            with st.spinner(f"Download {chart_interval} {asset} (max {_interval_max_days} gg)…"):
+                _fg_res = download_fine_grain(asset, chart_interval, _interval_max_days)
+                if _fg_res is True:
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.error(f"Download fallito: {_fg_res}")
+
+    _chart_data = None
+    if not _fine_grain or os.path.exists(_fine_path):
+        try:
+            _chart_data = load_ohlcv_interval(asset, chart_interval)
+        except FileNotFoundError:
+            _chart_data = None
+
+    if _chart_data is not None:
+        d = _chart_data[_chart_data.index >= _effective_start] if _effective_start is not None else _chart_data
         if d.empty:
-            st.warning("Nessun dato per il timeframe selezionato. Prova a scaricare più dati o scegli 'Max disponibile'.")
+            st.warning("Nessun dato per il timeframe selezionato. Prova 'Max disponibile' o scarica più dati.")
         else:
-            _src_label = "" if os.path.exists(
-                os.path.join(OUTPUT, f"{ticker_to_fname(asset)}_daily.csv")
-            ) else " (ricampionato da dati orari)"
+            _title_suffix = f" — {chart_interval_label.strip()}"
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
                                 row_heights=[0.75, 0.25], vertical_spacing=0.03)
             fig.add_trace(go.Candlestick(
@@ -632,13 +733,17 @@ with tab1:
             fig.update_layout(height=500, xaxis_rangeslider_visible=False,
                               margin=dict(l=0, r=0, t=30, b=0),
                               template="plotly_dark",
-                              title=f"{asset}/USD — Candlestick giornaliero{_src_label}")
+                              title=f"{asset}/USD — Candlestick{_title_suffix}")
             fig.update_yaxes(title_text="Prezzo (USD)", row=1, col=1)
             fig.update_yaxes(title_text="Volume",       row=2, col=1)
             st.plotly_chart(fig, use_container_width=True)
 
             # ── Log-returns + Distribuzione ───────────────────────────────────
             log_ret = np.log(d["Close"] / d["Close"].shift(1)).dropna()
+            # Annualisation factor depends on interval
+            _bars_per_year = {"1m": 525_600, "15m": 35_040, "30m": 17_520,
+                              "1h": 8_760,   "4h": 2_190,   "1d": 252}
+            _ann_factor = _bars_per_year.get(chart_interval, 8_760)
             col_l, col_r = st.columns(2)
             with col_l:
                 fig2 = go.Figure(go.Scatter(
@@ -647,7 +752,7 @@ with tab1:
                     name="Log-return",
                 ))
                 fig2.update_layout(height=300, template="plotly_dark",
-                                    title="Log-returns giornalieri",
+                                    title=f"Log-returns ({chart_interval})",
                                     margin=dict(l=0, r=0, t=40, b=0),
                                     yaxis_title="Log-return")
                 st.plotly_chart(fig2, use_container_width=True)
@@ -673,19 +778,19 @@ with tab1:
             kurt    = float(scipy_stats.kurtosis(log_ret, fisher=True))
             skew_v  = float(scipy_stats.skew(log_ret))
             _, jb_p = scipy_stats.jarque_bera(log_ret)
-            ann_vol = log_ret.std() * np.sqrt(252) * 100
+            ann_vol = log_ret.std() * np.sqrt(_ann_factor) * 100
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Volatilità annua",  f"{ann_vol:.1f}%")
             c2.metric("Curtosi (excess)",  f"{kurt:.2f}")
             c3.metric("Skewness",          f"{skew_v:.3f}")
             c4.metric("Jarque-Bera p-val", f"{jb_p:.4f}")
 
-            # ── Pattern intraday ──────────────────────────────────────────────
+            # ── Pattern intraday (sempre su dati orari, indipendente dall'intervallo)
             st.subheader(f"Pattern intraday {asset} (dati orari)")
             try:
                 hourly = load_ohlcv_hourly(asset)
-                if chart_start is not None:
-                    hourly = hourly[hourly.index >= chart_start]
+                if _effective_start is not None:
+                    hourly = hourly[hourly.index >= _effective_start]
                 hourly["log_ret"] = np.log(hourly["Close"] / hourly["Close"].shift(1))
                 by_hour = hourly.groupby(hourly.index.hour)["log_ret"].mean() * 1e4
                 _tf_note = f" · ultimi {chart_tf_label}" if chart_start is not None else ""
@@ -750,14 +855,33 @@ with tab1:
                 st.write(f"Migliori: `{_s['best_hours_utc']}`")
                 st.write(f"Peggiori: `{_s['worst_hours_utc']}`")
 
-            # V4 baseline
+            # V4 baseline — prefer enhanced_strategy_comparison.csv (same as Tab 2)
+            _cmp_path = os.path.join(OUTPUT, "enhanced_strategy_comparison.csv")
+            _v4_src   = None
+            if os.path.exists(_cmp_path):
+                try:
+                    _cmp_df = pd.read_csv(_cmp_path)
+                    _v4_row = _cmp_df[_cmp_df["version"] == "V4 +GARCH+Costi"]
+                    if not _v4_row.empty:
+                        _r = _v4_row.iloc[0]
+                        _v4_src = {
+                            "cagr_pct":         _r["cagr_pct"],
+                            "sharpe_ratio":      _r["sharpe_ratio"],
+                            "max_drawdown_pct":  _r["max_drawdown_pct"],
+                            "win_rate_pct":      _r["win_rate_pct"],
+                            "n_trades":          int(_r["n_trades"]),
+                        }
+                except Exception:
+                    pass
+            if _v4_src is None:
+                _v4_src = _v4   # fallback to analysis_report.json
             st.caption("**Baseline V4** (ATR breakout + GARCH, commissioni 0.04%)")
             _vb1, _vb2, _vb3, _vb4, _vb5 = st.columns(5)
-            _vb1.metric("CAGR",         f"{_v4['cagr_pct']:.1f}%")
-            _vb2.metric("Sharpe",       f"{_v4['sharpe_ratio']:.2f}")
-            _vb3.metric("Max DD",       f"{_v4['max_drawdown_pct']:.1f}%")
-            _vb4.metric("Win Rate",     f"{_v4['win_rate_pct']:.1f}%")
-            _vb5.metric("N. Trade",     str(_v4['n_trades']))
+            _vb1.metric("CAGR",         f"{_v4_src['cagr_pct']:.1f}%")
+            _vb2.metric("Sharpe",       f"{_v4_src['sharpe_ratio']:.2f}")
+            _vb3.metric("Max DD",       f"{_v4_src['max_drawdown_pct']:.1f}%")
+            _vb4.metric("Win Rate",     f"{_v4_src['win_rate_pct']:.1f}%")
+            _vb5.metric("N. Trade",     str(_v4_src['n_trades']))
         elif _rpt and _rpt_asset != asset:
             st.caption(
                 f"📊 L'ultima analisi disponibile è per **{_rpt_asset}** (non {asset}). "
