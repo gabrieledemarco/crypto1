@@ -278,47 +278,53 @@ with st.sidebar:
 
     st.divider()
 
-    # ── Agent AI configurator ─────────────────────────────────────────────────
+    # ── Agent AI — step separati ──────────────────────────────────────────────
     st.subheader("🤖 Agent AI")
     st.caption(f"Config attuale: `{_cur_src}` | asset: `{_cur_asset}`")
 
-    if st.button("▶ Esegui Agent", use_container_width=True):
-        if not _ant_key and not _or_key:
-            st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
-        else:
-            _env = {"STRATEGY_ASSET": asset}
+    _env = {"STRATEGY_ASSET": asset}
 
-            # ── Step 0: download se mancante ──────────────────────────────────
-            if not os.path.exists(_asset_csv):
-                with st.spinner(f"⬇️ Download dati {asset}…"):
-                    try:
-                        import importlib.util as _ilu2
-                        _spec2 = _ilu2.spec_from_file_location(
-                            "dl01b", os.path.join(BASE, "01_data_download.py"))
-                        _dlm2 = _ilu2.module_from_spec(_spec2)
-                        _spec2.loader.exec_module(_dlm2)
-                        _r2 = _dlm2.download_all_assets([asset], skip_existing=False)
-                        if not _r2.get(asset):
-                            st.error(f"Impossibile scaricare i dati per {asset}.")
-                            st.stop()
-                        st.cache_data.clear()
-                    except Exception as _de2:
-                        st.error(f"Errore download {asset}: {_de2}")
-                        st.stop()
+    def _ensure_download():
+        if not os.path.exists(_asset_csv):
+            with st.spinner(f"⬇️ Download dati {asset}…"):
+                try:
+                    import importlib.util as _ilu2
+                    _spec2 = _ilu2.spec_from_file_location(
+                        "dl01b", os.path.join(BASE, "01_data_download.py"))
+                    _dlm2 = _ilu2.module_from_spec(_spec2)
+                    _spec2.loader.exec_module(_dlm2)
+                    _r2 = _dlm2.download_all_assets([asset], skip_existing=False)
+                    if not _r2.get(asset):
+                        st.error(f"Impossibile scaricare i dati per {asset}.")
+                        return False
+                    st.cache_data.clear()
+                except Exception as _de:
+                    st.error(f"Errore download {asset}: {_de}")
+                    return False
+        return True
 
-            # ── Step 1: analisi statistica ────────────────────────────────────
-            with st.spinner(f"📊 Step 1/4 — Analisi statistica {asset}…"):
+    # ── Step 1 ────────────────────────────────────────────────────────────────
+    if st.button("📊 1. Analisi Statistica", use_container_width=True,
+                 help="Calcola Hurst, ACF, GARCH e baseline V4 per l'asset selezionato"):
+        if _ensure_download():
+            with st.spinner(f"📊 Analisi statistica {asset}…"):
                 try:
                     _run_script("02_analyze.py", extra_env=_env)
+                    st.cache_data.clear()
+                    st.success(f"✅ Analisi completata per {asset}.")
                 except subprocess.CalledProcessError as _e1:
-                    st.warning(f"Analisi statistica fallita: {_e1.stderr.decode()[:300]}")
+                    st.error(f"Analisi fallita:\n```\n{_e1.stderr.decode()[:400]}\n```")
+            st.rerun()
 
-            # ── Step 2: agent progetta strategia ─────────────────────────────
-            import sys as _sys
-            _sys.path.insert(0, BASE)
-            import importlib, agent_strategy as _ag
-            importlib.reload(_ag)
-            with st.spinner(f"🤖 Step 2/4 — Agent progetta strategia {asset}…"):
+    # ── Step 2 ────────────────────────────────────────────────────────────────
+    if st.button("🤖 2. Genera Strategia (Agent)", use_container_width=True,
+                 help="Claude analizza le statistiche e scrive generate_signals_agent()"):
+        if not _ant_key and not _or_key:
+            st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
+        elif _ensure_download():
+            import sys as _sys; _sys.path.insert(0, BASE)
+            import importlib, agent_strategy as _ag; importlib.reload(_ag)
+            with st.spinner(f"🤖 Agent progetta strategia {asset}… (max 3 tentativi)"):
                 try:
                     _cfg_r, _code_r, _report_r = _ag.run_agent(
                         anthropic_key=_ant_key,
@@ -327,24 +333,81 @@ with st.sidebar:
                         asset=asset,
                     )
                     _ag.save_outputs(_cfg_r, _code_r, _report_r)
+                    st.success(
+                        f"✅ Strategia `{_cfg_r.get('strategy_type','')}` generata. "
+                        "Esegui ora **📈 3. Backtest**."
+                    )
+                except Exception as _ae:
+                    st.error(f"Errore agent: {_ae}")
+            st.rerun()
+
+    # ── Step 3 ────────────────────────────────────────────────────────────────
+    if st.button("📈 3. Backtest + Walk-Forward", use_container_width=True,
+                 help="V1/V2/V4/V_Agent + WFO (4 window) + grid search SL/TP"):
+        if _ensure_download():
+            with st.spinner(f"📈 Backtest + WFO {asset}…"):
+                try:
+                    _run_script("04_backtest.py", extra_env=_env)
+                    st.cache_data.clear()
+                    st.success("✅ Backtest completato. Esegui ora **🎲 4. Monte Carlo**.")
+                except subprocess.CalledProcessError as _be:
+                    st.error(f"Backtest fallito:\n```\n{_be.stderr.decode()[:400]}\n```")
+            st.rerun()
+
+    # ── Step 4 ────────────────────────────────────────────────────────────────
+    if st.button("🎲 4. Monte Carlo", use_container_width=True,
+                 help="Bootstrap 5000 sim + 4 stress scenarios da trades.csv"):
+        with st.spinner(f"🎲 Monte Carlo {asset}…"):
+            try:
+                _run_script("05_montecarlo.py", extra_env=_env)
+                st.cache_data.clear()
+                st.success("✅ Monte Carlo completato.")
+            except subprocess.CalledProcessError as _me:
+                st.error(f"Monte Carlo fallito:\n```\n{_me.stderr.decode()[:400]}\n```")
+        st.rerun()
+
+    st.divider()
+
+    # ── Esegui tutto ──────────────────────────────────────────────────────────
+    if st.button("▶▶ Esegui Pipeline Completa", use_container_width=True,
+                 type="primary",
+                 help="Esegue tutti e 4 gli step in sequenza"):
+        if not _ant_key and not _or_key:
+            st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
+        elif _ensure_download():
+            _cfg_r = {}
+            _steps = [
+                ("📊 Step 1/4 — Analisi statistica",    "02_analyze.py",    False),
+                ("📈 Step 3/4 — Backtest + WFO",        "04_backtest.py",   False),
+                ("🎲 Step 4/4 — Monte Carlo",           "05_montecarlo.py", False),
+            ]
+            # Step 2 (agent) inline
+            with st.spinner(f"📊 Step 1/4 — Analisi statistica {asset}…"):
+                try:
+                    _run_script("02_analyze.py", extra_env=_env)
+                except subprocess.CalledProcessError as _e1:
+                    st.warning(f"Analisi fallita: {_e1.stderr.decode()[:200]}")
+            import sys as _sys; _sys.path.insert(0, BASE)
+            import importlib, agent_strategy as _ag; importlib.reload(_ag)
+            with st.spinner(f"🤖 Step 2/4 — Agent progetta strategia {asset}…"):
+                try:
+                    _cfg_r, _code_r, _report_r = _ag.run_agent(
+                        anthropic_key=_ant_key, openrouter_key=_or_key,
+                        openrouter_model=_or_model, asset=asset)
+                    _ag.save_outputs(_cfg_r, _code_r, _report_r)
                 except Exception as _ae:
                     st.error(f"Errore agent: {_ae}")
                     st.stop()
-
-            # ── Step 3: backtest + WFO + ottimizzazione ───────────────────────
-            with st.spinner(f"📈 Step 3/4 — Backtest + Walk-Forward {asset}…"):
+            with st.spinner(f"📈 Step 3/4 — Backtest + WFO {asset}…"):
                 try:
                     _run_script("04_backtest.py", extra_env=_env)
                 except subprocess.CalledProcessError as _be:
-                    st.warning(f"Backtest fallito: {_be.stderr.decode()[:300]}")
-
-            # ── Step 4: Monte Carlo ───────────────────────────────────────────
+                    st.warning(f"Backtest fallito: {_be.stderr.decode()[:200]}")
             with st.spinner(f"🎲 Step 4/4 — Monte Carlo {asset}…"):
                 try:
                     _run_script("05_montecarlo.py", extra_env=_env)
                 except subprocess.CalledProcessError as _me:
-                    st.warning(f"Monte Carlo fallito: {_me.stderr.decode()[:300]}")
-
+                    st.warning(f"Monte Carlo fallito: {_me.stderr.decode()[:200]}")
             st.cache_data.clear()
             st.success(
                 f"✅ Pipeline completata — strategia `{_cfg_r.get('strategy_type','')}` "
