@@ -314,7 +314,6 @@ with st.sidebar:
                     st.success(f"✅ Analisi completata per {asset}.")
                 except subprocess.CalledProcessError as _e1:
                     st.error(f"Analisi fallita:\n```\n{_e1.stderr.decode()[:400]}\n```")
-            st.rerun()
 
     # ── Step 2 ────────────────────────────────────────────────────────────────
     if st.button("🤖 2. Genera Strategia (Agent)", use_container_width=True,
@@ -339,7 +338,6 @@ with st.sidebar:
                     )
                 except Exception as _ae:
                     st.error(f"Errore agent: {_ae}")
-            st.rerun()
 
     # ── Step 3 ────────────────────────────────────────────────────────────────
     if st.button("📈 3. Backtest + Walk-Forward", use_container_width=True,
@@ -352,7 +350,6 @@ with st.sidebar:
                     st.success("✅ Backtest completato. Esegui ora **🎲 4. Monte Carlo**.")
                 except subprocess.CalledProcessError as _be:
                     st.error(f"Backtest fallito:\n```\n{_be.stderr.decode()[:400]}\n```")
-            st.rerun()
 
     # ── Step 4 ────────────────────────────────────────────────────────────────
     if st.button("🎲 4. Monte Carlo", use_container_width=True,
@@ -364,56 +361,6 @@ with st.sidebar:
                 st.success("✅ Monte Carlo completato.")
             except subprocess.CalledProcessError as _me:
                 st.error(f"Monte Carlo fallito:\n```\n{_me.stderr.decode()[:400]}\n```")
-        st.rerun()
-
-    st.divider()
-
-    # ── Esegui tutto ──────────────────────────────────────────────────────────
-    if st.button("▶▶ Esegui Pipeline Completa", use_container_width=True,
-                 type="primary",
-                 help="Esegue tutti e 4 gli step in sequenza"):
-        if not _ant_key and not _or_key:
-            st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
-        elif _ensure_download():
-            _cfg_r = {}
-            _steps = [
-                ("📊 Step 1/4 — Analisi statistica",    "02_analyze.py",    False),
-                ("📈 Step 3/4 — Backtest + WFO",        "04_backtest.py",   False),
-                ("🎲 Step 4/4 — Monte Carlo",           "05_montecarlo.py", False),
-            ]
-            # Step 2 (agent) inline
-            with st.spinner(f"📊 Step 1/4 — Analisi statistica {asset}…"):
-                try:
-                    _run_script("02_analyze.py", extra_env=_env)
-                except subprocess.CalledProcessError as _e1:
-                    st.warning(f"Analisi fallita: {_e1.stderr.decode()[:200]}")
-            import sys as _sys; _sys.path.insert(0, BASE)
-            import importlib, agent_strategy as _ag; importlib.reload(_ag)
-            with st.spinner(f"🤖 Step 2/4 — Agent progetta strategia {asset}…"):
-                try:
-                    _cfg_r, _code_r, _report_r = _ag.run_agent(
-                        anthropic_key=_ant_key, openrouter_key=_or_key,
-                        openrouter_model=_or_model, asset=asset)
-                    _ag.save_outputs(_cfg_r, _code_r, _report_r)
-                except Exception as _ae:
-                    st.error(f"Errore agent: {_ae}")
-                    st.stop()
-            with st.spinner(f"📈 Step 3/4 — Backtest + WFO {asset}…"):
-                try:
-                    _run_script("04_backtest.py", extra_env=_env)
-                except subprocess.CalledProcessError as _be:
-                    st.warning(f"Backtest fallito: {_be.stderr.decode()[:200]}")
-            with st.spinner(f"🎲 Step 4/4 — Monte Carlo {asset}…"):
-                try:
-                    _run_script("05_montecarlo.py", extra_env=_env)
-                except subprocess.CalledProcessError as _me:
-                    st.warning(f"Monte Carlo fallito: {_me.stderr.decode()[:200]}")
-            st.cache_data.clear()
-            st.success(
-                f"✅ Pipeline completata — strategia `{_cfg_r.get('strategy_type','')}` "
-                f"su `{asset}`. Vedi Tab **🤖 Agent Strategy**."
-            )
-            st.rerun()
 
     st.divider()
     st.subheader("ℹ️ Info")
@@ -553,22 +500,45 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 with tab1:
     from scipy import stats as scipy_stats
 
-    if not os.path.exists(_asset_csv):
-        st.info(
-            f"**{_CATALOG_FLAT.get(asset, asset)} ({asset})** non è ancora stato scaricato. "
-            "Clicca **▶ Esegui Agent** nel sidebar (scarica e analizza automaticamente) "
-            "oppure usa **⬇️ Scarica** nella sezione 📊 Asset Universe."
-        )
-
     a_color = ASSET_COLORS.get(asset, C_LINE)
     try:
         daily = load_ohlcv_daily(asset)
     except FileNotFoundError:
-        st.warning(
-            f"Dati giornalieri per **{_CATALOG_FLAT.get(asset, asset)} ({asset})** "
-            "non ancora scaricati. Clicca **▶ Esegui Agent** nel sidebar per scaricarli."
-        )
         daily = None
+
+    if daily is None:
+        _t1_asset_name = _CATALOG_FLAT.get(asset, asset)
+        st.info(f"Dati per **{_t1_asset_name} ({asset})** non ancora scaricati.")
+        _t1c1, _t1c2 = st.columns(2)
+        with _t1c1:
+            if st.button("⬇️ Scarica Dati", use_container_width=True, key="t1_download"):
+                with st.spinner(f"⬇️ Download dati {asset}…"):
+                    try:
+                        import importlib.util as _t1ilu
+                        _t1spec = _t1ilu.spec_from_file_location(
+                            "dl01c", os.path.join(BASE, "01_data_download.py"))
+                        _t1mod = _t1ilu.module_from_spec(_t1spec)
+                        _t1spec.loader.exec_module(_t1mod)
+                        _t1r = _t1mod.download_all_assets([asset], skip_existing=False)
+                        if _t1r.get(asset):
+                            st.cache_data.clear()
+                            st.success(f"✅ Dati scaricati per {asset}.")
+                        else:
+                            st.error(f"Impossibile scaricare i dati per {asset}.")
+                    except Exception as _t1e:
+                        st.error(f"Errore download: {_t1e}")
+        with _t1c2:
+            if st.button("📊 Esegui Analisi", use_container_width=True, key="t1_analyze"):
+                if not os.path.exists(_asset_csv):
+                    st.warning("Scarica prima i dati con **⬇️ Scarica Dati**.")
+                else:
+                    with st.spinner(f"📊 Analisi statistica {asset}…"):
+                        try:
+                            _run_script("02_analyze.py", extra_env={"STRATEGY_ASSET": asset})
+                            st.cache_data.clear()
+                            st.success(f"✅ Analisi completata per {asset}.")
+                        except subprocess.CalledProcessError as _t1ae:
+                            st.error(f"Analisi fallita:\n```\n{_t1ae.stderr.decode()[:400]}\n```")
 
     if daily is not None:
         d = daily[(daily.index.year >= yr_from) & (daily.index.year <= yr_to)]
