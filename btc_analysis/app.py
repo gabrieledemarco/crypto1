@@ -144,11 +144,25 @@ ASSET_COLORS = {"BTC": C_LINE, "ETH": "#9c27b0", "SOL": C_ACC}
 with st.sidebar:
     st.header("⚙️ Impostazioni")
 
-    st.subheader("📅 Periodo prezzi")
-    yr_from = st.number_input("Anno inizio", min_value=2015, max_value=2025,
-                               value=2020, step=1)
-    yr_to   = st.number_input("Anno fine",   min_value=2015, max_value=2025,
-                               value=2025, step=1)
+    _CHART_TF = {
+        "1 settimana":     7,
+        "1 mese":         30,
+        "3 mesi":         90,
+        "6 mesi":        180,
+        "1 anno":        365,
+        "2 anni":        730,
+        "Max disponibile": None,
+    }
+    chart_tf_label = st.selectbox(
+        "📅 Timeframe grafici",
+        options=list(_CHART_TF.keys()),
+        index=4,
+        help="Finestra temporale mostrata in tutti i grafici.",
+    )
+    _chart_days = _CHART_TF[chart_tf_label]
+    chart_start = (
+        pd.Timestamp.today() - pd.Timedelta(days=_chart_days)
+    ) if _chart_days is not None else None
 
     st.divider()
 
@@ -595,9 +609,9 @@ with tab1:
         daily = None
 
     if daily is not None:
-        d = daily[(daily.index.year >= yr_from) & (daily.index.year <= yr_to)]
+        d = daily[daily.index >= chart_start] if chart_start is not None else daily
         if d.empty:
-            st.warning("Nessun dato per il periodo selezionato.")
+            st.warning("Nessun dato per il timeframe selezionato. Prova a scaricare più dati o scegli 'Max disponibile'.")
         else:
             _src_label = "" if os.path.exists(
                 os.path.join(OUTPUT, f"{ticker_to_fname(asset)}_daily.csv")
@@ -670,14 +684,17 @@ with tab1:
             st.subheader(f"Pattern intraday {asset} (dati orari)")
             try:
                 hourly = load_ohlcv_hourly(asset)
+                if chart_start is not None:
+                    hourly = hourly[hourly.index >= chart_start]
                 hourly["log_ret"] = np.log(hourly["Close"] / hourly["Close"].shift(1))
                 by_hour = hourly.groupby(hourly.index.hour)["log_ret"].mean() * 1e4
+                _tf_note = f" · ultimi {chart_tf_label}" if chart_start is not None else ""
                 fig4 = go.Figure(go.Bar(
                     x=by_hour.index, y=by_hour.values,
                     marker_color=[C_UP if v >= 0 else C_DOWN for v in by_hour.values],
                 ))
                 fig4.update_layout(height=280, template="plotly_dark",
-                                    title=f"Rendimento medio per ora del giorno (UTC) — {asset}",
+                                    title=f"Rendimento medio per ora del giorno (UTC) — {asset}{_tf_note}",
                                     xaxis_title="Ora (UTC)",
                                     yaxis_title="Rendimento medio (bp)",
                                     margin=dict(l=0, r=0, t=40, b=0))
@@ -768,8 +785,16 @@ with tab2:
         cmp    = load_strategy_comparison()
         optim  = load_optimization()
 
+        # Apply chart timeframe filter
+        _t2_note = f" · ultimi {chart_tf_label}" if chart_start is not None else ""
+        trades_view = (
+            trades[trades["exit_time"] >= chart_start]
+            if chart_start is not None else trades
+        )
+
         # ── Equity curve + Drawdown ───────────────────────────────────────────
-        eq = equity_curve(trades)
+        eq_full = equity_curve(trades)
+        eq = eq_full[eq_full.index >= chart_start] if chart_start is not None else eq_full
         dd = drawdown_series(eq)
 
         fig_eq = make_subplots(rows=2, cols=1, shared_xaxes=True,
@@ -785,7 +810,7 @@ with tab2:
                                     fill="tozeroy", fillcolor="rgba(239,83,80,0.2)",
                                     name="Drawdown %"), row=2, col=1)
         fig_eq.update_layout(height=480, template="plotly_dark",
-                              title="Equity curve & Drawdown — Strategia V5",
+                              title=f"Equity curve & Drawdown — Strategia V5{_t2_note}",
                               margin=dict(l=0, r=0, t=40, b=0))
         fig_eq.update_yaxes(title_text="Capitale (USDT)", row=1, col=1)
         fig_eq.update_yaxes(title_text="Drawdown %", row=2, col=1)
@@ -796,8 +821,8 @@ with tab2:
 
         with col_l:
             fig_tr = go.Figure()
-            wins  = trades[trades["pnl"] > 0]
-            loss  = trades[trades["pnl"] <= 0]
+            wins  = trades_view[trades_view["pnl"] > 0]
+            loss  = trades_view[trades_view["pnl"] <= 0]
             for sub, col, label in [(wins, C_UP, "Win"), (loss, C_DOWN, "Loss")]:
                 fig_tr.add_trace(go.Scatter(
                     x=sub["exit_time"], y=sub["pnl"],
@@ -808,13 +833,13 @@ with tab2:
                 ))
             fig_tr.add_hline(y=0, line_dash="dash", line_color="gray")
             fig_tr.update_layout(height=300, template="plotly_dark",
-                                 title="P&L per trade",
+                                 title=f"P&L per trade{_t2_note}",
                                  margin=dict(l=0, r=0, t=40, b=0),
                                  yaxis_title="P&L (USDT)")
             st.plotly_chart(fig_tr, use_container_width=True)
 
         with col_r:
-            pnl_arr = trades["pnl"].values
+            pnl_arr = trades_view["pnl"].values
             wins_n  = (pnl_arr > 0).sum()
             loss_n  = (pnl_arr <= 0).sum()
             fig_pie = go.Figure(go.Pie(
@@ -824,7 +849,7 @@ with tab2:
                 hole=0.5,
             ))
             fig_pie.update_layout(height=300, template="plotly_dark",
-                                  title="Win / Loss ratio",
+                                  title=f"Win / Loss ratio{_t2_note}",
                                   margin=dict(l=0, r=0, t=40, b=0))
             st.plotly_chart(fig_pie, use_container_width=True)
 
