@@ -437,12 +437,22 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data
+@st.cache_data
 def load_ohlcv_daily(sym: str) -> pd.DataFrame:
     fname = ticker_to_fname(sym)
-    path  = os.path.join(OUTPUT, f"{fname}_daily.csv")
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Daily CSV not found for {sym}: {path}")
-    df = pd.read_csv(path, index_col=0, parse_dates=True)
+    path_daily  = os.path.join(OUTPUT, f"{fname}_daily.csv")
+    path_hourly = os.path.join(OUTPUT, f"{fname}_hourly.csv")
+    if os.path.exists(path_daily):
+        df = pd.read_csv(path_daily, index_col=0, parse_dates=True)
+    elif os.path.exists(path_hourly):
+        df_h = pd.read_csv(path_hourly, index_col=0, parse_dates=True)
+        df = df_h.resample("1D").agg({
+            "Open": "first", "High": "max",
+            "Low": "min",    "Close": "last",
+            "Volume": "sum",
+        }).dropna()
+    else:
+        raise FileNotFoundError(f"No data found for {sym}: {path_daily}")
     df.index.name = "Date"
     return df
 
@@ -543,55 +553,55 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 
 with tab1:
     from scipy import stats as scipy_stats
+    import json as _t1json
 
     a_color = ASSET_COLORS.get(asset, C_LINE)
-    try:
-        daily = load_ohlcv_daily(asset)
-    except FileNotFoundError:
-        daily = None
+    _t1_report_path = os.path.join(OUTPUT, "analysis_report.json")
 
-    if daily is None:
-        _t1_asset_name = _CATALOG_FLAT.get(asset, asset)
-        st.info(f"Dati per **{_t1_asset_name} ({asset})** non ancora scaricati.")
+    # ── Action bar ────────────────────────────────────────────────────────────
+    if not os.path.exists(_asset_csv):
+        st.info(f"Dati per **{_CATALOG_FLAT.get(asset, asset)} ({asset})** non ancora scaricati.")
         _t1c1, _t1c2 = st.columns(2)
         with _t1c1:
             if st.button("⬇️ Scarica Dati", use_container_width=True, key="t1_download"):
-                with st.spinner(f"⬇️ Download {asset} ({_tf_actual} giorni)…"):
+                with st.spinner(f"⬇️ Download {asset} ({_tf_actual} gg)…"):
                     try:
                         _t1r = _do_download_module([asset], skip_existing=False)
                         _t1_val = _t1r.get(asset)
                         if _t1_val is True:
                             st.cache_data.clear()
-                            st.success(
-                                f"✅ Dati scaricati per {asset} "
-                                f"({_tf_actual} giorni, dal "
-                                f"{(pd.Timestamp.today() - pd.Timedelta(days=_tf_actual)).strftime('%d/%m/%Y')}"
-                                " ad oggi)."
-                            )
+                            st.rerun()
                         else:
                             st.error(f"Impossibile scaricare {asset}: {_t1_val or 'errore sconosciuto'}")
                     except Exception as _t1e:
                         st.error(f"Errore download: {_t1e}")
         with _t1c2:
-            if st.button("📊 Esegui Analisi", use_container_width=True, key="t1_analyze"):
-                if not os.path.exists(_asset_csv):
-                    st.warning("Scarica prima i dati con **⬇️ Scarica Dati**.")
-                else:
-                    with st.spinner(f"📊 Analisi statistica {asset}…"):
-                        try:
-                            _run_script("02_analyze.py", extra_env=_env)
-                            st.cache_data.clear()
-                            st.success(f"✅ Analisi completata per {asset}.")
-                        except subprocess.CalledProcessError as _t1ae:
-                            st.error(f"Analisi fallita:\n```\n{_t1ae.stderr.decode()[:400]}\n```")
+            if st.button("📊 Esegui Analisi", use_container_width=True, key="t1_analyze_nodata"):
+                st.warning("Scarica prima i dati con **⬇️ Scarica Dati**.")
+    else:
+        if st.button("📊 Esegui Analisi", use_container_width=True, key="t1_analyze"):
+            with st.spinner(f"📊 Analisi statistica {asset}…"):
+                try:
+                    _run_script("02_analyze.py", extra_env=_env)
+                    st.cache_data.clear()
+                    st.rerun()
+                except subprocess.CalledProcessError as _t1ae:
+                    st.error(f"Analisi fallita:\n```\n{_t1ae.stderr.decode()[:400]}\n```")
+
+    # ── Price charts ──────────────────────────────────────────────────────────
+    try:
+        daily = load_ohlcv_daily(asset)
+    except FileNotFoundError:
+        daily = None
 
     if daily is not None:
         d = daily[(daily.index.year >= yr_from) & (daily.index.year <= yr_to)]
-
         if d.empty:
             st.warning("Nessun dato per il periodo selezionato.")
         else:
-            # ── Candlestick + Volume ──────────────────────────────────────────────
+            _src_label = "" if os.path.exists(
+                os.path.join(OUTPUT, f"{ticker_to_fname(asset)}_daily.csv")
+            ) else " (ricampionato da dati orari)"
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
                                 row_heights=[0.75, 0.25], vertical_spacing=0.03)
             fig.add_trace(go.Candlestick(
@@ -608,15 +618,14 @@ with tab1:
             fig.update_layout(height=500, xaxis_rangeslider_visible=False,
                               margin=dict(l=0, r=0, t=30, b=0),
                               template="plotly_dark",
-                              title=f"{asset}/USD — Candlestick giornaliero")
+                              title=f"{asset}/USD — Candlestick giornaliero{_src_label}")
             fig.update_yaxes(title_text="Prezzo (USD)", row=1, col=1)
             fig.update_yaxes(title_text="Volume",       row=2, col=1)
             st.plotly_chart(fig, use_container_width=True)
 
-            # ── Log-returns + Distribuzione ───────────────────────────────────────
+            # ── Log-returns + Distribuzione ───────────────────────────────────
             log_ret = np.log(d["Close"] / d["Close"].shift(1)).dropna()
             col_l, col_r = st.columns(2)
-
             with col_l:
                 fig2 = go.Figure(go.Scatter(
                     x=log_ret.index, y=log_ret.values,
@@ -628,7 +637,6 @@ with tab1:
                                     margin=dict(l=0, r=0, t=40, b=0),
                                     yaxis_title="Log-return")
                 st.plotly_chart(fig2, use_container_width=True)
-
             with col_r:
                 mu, sigma = log_ret.mean(), log_ret.std()
                 x_n = np.linspace(log_ret.min(), log_ret.max(), 200)
@@ -647,19 +655,18 @@ with tab1:
                                     margin=dict(l=0, r=0, t=40, b=0))
                 st.plotly_chart(fig3, use_container_width=True)
 
-            # ── Statistiche ───────────────────────────────────────────────────────
+            # ── Statistiche base ──────────────────────────────────────────────
             kurt    = float(scipy_stats.kurtosis(log_ret, fisher=True))
             skew_v  = float(scipy_stats.skew(log_ret))
             _, jb_p = scipy_stats.jarque_bera(log_ret)
             ann_vol = log_ret.std() * np.sqrt(252) * 100
-
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Volatilità annua",  f"{ann_vol:.1f}%")
             c2.metric("Curtosi (excess)",  f"{kurt:.2f}")
             c3.metric("Skewness",          f"{skew_v:.3f}")
             c4.metric("Jarque-Bera p-val", f"{jb_p:.4f}")
 
-            # ── Pattern intraday ──────────────────────────────────────────────────
+            # ── Pattern intraday ──────────────────────────────────────────────
             st.subheader(f"Pattern intraday {asset} (dati orari)")
             try:
                 hourly = load_ohlcv_hourly(asset)
@@ -677,6 +684,68 @@ with tab1:
                 st.plotly_chart(fig4, use_container_width=True)
             except Exception:
                 st.info("Dati orari non disponibili.")
+
+    # ── Analisi statistica (da analysis_report.json) ──────────────────────────
+    if os.path.exists(_t1_report_path):
+        try:
+            with open(_t1_report_path) as _f:
+                _rpt = _t1json.load(_f)
+            _rpt_asset = _rpt.get("asset", "?")
+        except Exception:
+            _rpt = None
+
+        if _rpt and _rpt_asset == asset:
+            st.divider()
+            st.subheader(f"📊 Analisi statistica — {_CATALOG_FLAT.get(asset, asset)}")
+            _s = _rpt["statistics"]
+            _g = _rpt["garch"]
+            _v4 = _rpt["v4_baseline"]
+
+            # Regime + Hurst
+            _regime_color = {"trend_following": "success",
+                             "mean_reversion": "info",
+                             "breakout": "warning"}.get(_s["regime"], "info")
+            getattr(st, _regime_color)(
+                f"**Regime:** {_s['regime'].replace('_', ' ').title()} "
+                f"(Hurst = {_s['hurst_exponent']:.4f}) — {_s['regime_description']}"
+            )
+
+            # Key stats
+            _sa1, _sa2, _sa3, _sa4 = st.columns(4)
+            _sa1.metric("Hurst exponent",  f"{_s['hurst_exponent']:.4f}")
+            _sa2.metric("ACF lag-1",        f"{_s['acf_lag1']:.4f}",
+                        help="Positivo = momentum, Negativo = mean-reversion")
+            _sa3.metric("Kurtosis (exc)",   f"{_s['excess_kurtosis']:.2f}")
+            _sa4.metric("Vol annualizzata", f"{_s['ann_vol_pct']:.1f}%")
+
+            # GARCH + best hours
+            _sg1, _sg2 = st.columns(2)
+            with _sg1:
+                st.caption("**GARCH(1,1)**")
+                _gc1, _gc2, _gc3 = st.columns(3)
+                _gc1.metric("alpha (shock)", f"{_g['alpha']:.4f}")
+                _gc2.metric("beta (persist)", f"{_g['beta']:.4f}")
+                _gc3.metric("α+β", f"{_g['persistence']:.4f}",
+                            delta="stazionario" if _g['persistence'] < 1 else "non stazionario",
+                            delta_color="normal" if _g['persistence'] < 1 else "inverse")
+            with _sg2:
+                st.caption("**Finestre orarie migliori/peggiori (UTC)**")
+                st.write(f"Migliori: `{_s['best_hours_utc']}`")
+                st.write(f"Peggiori: `{_s['worst_hours_utc']}`")
+
+            # V4 baseline
+            st.caption("**Baseline V4** (ATR breakout + GARCH, commissioni 0.04%)")
+            _vb1, _vb2, _vb3, _vb4, _vb5 = st.columns(5)
+            _vb1.metric("CAGR",         f"{_v4['cagr_pct']:.1f}%")
+            _vb2.metric("Sharpe",       f"{_v4['sharpe_ratio']:.2f}")
+            _vb3.metric("Max DD",       f"{_v4['max_drawdown_pct']:.1f}%")
+            _vb4.metric("Win Rate",     f"{_v4['win_rate_pct']:.1f}%")
+            _vb5.metric("N. Trade",     str(_v4['n_trades']))
+        elif _rpt and _rpt_asset != asset:
+            st.caption(
+                f"📊 L'ultima analisi disponibile è per **{_rpt_asset}** (non {asset}). "
+                "Clicca **📊 Esegui Analisi** per aggiornare."
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
