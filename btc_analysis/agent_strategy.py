@@ -36,7 +36,7 @@ V5_DEFAULT_CONFIG = {
     "sl_mult": 2.0,
     "tp_mult": 5.0,
     "active_hours": [6, 22],
-    "commission": 0.0001,
+    "commission": 0.0004,
     "slippage":   0.0001,
     "risk_per_trade": 0.01,
     "rationale": (
@@ -99,56 +99,125 @@ def _read_safe(path: str, max_chars: int = 6000) -> str:
         return f"[error: {exc}]"
 
 
+def _atr_stats(asset: str) -> dict:
+    """Compute median ATR14 and ATR% from hourly CSV for SL/TP calibration."""
+    try:
+        import re as _re, pandas as _pd, numpy as _np
+        alias = {"BTC-USD": "btc", "ETH-USD": "eth", "SOL-USD": "sol"}
+        fname = alias.get(asset) or _re.sub(r"[^a-z0-9]", "_", asset.lower()).strip("_")
+        df = _pd.read_csv(os.path.join(OUTPUT_DIR, f"{fname}_hourly.csv"),
+                          index_col=0, parse_dates=True)
+        df.columns = [c if isinstance(c, str) else c[0] for c in df.columns]
+        close = df["Close"].values
+        h, lo = df["High"].values, df["Low"].values
+        tr = _np.maximum(h - lo,
+             _np.maximum(abs(h - _np.roll(close, 1)),
+                         abs(lo - _np.roll(close, 1))))
+        atr14 = _pd.Series(tr[1:]).rolling(14).mean().dropna().values
+        med_atr = float(_np.median(atr14))
+        med_prc = float(_np.median(close[-len(atr14):]))
+        med_pct = med_atr / med_prc * 100
+        return {
+            "median_atr":     round(med_atr, 2),
+            "median_atr_pct": round(med_pct, 3),
+            "sl2x_pct":       round(2.0 * med_pct, 3),
+        }
+    except Exception:
+        return {}
+
+
 def _build_context(asset: str = "BTC-USD") -> str:
-    # Prefer structured analysis_report.json (from 02_analyze.py)
     report_json = os.path.join(OUTPUT_DIR, "analysis_report.json")
     if os.path.exists(report_json):
         try:
             with open(report_json) as f:
                 rpt = json.load(f)
-            s  = rpt.get("statistics", {})
-            g  = rpt.get("garch", {})
-            v4 = rpt.get("v4_baseline", {})
-            target_sharpe = max(0.5, v4.get("sharpe_ratio", -999) + 0.5)
-            target_cagr   = max(0.0, v4.get("cagr_pct", -999) + 5)
+            s   = rpt.get("statistics", {})
+            g   = rpt.get("garch", {})
+            v4  = rpt.get("v4_baseline", {})
+            atr = _atr_stats(asset)
+
+            v4_sharpe = float(v4.get("sharpe_ratio", -999) or -999)
+            v4_cagr   = float(v4.get("cagr_pct",     -999) or -999)
+            target_sharpe = max(0.5, v4_sharpe + 0.5)
+            target_cagr   = max(5.0, v4_cagr   + 5.0)
+
+            med_pct = atr.get("median_atr_pct", 0.3)
+            comm_rt = 0.08
+            be_lines = []
+            for sl_m, tp_m in [(1.5, 3.0), (2.0, 4.5), (2.0, 5.0), (2.5, 5.0)]:
+                sl_pct = sl_m * med_pct
+                tp_pct = tp_m * med_pct
+                be = (sl_pct + comm_rt) / (sl_pct + tp_pct) * 100
+                be_lines.append(
+                    f"  SL={sl_m}×ATR ({sl_pct:.2f}%) / TP={tp_m}×ATR "
+                    f"({tp_pct:.2f}%) → break-even WR = {be:.1f}%"
+                )
+
+            v4_note = ""
+            if v4_cagr < 0:
+                v4_note = (
+                    "\n  ⚠️ V4 CAGR is NEGATIVE — do NOT replicate its logic. "
+                    "It fails due to commission drag."
+                )
+
+            kurt_val = float(s.get("excess_kurtosis", 0) or 0)
+            acf_val  = float(s.get("acf_lag1", 0) or 0)
             ctx = (
-                f"### Asset: {rpt['asset']}\n"
-                f"Periodo: {rpt['period_start']} → {rpt['period_end']}  "
-                f"({rpt['n_bars_hourly']} barre orarie)\n\n"
-                f"### Proprietà statistiche\n"
-                f"- Hurst exponent: {s.get('hurst_exponent','?')}  →  **{s.get('regime','?').upper()}**\n"
+                f"### Asset: {rpt.get('asset', asset)}\n"
+                f"Period: {rpt.get('period_start','?')} → {rpt.get('period_end','?')}  "
+                f"({rpt.get('n_bars_hourly','?')} hourly bars)\n\n"
+                f"### Time-Series Properties\n"
+                f"- Hurst exponent: {s.get('hurst_exponent','?')}  →  "
+                f"**{str(s.get('regime','?')).upper()}**\n"
                 f"  {s.get('regime_description','')}\n"
                 f"- ACF lag-1: {s.get('acf_lag1','?')}  "
-                f"({'momentum' if float(s.get('acf_lag1', 0)) > 0 else 'mean-reversion'})\n"
-                f"- Kurtosis (excess): {s.get('excess_kurtosis','?')}  "
-                f"({'fat tails — widen SL' if float(s.get('excess_kurtosis', 0)) > 5 else 'normal tails'})\n"
-                f"- Vol annualizzata: {s.get('ann_vol_pct','?')}%\n"
-                f"- Ore UTC migliori (avg return +): {s.get('best_hours_utc','?')}\n"
-                f"- Ore UTC peggiori (avg return -): {s.get('worst_hours_utc','?')}\n\n"
+                f"({'momentum' if acf_val > 0 else 'mean-reversion'})\n"
+                f"- Excess kurtosis: {s.get('excess_kurtosis','?')}  "
+                f"({'FAT TAILS — use SL ≥ 2.5×ATR' if kurt_val > 5 else 'normal tails — SL 1.5-2×ATR fine'})\n"
+                f"- Annualised vol: {s.get('ann_vol_pct','?')}%\n"
+                f"- Best UTC hours (avg return +): {s.get('best_hours_utc','?')}\n"
+                f"- Worst UTC hours (avg return -): {s.get('worst_hours_utc','?')}\n\n"
                 f"### GARCH(1,1)\n"
                 f"- alpha={g.get('alpha','?')}  beta={g.get('beta','?')}  "
-                f"persistence={g.get('persistence','?')}  (< 1 = stazionario)\n"
-                f"- Regimi: {g.get('regime_pct','?')}\n\n"
-                f"### Baseline V4 da battere (ATR breakout + GARCH filter, taker 0.04%)\n"
+                f"persistence={g.get('persistence','?')}  (< 1 = stationary)\n"
+                f"- Regime distribution: {g.get('regime_pct','?')}\n\n"
+                f"### ATR Calibration (critical for SL/TP sizing)\n"
+                f"- Median ATR14: ${atr.get('median_atr','?')} = "
+                f"{atr.get('median_atr_pct','?')}% of price\n"
+                f"- Break-even win rates at commission=0.08% round-trip:\n"
+                + "\n".join(be_lines) + "\n\n"
+                f"### Baseline V4 (ATR breakout + GARCH filter, taker 0.04%){v4_note}\n"
                 f"- CAGR: {v4.get('cagr_pct','?')}%\n"
                 f"- Sharpe Ratio: {v4.get('sharpe_ratio','?')}\n"
                 f"- Max Drawdown: {v4.get('max_drawdown_pct','?')}%\n"
-                f"- Win Rate: {v4.get('win_rate_pct','?')}%  |  N. Trade: {v4.get('n_trades','?')}\n"
-                f"- Profit Factor: {v4.get('profit_factor','?')}\n\n"
-                f"### OBIETTIVO\n"
-                f"Progetta una strategia con **Sharpe > {target_sharpe:.2f}** "
-                f"e **CAGR > {target_cagr:.1f}%** sfruttando le proprietà statistiche riportate.\n"
-                f"Il tipo di strategia è suggerito dall'esponente di Hurst — rispettalo!\n"
+                f"- Win Rate: {v4.get('win_rate','?')}%\n"
+                f"- N trades: {v4.get('n_trades','?')}\n\n"
+                f"### Minimum Targets (non-negotiable)\n"
+                f"- Target Sharpe  ≥ {target_sharpe:.2f}\n"
+                f"- Target CAGR    ≥ {target_cagr:.1f}%\n"
+                f"- Profit Factor  ≥ 1.3\n"
+                f"- N trades       ≥ 20\n\n"
             )
+            for title, fname in [
+                ("Enhanced Strategy Comparison", "enhanced_strategy_comparison.csv"),
+                ("Walk-Forward Results",          "walk_forward_results.csv"),
+            ]:
+                content = _read_safe(os.path.join(OUTPUT_DIR, fname))
+                if not content.startswith("[not found"):
+                    ctx += f"### {title}\n```\n{content}\n```\n\n"
+            ctx += f"\n### Target Asset\nDesign the strategy for **{asset}**.\n"
             return ctx
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"  [agent] Warning: could not parse analysis_report.json: {exc}")
 
-    # Fallback: leggi i file CSV/TXT come prima
+    # Fallback: raw file dump
     files = [
-        ("Statistical Report",           "REPORT.txt"),
-        ("Enhanced Strategy Comparison", "enhanced_strategy_comparison.csv"),
-        ("Walk-Forward Results",         "walk_forward_results.csv"),
+        ("Statistical Report (BTC reference)", "REPORT.txt"),
+        ("Enhanced Strategy Comparison",        "enhanced_strategy_comparison.csv"),
+        ("Walk-Forward Results",                "walk_forward_results.csv"),
+        ("Monte Carlo Bootstrap",               "mc_bootstrap_results.csv"),
+        ("Grid-Search Optimization",            "optimization_results.csv"),
     ]
     ctx = "\n\n".join(
         f"### {title}\n```\n{_read_safe(os.path.join(OUTPUT_DIR, fname))}\n```"
@@ -278,23 +347,70 @@ def _make_system_prompt(asset: str = "BTC-USD") -> str:
     return f"""\
 You are an expert quantitative trading strategist and Python developer for crypto markets.
 
-## TASK
-Analyse the {asset} statistical analysis results supplied by the user and:
-1. Choose the optimal **strategy TYPE** based on the time-series properties.
-2. Write a Python function `generate_signals_agent(df)` implementing that strategy.
-3. Write a Markdown report explaining your analysis and choices.
+## CORE OBJECTIVE
+Design a strategy for **{asset}** that generates POSITIVE real returns after 0.04% taker fees (0.08% round-trip).
+Every parameter choice must be justified through the commission mathematics below.
 
-## STRATEGY-TYPE SELECTION GUIDE
-| Statistical signal | Recommended strategy |
+## NON-NEGOTIABLE PROFITABILITY GATES
+Your strategy MUST achieve ALL of these in backtesting:
+- Profit Factor  > 1.3   (gross_profit / |gross_loss|)
+- Sharpe Ratio   > 0.5   (annualised, after commission)
+- CAGR           > 5%    (after commission)
+- N trades       ≥ 20    (statistical significance)
+
+If your strategy fails any gate, REVISE the parameters before responding.
+
+## COMMISSION MATHEMATICS (mandatory knowledge)
+Taker fee: 0.04%/side = 0.08% round-trip.
+Break-even win rate by R:R ratio (0.08% commission):
+
+| R:R  | Break-even WR |
+|------|--------------|
+| 1:1  | ~50.1%       |
+| 1:2  | ~33.5%       |
+| 1:2.5| ~28.8%       |
+| 1:3  | ~25.1%       |
+| 1:4  | ~20.2%       |
+
+KEY RULE: Always use TP/SL ≥ 2.5 so commission < 5% of expected gain.
+Commission eats ~0.3–0.5 ATR per trade on typical crypto. Use SL ≥ 1.5×ATR.
+
+## STRATEGY-TYPE SELECTION
+| Hurst exponent | Best strategy type |
 |---|---|
-| Hurst exponent > 0.55 | TREND FOLLOWING — EMA crossover, momentum breakout |
-| Hurst exponent < 0.45 | MEAN REVERSION — Bollinger Bands, RSI reversal, Z-score |
-| 0.45 ≤ Hurst ≤ 0.55 | BREAKOUT or RANGE TRADING |
-| Positive ACF lag-1 | Strengthen trend case |
-| Negative ACF lag-1 | Strengthen mean-reversion case |
-| High kurtosis (> 5) | Widen SL to avoid fat-tail stop-outs |
-| Strong intraday pattern | Restrict active_hours to the best window |
-| Many LOW GARCH periods | Add GARCH regime filter |
+| > 0.55 | TREND FOLLOWING — EMA crossover, ATR momentum |
+| < 0.45 | MEAN REVERSION — Bollinger Bands, RSI reversal |
+| 0.45–0.55 | BREAKOUT or RANGE TRADING |
+
+Additional signals: positive ACF→ momentum, negative ACF→ mean-reversion,
+high kurtosis (>5)→ widen SL to ≥ 2.5×ATR to survive fat-tail spikes.
+
+## PROVEN PROFITABLE PATTERNS (start with one of these)
+
+### Pattern A — ATR Momentum Breakout (trend regime)
+Entry: Close > RollHigh6 AND EMA50 > EMA200 AND RSI14 < 70
+SL=2×ATR14, TP=5×ATR14 | Filter: garch_regime != "LOW", active hours
+Typically achieves WR 35-45%, PF 1.3-1.8
+
+### Pattern B — RSI Reversal (mean-reversion regime)
+Entry long: RSI14 < 35 AND Close < EMA200*0.99
+Entry short: RSI14 > 65 AND Close > EMA200*1.01
+SL=1.5×ATR14, TP=3.5×ATR14 | Typically achieves WR 45-55%, PF 1.2-1.6
+
+### Pattern C — EMA Crossover Momentum (trend regime)
+Entry: fast EMA (20) crosses slow EMA (100), confirmed RSI direction
+SL=2×ATR14, TP=4.5×ATR14 | Filter: trade only best UTC hours
+
+### Pattern D — Bollinger Squeeze Breakout
+Entry: Close breaks 2σ Bollinger band after low-ATR_pct period
+SL=2×ATR14, TP=5×ATR14 | Filter: ATR_pct > 0.004
+
+## ANTI-PATTERNS (NEVER DO THESE)
+1. ❌ SL < 1×ATR — stops out on noise before TP is reached
+2. ❌ TP/SL ratio < 2 — commission makes profitability mathematically impossible
+3. ❌ Trading all 24 hours — worst hours have negative EV; restrict to best 8-14 UTC hours
+4. ❌ No trend/regime filter — random entries into counter-trend trades kill Sharpe
+5. ❌ Over-filtering to < 20 trades — insufficient sample; strategy won't survive OOS
 
 ## FUNCTION CONTRACT
 The function receives `df` already processed by `compute_indicators_v2()`.
@@ -304,8 +420,8 @@ RollHigh6, RollLow6, ATR_pct, hour, dow, ret, garch_h, garch_regime, size_mult.
 The function **must**:
 - Start with `df = df.copy()`
 - Set `df["signal"]` to 1 (long), -1 (short), or 0 (flat) for every row
-- Set `df["SL_dist"]` = stop-loss distance in absolute price units
-- Set `df["TP_dist"]` = take-profit distance in absolute price units
+- Set `df["SL_dist"]` = stop-loss distance in absolute price units (use ATR14)
+- Set `df["TP_dist"]` = take-profit distance (TP_dist / SL_dist ≥ 2.5)
 - Return `df`
 - Use only `numpy` (as `np`) and `pandas` (as `pd`) — both are pre-imported
 
@@ -316,13 +432,13 @@ Return **exactly** these three fenced blocks in order — nothing else:
 {{
   "strategy_type": "<trend_following|mean_reversion|breakout|range_trading|momentum>",
   "strategy_name": "<descriptive name>",
-  "sl_mult": <float, ATR multiple for SL>,
-  "tp_mult": <float, ATR multiple for TP>,
+  "sl_mult": <float, ATR multiple for SL, minimum 1.5>,
+  "tp_mult": <float, ATR multiple for TP, minimum sl_mult * 2.5>,
   "active_hours": [<start 0-23>, <end 0-23>],
-  "commission": <float e.g. 0.0001>,
-  "slippage":   <float e.g. 0.0001>,
-  "risk_per_trade": <float e.g. 0.01>,
-  "rationale": "<one sentence>"
+  "commission": 0.0004,
+  "slippage":   0.0001,
+  "risk_per_trade": 0.01,
+  "rationale": "<one sentence: why this R:R beats commission given the expected win rate>"
 }}
 ```
 
@@ -342,14 +458,17 @@ def generate_signals_agent(df):
 ## Strategy Choice Rationale
 [Why this type is optimal for these statistical properties]
 
+## Commission Analysis
+[Break-even WR at chosen R:R, expected actual WR, why the edge survives fees]
+
 ## Implementation Details
 [Entry/exit logic, filters, position sizing]
 
 ## Risk Parameters
-[SL/TP rationale, active hours justification]
+[SL/TP rationale with ATR multiples, active hours justification, expected N trades/year]
 
 ## Expected Edge
-[Why this strategy should be profitable given the data]
+[Quantified: expected WR, PF, Sharpe based on historical data properties]
 ```
 """
 
@@ -411,7 +530,8 @@ def _call_anthropic(api_key: str, context: str, asset: str = "BTC-USD") -> tuple
 
 # ── OpenRouter backend ────────────────────────────────────────────────────────
 
-def _call_openrouter(api_key: str, context: str, model: str = "", asset: str = "BTC-USD") -> tuple:
+def _call_openrouter(api_key: str, context: str, model: str = "",
+                     asset: str = "BTC-USD") -> tuple:
     import requests as _req
     model = model or os.environ.get("OPENROUTER_MODEL", OPENROUTER_DEFAULT_MODEL)
     print(f"  [agent] Calling OpenRouter model={model}...")
@@ -440,47 +560,111 @@ def _call_openrouter(api_key: str, context: str, model: str = "", asset: str = "
     return _parse_response(text, source=f"openrouter/{model}")
 
 
-# ── Quick backtest for refinement loop ───────────────────────────────────────
+# ── Quick backtest ─────────────────────────────────────────────────────────────
 
-def _quick_backtest_code(code: str, asset: str) -> dict:
-    """Run a fast in-sample backtest on agent-generated code. Returns metrics dict."""
+def _quick_backtest(code_str: str, asset: str) -> dict:
+    """Run a vectorised backtest of the generated strategy; returns metrics dict."""
     try:
-        import sys as _sys
-        _sys.path.insert(0, os.path.dirname(__file__))
-        from strategy_core import (load_hourly, compute_indicators_v2,
-                                   backtest_v2, compute_metrics)
-        import numpy as _np, pandas as _pd
+        import re as _re, pandas as _pd, numpy as _np
+        alias = {"BTC-USD": "btc", "ETH-USD": "eth", "SOL-USD": "sol"}
+        fname = alias.get(asset) or _re.sub(r"[^a-z0-9]", "_", asset.lower()).strip("_")
+        path = os.path.join(OUTPUT_DIR, f"{fname}_hourly.csv")
+        if not os.path.exists(path):
+            return {}
+        df = _pd.read_csv(path, index_col=0, parse_dates=True)
+        df.columns = [c if isinstance(c, str) else c[0] for c in df.columns]
 
-        df     = load_hourly(asset)
-        df_ind = compute_indicators_v2(df, fit_garch=True)
+        # Build indicators
+        c, h, lo = df["Close"].values, df["High"].values, df["Low"].values
+        tr = _np.maximum(h - lo,
+             _np.maximum(abs(h - _np.roll(c, 1)), abs(lo - _np.roll(c, 1))))
+        df["ATR14"]    = _pd.Series(tr, index=df.index).rolling(14).mean()
+        df["ATR_pct"]  = df["ATR14"] / df["Close"]
+        df["EMA50"]    = df["Close"].ewm(span=50,  adjust=False).mean()
+        df["EMA200"]   = df["Close"].ewm(span=200, adjust=False).mean()
+        delta = df["Close"].diff()
+        gain  = delta.clip(lower=0).rolling(14).mean()
+        loss  = (-delta.clip(upper=0)).rolling(14).mean()
+        df["RSI14"]    = 100 - 100 / (1 + gain / loss.replace(0, _np.nan))
+        df["RollHigh6"] = df["High"].rolling(6).max()
+        df["RollLow6"]  = df["Low"].rolling(6).min()
+        idx = _pd.to_datetime(df.index)
+        df["hour"] = idx.hour
+        df["dow"]  = idx.dayofweek
+        df["ret"]  = df["Close"].pct_change()
+        roll_vol   = df["ret"].rolling(24).std()
+        q33, q66   = roll_vol.quantile(0.33), roll_vol.quantile(0.66)
+        df["garch_h"] = roll_vol ** 2
+        df["garch_regime"] = _pd.cut(roll_vol,
+                                      bins=[-_np.inf, q33, q66, _np.inf],
+                                      labels=["LOW", "MED", "HIGH"])
+        df["size_mult"] = (df["garch_regime"].map({"LOW": 0.5, "MED": 1.0, "HIGH": 1.0})
+                           .fillna(1.0))
+        df = df.dropna()
 
-        ns: dict = {"np": _np, "pd": _pd}
-        exec(code, ns)                                    # noqa: S102
-        fn     = ns["generate_signals_agent"]
-        df_sig = fn(df_ind)
-        res    = backtest_v2(df_sig, 10_000, 0.01, commission=0.0001, slippage=0.0001)
-        m      = compute_metrics(res, 10_000)
+        ns = {"np": _np, "pd": _pd}
+        exec(code_str, ns)
+        df = ns["generate_signals_agent"](df)
+
+        commission = 0.0004
+        signals = df["signal"].values
+        close   = df["Close"].values
+        sl_arr  = df["SL_dist"].values
+        tp_arr  = df["TP_dist"].values
+
+        pnl_list: list = []
+        in_trade = 0
+        entry_price = entry_sl = entry_tp = 0.0
+
+        for i in range(1, len(df)):
+            if in_trade != 0:
+                if in_trade == 1:
+                    if close[i] <= entry_price - entry_sl:
+                        pnl_list.append(-entry_sl / entry_price - commission)
+                        in_trade = 0
+                    elif close[i] >= entry_price + entry_tp:
+                        pnl_list.append(entry_tp / entry_price - commission)
+                        in_trade = 0
+                else:
+                    if close[i] >= entry_price + entry_sl:
+                        pnl_list.append(-entry_sl / entry_price - commission)
+                        in_trade = 0
+                    elif close[i] <= entry_price - entry_tp:
+                        pnl_list.append(entry_tp / entry_price - commission)
+                        in_trade = 0
+            if in_trade == 0 and signals[i] != 0:
+                in_trade    = int(signals[i])
+                entry_price = close[i]
+                entry_sl    = sl_arr[i]
+                entry_tp    = tp_arr[i]
+
+        if not pnl_list:
+            return {"n_trades": 0, "sharpe": -999.0, "cagr": -999.0, "profit_factor": 0.0,
+                    "win_rate": 0.0, "avg_win": 0.0, "avg_loss": 0.0}
+
+        pnl    = _np.array(pnl_list)
+        wins   = pnl[pnl > 0]
+        losses = pnl[pnl < 0]
+        gross_profit = float(wins.sum())   if len(wins)   > 0 else 0.0
+        gross_loss   = abs(float(losses.sum())) if len(losses) > 0 else 1e-9
+        pf     = gross_profit / gross_loss
+        equity = _np.cumprod(1 + pnl)
+        n_years = len(df) / (24 * 365)
+        cagr   = float((equity[-1] ** (1 / max(n_years, 0.1)) - 1) * 100)
+        ann_f  = 24 * 365 / max(len(df) / len(pnl), 1)
+        sharpe = float(_np.mean(pnl) / (_np.std(pnl) + 1e-9) * _np.sqrt(ann_f))
         return {
-            "sharpe":    m.get("sharpe_ratio",     -999),
-            "cagr_pct":  m.get("cagr_pct",         -999),
-            "max_dd":    m.get("max_drawdown_pct",  -999),
-            "n_trades":  m.get("n_trades",           0),
-            "win_rate":  m.get("win_rate_pct",       0),
-            "error":     None,
+            "n_trades":     len(pnl),
+            "win_rate":     round(len(wins) / len(pnl) * 100, 1),
+            "sharpe":       round(sharpe, 3),
+            "cagr":         round(cagr, 2),
+            "profit_factor": round(pf, 3),
+            "avg_win":      round(float(_np.mean(wins))   * 100 if len(wins)   > 0 else 0.0, 3),
+            "avg_loss":     round(float(_np.mean(losses)) * 100 if len(losses) > 0 else 0.0, 3),
         }
     except Exception as exc:
-        return {"sharpe": -999, "cagr_pct": -999, "n_trades": 0, "error": str(exc)}
-
-
-def _get_v4_baseline_sharpe() -> float:
-    """Read V4 Sharpe from analysis_report.json if available."""
-    path = os.path.join(OUTPUT_DIR, "analysis_report.json")
-    try:
-        with open(path) as f:
-            rpt = json.load(f)
-        return float(rpt.get("v4_baseline", {}).get("sharpe_ratio", -999))
-    except Exception:
-        return -999
+        print(f"  [agent] Backtest error: {exc}")
+        return {}
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -490,12 +674,12 @@ def run_agent(
     openrouter_key: str = "",
     openrouter_model: str = "",
     asset: str = "BTC-USD",
-    max_refinements: int = 3,
+    max_iterations: int = 3,
 ) -> tuple:
     """
     Returns (config: dict, code: str, report: str).
     Priority: Anthropic → OpenRouter → V5 defaults.
-    Runs up to max_refinements iterations if the strategy underperforms V4.
+    Runs up to max_iterations refinement loops until profitability gates pass.
     """
     ant = (anthropic_key or "").strip() or os.environ.get("ANTHROPIC_API_KEY",  "").strip()
     ort = (openrouter_key or "").strip() or os.environ.get("OPENROUTER_API_KEY", "").strip()
@@ -506,80 +690,119 @@ def run_agent(
         cfg["asset"] = asset
         return cfg, DEFAULT_CODE, DEFAULT_REPORT
 
-    v4_sharpe     = _get_v4_baseline_sharpe()
-    target_sharpe = max(0.3, v4_sharpe + 0.3)
-    print(f"  [agent] V4 baseline Sharpe: {v4_sharpe:.3f}  |  Target: > {target_sharpe:.3f}")
     print(f"  [agent] Building analysis context for {asset}...")
     ctx = _build_context(asset)
 
-    config = code = report = None
-    for attempt in range(1, max_refinements + 1):
-        print(f"  [agent] Attempt {attempt}/{max_refinements}...")
+    # Determine minimum targets from V4 baseline
+    target_sharpe = 0.5
+    target_cagr   = 5.0
+    target_pf     = 1.2
+    try:
+        rpt_path = os.path.join(OUTPUT_DIR, "analysis_report.json")
+        if os.path.exists(rpt_path):
+            with open(rpt_path) as _f:
+                _rpt = json.load(_f)
+            _v4 = _rpt.get("v4_baseline", {})
+            target_sharpe = max(0.5, float(_v4.get("sharpe_ratio", -999) or -999) + 0.5)
+            target_cagr   = max(5.0, float(_v4.get("cagr_pct",     -999) or -999) + 5.0)
+    except Exception:
+        pass
+
+    best_result: tuple | None = None
+    best_pf: float = -999.0
+    last_error = ""
+
+    for iteration in range(1, max_iterations + 1):
+        print(f"  [agent] Iteration {iteration}/{max_iterations}...")
+
+        prompt_ctx = ctx
+        if iteration > 1 and last_error:
+            prompt_ctx = (
+                ctx
+                + f"\n\n### ⚠️ Previous Attempt Failed (iteration {iteration - 1})\n"
+                + last_error
+                + "\n\nRevise the strategy to fix ALL issues above. "
+                  "Focus on commission mathematics: ensure TP/SL ≥ 2.5 and "
+                  "the expected win rate exceeds the break-even threshold."
+            )
+
         try:
             if ant:
-                config, code, report = _call_anthropic(ant, ctx, asset=asset)
+                config, code, report = _call_anthropic(ant, prompt_ctx, asset=asset)
             else:
-                config, code, report = _call_openrouter(ort, ctx,
+                config, code, report = _call_openrouter(ort, prompt_ctx,
                                                          model=openrouter_model, asset=asset)
         except Exception as exc:
-            print(f"  [agent] Error on attempt {attempt}: {exc}")
-            if ant and ort and attempt == 1:
-                print("  [agent] Trying OpenRouter as fallback...")
-                try:
-                    config, code, report = _call_openrouter(ort, ctx,
-                                                             model=openrouter_model, asset=asset)
-                except Exception as exc2:
-                    print(f"  [agent] OpenRouter also failed: {exc2}")
-            break
+            print(f"  [agent] API error on iteration {iteration}: {exc}")
+            last_error = f"API error: {exc}"
+            if iteration == max_iterations:
+                break
+            continue
 
-        # Quick backtest to evaluate quality
-        metrics = _quick_backtest_code(code, asset)
-        sharpe   = metrics.get("sharpe",   -999)
-        n_trades = metrics.get("n_trades", 0)
-        print(f"  [agent] Quick backtest → "
-              f"Sharpe: {sharpe:.3f} (target >{target_sharpe:.3f})  "
-              f"CAGR: {metrics.get('cagr_pct',-999):.1f}%  "
-              f"N_trades: {n_trades}")
-        if metrics.get("error"):
-            print(f"  [agent] Backtest error: {metrics['error']}")
+        print(f"  [agent] Running quick backtest...")
+        metrics = _quick_backtest(code, asset)
 
-        if sharpe >= target_sharpe and n_trades >= 15:
-            print(f"  [agent] ✓ Strategy meets target on attempt {attempt}!")
-            break
+        if not metrics:
+            print(f"  [agent] Backtest execution failed.")
+            last_error = ("Backtest failed to run. Use only standard indicators "
+                          "(ATR14, RSI14, EMA50, EMA200, RollHigh6/Low6, ATR_pct, hour, dow).")
+            if iteration == max_iterations:
+                break
+            continue
 
-        if attempt < max_refinements:
-            diagnosis = []
-            if n_trades < 15:
-                diagnosis.append(
-                    f"Too few trades ({n_trades}): relax entry conditions, "
-                    "expand active_hours, or reduce filters.")
-            if sharpe < 0:
-                diagnosis.append(
-                    f"Negative Sharpe ({sharpe:.3f}): signals are systematically wrong. "
-                    "Consider reversing direction or switching strategy type completely.")
-            elif sharpe < target_sharpe:
-                diagnosis.append(
-                    f"Sharpe {sharpe:.3f} below target {target_sharpe:.3f}: "
-                    "improve entry timing or SL/TP ratio.")
-            if metrics.get("error"):
-                diagnosis.append(f"Runtime error: {metrics['error']}")
-            refinement = (
-                f"\n\n### Attempt {attempt} Result — NEEDS IMPROVEMENT\n"
-                f"Sharpe: {sharpe:.3f} (target: >{target_sharpe:.3f})  "
-                f"CAGR: {metrics.get('cagr_pct',-999):.1f}%  "
-                f"N_trades: {n_trades}\n"
-                + ("\n".join(f"- {d}" for d in diagnosis) if diagnosis else "")
-                + "\n\n**Redesign the strategy addressing the issues above.**\n"
+        n    = metrics.get("n_trades", 0)
+        sh   = metrics.get("sharpe", -999.0)
+        cagr = metrics.get("cagr", -999.0)
+        pf   = metrics.get("profit_factor", 0.0)
+        wr   = metrics.get("win_rate", 0.0)
+        aw   = metrics.get("avg_win", 0.0)
+        al   = metrics.get("avg_loss", 0.0)
+        rr   = abs(aw / al) if al != 0 else 0.0
+
+        print(f"  [agent] N={n}  WR={wr:.1f}%  Sharpe={sh:.3f}  "
+              f"CAGR={cagr:.1f}%  PF={pf:.3f}  R:R≈{rr:.2f}")
+
+        if pf > best_pf:
+            best_result, best_pf = (config, code, report), pf
+
+        if sh >= target_sharpe and cagr >= target_cagr and pf >= target_pf and n >= 20:
+            print(f"  [agent] ✅ All profitability gates passed on iteration {iteration}.")
+            return config, code, report
+
+        failures: list[str] = []
+        if n < 20:
+            failures.append(
+                f"- Only {n} trades (need ≥ 20). Relax entry conditions or extend active_hours."
             )
-            ctx = _build_context(asset) + refinement
+        if pf < target_pf:
+            be_wr = rr / (1 + rr) * 100 if rr > 0 else 50.0
+            failures.append(
+                f"- Profit Factor {pf:.3f} < {target_pf:.2f}. "
+                f"R:R≈{rr:.2f} → break-even WR ≈ {be_wr:.1f}%, actual WR={wr:.1f}%. "
+                + ("Increase TP/SL ratio to ≥ 2.5." if rr < 2.5 else "Improve entry signal.")
+            )
+        if sh < target_sharpe:
+            failures.append(
+                f"- Sharpe {sh:.3f} < {target_sharpe:.2f}. "
+                "Reduce noise trades (add GARCH filter) or improve R:R."
+            )
+        if cagr < target_cagr:
+            failures.append(
+                f"- CAGR {cagr:.1f}% < {target_cagr:.1f}%. "
+                "Increase TP multiple or trade more selectively in trend direction."
+            )
 
-    if config is None:
-        print("  [agent] All attempts failed — using V5 defaults.")
-        cfg = V5_DEFAULT_CONFIG.copy()
-        cfg["asset"] = asset
-        return cfg, DEFAULT_CODE, DEFAULT_REPORT
+        last_error = "\n".join(failures)
+        print(f"  [agent] Gates not met:\n  " + "\n  ".join(failures))
 
-    return config, code, report
+    if best_result is not None:
+        print(f"  [agent] Using best result (PF={best_pf:.3f}) after {max_iterations} iterations.")
+        return best_result
+
+    print("  [agent] All iterations failed — using V5 defaults.")
+    cfg = V5_DEFAULT_CONFIG.copy()
+    cfg["asset"] = asset
+    return cfg, DEFAULT_CODE, DEFAULT_REPORT
 
 # ── Save helpers ──────────────────────────────────────────────────────────────
 
