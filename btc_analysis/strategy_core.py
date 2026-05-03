@@ -442,3 +442,17 @@ def load_daily(asset: str = "BTC") -> pd.DataFrame:
     df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
     df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
     return df
+
+
+def load_features(asset: str = "BTC-USD") -> pd.DataFrame:
+    """Load pre-computed features from 03_features.py; compute on-the-fly as fallback."""
+    fname = ticker_to_fname(asset)
+    parquet_path = os.path.join(OUTPUT_DIR, f"{fname}_features.parquet")
+    csv_path     = os.path.join(OUTPUT_DIR, f"{fname}_features.csv")
+    if os.path.exists(parquet_path):
+        return pd.read_parquet(parquet_path)
+    if os.path.exists(csv_path):
+        return pd.read_csv(csv_path, index_col=0, parse_dates=True)
+    print(f"  [features] Feature pre-calcolate non trovate per {asset} — "
+          "esegui 03_features.py. Calcolo on-the-fly (lento)...")
+    return compute_indicators_v2(load_hourly(asset), fit_garch=True)

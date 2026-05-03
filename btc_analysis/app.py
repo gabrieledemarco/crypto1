@@ -382,19 +382,22 @@ with st.sidebar:
         return True
 
     # ── Step 1 ────────────────────────────────────────────────────────────────
-    if st.button("📊 1. Analisi Statistica", use_container_width=True,
-                 help="Calcola Hurst, ACF, GARCH e baseline V4 per l'asset selezionato"):
-        if _ensure_download():
-            with st.spinner(f"📊 Analisi statistica {asset}…"):
-                try:
-                    _run_script("02_analyze.py", extra_env=_env)
-                    st.cache_data.clear()
-                    st.success(f"✅ Analisi completata per {asset}.")
-                except subprocess.CalledProcessError as _e1:
-                    st.error(f"Analisi fallita:\n```\n{_e1.stderr.decode()[:400]}\n```")
+    if st.button("📥 1. Download + Analisi Statistica", use_container_width=True,
+                 help="Scarica dati OHLCV e calcola Hurst, ACF, GARCH, best hours → analysis_report.json"):
+        with st.spinner(f"📥 Download + analisi statistica {asset}…"):
+            try:
+                _do_download_module([asset], skip_existing=False)
+                st.cache_data.clear()
+                _run_script("02_analyze.py", extra_env=_env)
+                st.cache_data.clear()
+                st.success(f"✅ Download e analisi completati per {asset}.")
+            except subprocess.CalledProcessError as _e1:
+                st.error(f"Analisi fallita:\n```\n{_e1.stderr.decode()[:400]}\n```")
+            except Exception as _e1b:
+                st.error(f"Errore: {_e1b}")
 
     # ── Step 2 ────────────────────────────────────────────────────────────────
-    if st.button("🤖 2. Genera Strategia (Agent)", use_container_width=True,
+    if st.button("🤖 2. Elabora Strategia (Agent)", use_container_width=True,
                  help="Claude analizza le statistiche e scrive generate_signals_agent()"):
         if not _ant_key and not _or_key:
             st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
@@ -412,26 +415,38 @@ with st.sidebar:
                     _ag.save_outputs(_cfg_r, _code_r, _report_r)
                     st.success(
                         f"✅ Strategia `{_cfg_r.get('strategy_type','')}` generata. "
-                        "Esegui ora **📈 3. Backtest**."
+                        "Esegui ora **🔧 3. Costruisci Feature**."
                     )
                 except Exception as _ae:
                     st.error(f"Errore agent: {_ae}")
 
     # ── Step 3 ────────────────────────────────────────────────────────────────
-    if st.button("📈 3. Backtest + Walk-Forward", use_container_width=True,
-                 help="V1/V2/V4/V_Agent + WFO (4 window) + grid search SL/TP"):
+    if st.button("🔧 3. Costruisci Feature", use_container_width=True,
+                 help="Calcola ATR, RSI, EMA, GARCH(1,1) e salva features pre-computate"):
+        if _ensure_download():
+            with st.spinner(f"🔧 Calcolo feature {asset}… (~30s per GARCH)"):
+                try:
+                    _run_script("03_features.py", extra_env=_env)
+                    st.cache_data.clear()
+                    st.success("✅ Feature costruite. Esegui ora **📈 4. Backtest**.")
+                except subprocess.CalledProcessError as _fe:
+                    st.error(f"Feature construction fallita:\n```\n{_fe.stderr.decode()[:400]}\n```")
+
+    # ── Step 4 ────────────────────────────────────────────────────────────────
+    if st.button("📈 4. Backtest + Walk-Forward", use_container_width=True,
+                 help="V1/V2/V4/V_Agent + WFO rolling window + grid search SL/TP"):
         if _ensure_download():
             with st.spinner(f"📈 Backtest + WFO {asset}…"):
                 try:
                     _run_script("04_backtest.py", extra_env=_env)
                     st.cache_data.clear()
-                    st.success("✅ Backtest completato. Esegui ora **🎲 4. Monte Carlo**.")
+                    st.success("✅ Backtest completato. Esegui ora **🎲 5. Monte Carlo**.")
                 except subprocess.CalledProcessError as _be:
                     st.error(f"Backtest fallito:\n```\n{_be.stderr.decode()[:400]}\n```")
 
-    # ── Step 4 ────────────────────────────────────────────────────────────────
-    if st.button("🎲 4. Monte Carlo", use_container_width=True,
-                 help="Bootstrap 5000 sim + 4 stress scenarios da trades.csv"):
+    # ── Step 5 ────────────────────────────────────────────────────────────────
+    if st.button("🎲 5. Monte Carlo", use_container_width=True,
+                 help="Bootstrap 10.000 sim + 4 stress scenarios da trades.csv"):
         with st.spinner(f"🎲 Monte Carlo {asset}…"):
             try:
                 _run_script("05_montecarlo.py", extra_env=_env)
