@@ -25,7 +25,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from strategy_core import (
-    load_hourly, compute_indicators_v2, generate_signals_v2,
+    load_features, generate_signals_v2,
     backtest_v2, compute_metrics, load_agent_config, load_agent_strategy,
     ticker_to_fname, OUTPUT_DIR,
 )
@@ -234,11 +234,8 @@ if __name__ == "__main__":
     print(f"  BACKTEST — {STRATEGY_ASSET}")
     print("=" * 60)
 
-    print(f"\nCaricamento dati {STRATEGY_ASSET}...")
-    df_raw = load_hourly(STRATEGY_ASSET)
-
-    print("Calcolo indicatori + GARCH(1,1)...")
-    df_ind = compute_indicators_v2(df_raw, fit_garch=True)
+    print(f"\nCaricamento feature {STRATEGY_ASSET}...")
+    df_ind = load_features(STRATEGY_ASSET)
 
     print("\nEsecuzione versioni strategia...")
     results = run_versions(df_ind)
