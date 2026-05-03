@@ -126,6 +126,77 @@ def _atr_stats(asset: str) -> dict:
         return {}
 
 
+def _parse_wfo_insight() -> str:
+    """Extract actionable insights from walk_forward_results.csv."""
+    try:
+        import pandas as _pd, numpy as _np
+        df = _pd.read_csv(os.path.join(OUTPUT_DIR, "walk_forward_results.csv"))
+        n_pos = (df["oos_sharpe"] > 0).sum()
+        n_tot = len(df)
+        best_is_sl = df["best_sl"].mode().iloc[0] if not df["best_sl"].empty else "?"
+        best_is_tp = df["best_tp"].mode().iloc[0] if not df["best_tp"].empty else "?"
+        oos_mean   = df["oos_sharpe"].mean()
+        is_mean    = df["is_sharpe"].mean()
+        overfit    = is_mean > 1.0 and oos_mean < 0
+        lines = [
+            f"Walk-Forward ({n_tot} folds): "
+            f"OOS Sharpe avg={oos_mean:.2f}  IS Sharpe avg={is_mean:.2f}  "
+            f"OOS profitable folds: {n_pos}/{n_tot}",
+            f"Most common IS-optimal params: SL={best_is_sl}×ATR, TP={best_is_tp}×ATR",
+        ]
+        if overfit:
+            lines.append(
+                "⚠️ IS→OOS degradation detected: grid-search IS params overfit badly. "
+                "Do NOT copy IS-optimal SL/TP. Use conservative SL ≥ 2×ATR, TP ≥ 4×ATR "
+                "for better OOS robustness."
+            )
+        elif oos_mean > 0.3:
+            lines.append(f"✅ OOS Sharpe is positive on average — IS params generalise reasonably.")
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+def _parse_optim_insight() -> str:
+    """Extract top-3 SL/TP combinations from optimization_results.csv."""
+    try:
+        import pandas as _pd
+        df = _pd.read_csv(os.path.join(OUTPUT_DIR, "optimization_results.csv"))
+        df = df.sort_values("sharpe", ascending=False).head(5)
+        lines = ["Top IS parameter combinations (grid search, use as rough reference only):"]
+        for _, r in df.iterrows():
+            lines.append(
+                f"  SL={r['sl_mult']:.1f}×ATR / TP={r['tp_mult']:.1f}×ATR  "
+                f"hours={r['h_from']:.0f}-{r['h_to']:.0f}  "
+                f"Sharpe={r['sharpe']:.2f}  CAGR={r['cagr']:.1f}%  WR={r['win_rate']:.1f}%"
+            )
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+def _best_active_hours(best_hours: list) -> list:
+    """Convert a list of best UTC hours to a [start, end] active window."""
+    if not best_hours or not isinstance(best_hours, list):
+        return [6, 22]
+    try:
+        hrs = sorted(int(h) for h in best_hours)
+        # Find the longest contiguous run
+        best_start, best_end, cur_start = hrs[0], hrs[0], hrs[0]
+        best_len = 1
+        for i in range(1, len(hrs)):
+            if hrs[i] - hrs[i-1] <= 2:
+                cur_len = hrs[i] - cur_start + 1
+                if cur_len > best_len:
+                    best_len, best_start, best_end = cur_len, cur_start, hrs[i]
+            else:
+                cur_start = hrs[i]
+        # Expand window by ±1 hour for coverage
+        return [max(0, best_start - 1), min(23, best_end + 1)]
+    except Exception:
+        return [6, 22]
+
+
 def _build_context(asset: str = "BTC-USD") -> str:
     report_json = os.path.join(OUTPUT_DIR, "analysis_report.json")
     if os.path.exists(report_json):
@@ -199,14 +270,25 @@ def _build_context(asset: str = "BTC-USD") -> str:
                 f"- Profit Factor  ≥ 1.3\n"
                 f"- N trades       ≥ 20\n\n"
             )
-            for title, fname in [
-                ("Enhanced Strategy Comparison", "enhanced_strategy_comparison.csv"),
-                ("Walk-Forward Results",          "walk_forward_results.csv"),
-            ]:
-                content = _read_safe(os.path.join(OUTPUT_DIR, fname))
-                if not content.startswith("[not found"):
-                    ctx += f"### {title}\n```\n{content}\n```\n\n"
-            ctx += f"\n### Target Asset\nDesign the strategy for **{asset}**.\n"
+            # Suggested active_hours derived from best_hours_utc
+            _suggested_hours = _best_active_hours(s.get("best_hours_utc", []))
+            ctx += (
+                f"### Suggested Active Window\n"
+                f"Derived from best UTC hours {s.get('best_hours_utc','?')}: "
+                f"use active_hours = {_suggested_hours} as starting point.\n\n"
+            )
+
+            # Walk-forward insight (interpreted, not raw CSV)
+            _wfo = _parse_wfo_insight()
+            if _wfo:
+                ctx += f"### Walk-Forward Analysis\n{_wfo}\n\n"
+
+            # Top optimization results (interpreted)
+            _opt = _parse_optim_insight()
+            if _opt:
+                ctx += f"### Grid-Search Reference (IS only — treat with caution)\n{_opt}\n\n"
+
+            ctx += f"### Target Asset\nDesign the strategy for **{asset}**.\n"
             return ctx
         except Exception as exc:
             print(f"  [agent] Warning: could not parse analysis_report.json: {exc}")
@@ -349,20 +431,39 @@ You are an expert quantitative trading strategist and Python developer for crypt
 
 ## CORE OBJECTIVE
 Design a strategy for **{asset}** that generates POSITIVE real returns after 0.04% taker fees (0.08% round-trip).
-Every parameter choice must be justified through the commission mathematics below.
+Your code will be backtested automatically — design it to achieve the gates below.
 
-## NON-NEGOTIABLE PROFITABILITY GATES
-Your strategy MUST achieve ALL of these in backtesting:
+## PROFITABILITY GATES (design targets)
 - Profit Factor  > 1.3   (gross_profit / |gross_loss|)
 - Sharpe Ratio   > 0.5   (annualised, after commission)
 - CAGR           > 5%    (after commission)
-- N trades       ≥ 20    (statistical significance)
+- N trades       ≥ 20    (enough for statistical significance)
 
-If your strategy fails any gate, REVISE the parameters before responding.
+## STEP-BY-STEP DESIGN PROCESS
+Follow these steps in order:
 
-## COMMISSION MATHEMATICS (mandatory knowledge)
+**Step 1 — Read the statistical regime** from the context:
+- Hurst > 0.55 → trend following (momentum)
+- Hurst < 0.45 → mean reversion
+- Hurst 0.45-0.55 → breakout / range
+- ACF lag-1 positive → strengthens trend case
+- Kurtosis > 5 → fat tails, use SL ≥ 2.5×ATR
+
+**Step 2 — Fix SL and TP** using the ATR Calibration table in the context.
+Commission eats ~0.08% round-trip. Rule: use TP/SL ≥ 2.5 always.
+
+**Step 3 — Fix active_hours** using the suggested window in the context.
+Trading in bad hours destroys edge. Restrict to the best 8-14 UTC hours.
+
+**Step 4 — Choose entry signal** matching the regime (see patterns below).
+Verify mentally: will this signal fire ≥ 20 times over the data period?
+
+**Step 5 — Add one quality filter** (GARCH regime, RSI boundary, ATR_pct threshold).
+One filter is enough — over-filtering reduces trade count below significance threshold.
+
+## COMMISSION MATHEMATICS
 Taker fee: 0.04%/side = 0.08% round-trip.
-Break-even win rate by R:R ratio (0.08% commission):
+Break-even win rate by R:R ratio:
 
 | R:R  | Break-even WR |
 |------|--------------|
@@ -372,103 +473,111 @@ Break-even win rate by R:R ratio (0.08% commission):
 | 1:3  | ~25.1%       |
 | 1:4  | ~20.2%       |
 
-KEY RULE: Always use TP/SL ≥ 2.5 so commission < 5% of expected gain.
-Commission eats ~0.3–0.5 ATR per trade on typical crypto. Use SL ≥ 1.5×ATR.
+## PATTERNS BY REGIME
 
-## STRATEGY-TYPE SELECTION
-| Hurst exponent | Best strategy type |
-|---|---|
-| > 0.55 | TREND FOLLOWING — EMA crossover, ATR momentum |
-| < 0.45 | MEAN REVERSION — Bollinger Bands, RSI reversal |
-| 0.45–0.55 | BREAKOUT or RANGE TRADING |
+### Pattern A — ATR Momentum Breakout (Hurst > 0.55)
+Entry long:  Close > RollHigh6 AND EMA50 > EMA200 AND RSI14 < 70
+Entry short: Close < RollLow6  AND EMA50 < EMA200 AND RSI14 > 30
+SL=2×ATR14, TP=5×ATR14 | Filter: garch_regime != "LOW"
+Typical WR 35-45%, PF 1.3-1.8
 
-Additional signals: positive ACF→ momentum, negative ACF→ mean-reversion,
-high kurtosis (>5)→ widen SL to ≥ 2.5×ATR to survive fat-tail spikes.
+### Pattern B — RSI Mean Reversion (Hurst < 0.45)
+Entry long:  RSI14 < 32 AND Close < EMA200 * 0.99
+Entry short: RSI14 > 68 AND Close > EMA200 * 1.01
+SL=1.5×ATR14, TP=4×ATR14 | Filter: ATR_pct > 0.002 (avoid dead markets)
+Typical WR 45-55%, PF 1.2-1.6
 
-## PROVEN PROFITABLE PATTERNS (start with one of these)
+### Pattern C — EMA Trend Filter + Breakout (any regime)
+Entry long:  EMA50 > EMA200 AND Close > RollHigh6 AND hour in active window
+Entry short: EMA50 < EMA200 AND Close < RollLow6  AND hour in active window
+SL=2×ATR14, TP=4.5×ATR14 | (uses EMA50/EMA200 which are pre-computed)
+Typical WR 38-48%, PF 1.2-1.5
 
-### Pattern A — ATR Momentum Breakout (trend regime)
-Entry: Close > RollHigh6 AND EMA50 > EMA200 AND RSI14 < 70
-SL=2×ATR14, TP=5×ATR14 | Filter: garch_regime != "LOW", active hours
-Typically achieves WR 35-45%, PF 1.3-1.8
+### Pattern D — Volatility Breakout (Hurst 0.45-0.55)
+Compute inline: `ema20 = df["Close"].ewm(span=20).mean()`
+Entry long:  ATR_pct > ATR_pct.rolling(24).mean()*1.3 AND Close > RollHigh6 AND EMA50 > ema20
+Entry short: ATR_pct > ATR_pct.rolling(24).mean()*1.3 AND Close < RollLow6  AND EMA50 < ema20
+SL=2.5×ATR14, TP=6×ATR14
+Typical WR 30-40%, PF 1.4-2.0
 
-### Pattern B — RSI Reversal (mean-reversion regime)
-Entry long: RSI14 < 35 AND Close < EMA200*0.99
-Entry short: RSI14 > 65 AND Close > EMA200*1.01
-SL=1.5×ATR14, TP=3.5×ATR14 | Typically achieves WR 45-55%, PF 1.2-1.6
+## INLINE INDICATORS (allowed and encouraged)
+You MAY compute additional indicators inside `generate_signals_agent(df)`:
+```python
+ema20    = df["Close"].ewm(span=20, adjust=False).mean()
+bb_mid   = df["Close"].rolling(20).mean()
+bb_std   = df["Close"].rolling(20).std()
+bb_upper = bb_mid + 2 * bb_std
+bb_lower = bb_mid - 2 * bb_std
+vol_regime = df["ATR_pct"] > df["ATR_pct"].rolling(48).mean()
+```
+These are all valid — use them freely.
 
-### Pattern C — EMA Crossover Momentum (trend regime)
-Entry: fast EMA (20) crosses slow EMA (100), confirmed RSI direction
-SL=2×ATR14, TP=4.5×ATR14 | Filter: trade only best UTC hours
+## `size_mult` USAGE
+`size_mult` encodes GARCH-derived position size: 0.5 in LOW-vol, 1.0 in MED/HIGH.
+You do NOT need to use it directly in signals. Your signal=1/-1/0 logic is enough.
+Optionally: add `df.loc[df["size_mult"] == 0, "signal"] = 0` to skip dead-vol periods.
 
-### Pattern D — Bollinger Squeeze Breakout
-Entry: Close breaks 2σ Bollinger band after low-ATR_pct period
-SL=2×ATR14, TP=5×ATR14 | Filter: ATR_pct > 0.004
-
-## ANTI-PATTERNS (NEVER DO THESE)
-1. ❌ SL < 1×ATR — stops out on noise before TP is reached
-2. ❌ TP/SL ratio < 2 — commission makes profitability mathematically impossible
-3. ❌ Trading all 24 hours — worst hours have negative EV; restrict to best 8-14 UTC hours
-4. ❌ No trend/regime filter — random entries into counter-trend trades kill Sharpe
-5. ❌ Over-filtering to < 20 trades — insufficient sample; strategy won't survive OOS
+## ANTI-PATTERNS
+1. ❌ SL < 1.5×ATR — stops out on noise before TP fires
+2. ❌ TP/SL ratio < 2.5 — commission makes edge negative
+3. ❌ Trading all 24 hours — restrict to best UTC window from context
+4. ❌ Zero/too few signals — test that your conditions overlap; relax one if signal count < 20
+5. ❌ Copying grid-search IS params blindly — they overfit; prefer SL ≥ 2.0×ATR
 
 ## FUNCTION CONTRACT
-The function receives `df` already processed by `compute_indicators_v2()`.
-Available columns: Open, High, Low, Close, Volume, ATR14, RSI14, EMA50, EMA200,
-RollHigh6, RollLow6, ATR_pct, hour, dow, ret, garch_h, garch_regime, size_mult.
+Pre-computed columns available: Open, High, Low, Close, Volume, ATR14, RSI14,
+EMA50, EMA200, RollHigh6, RollLow6, ATR_pct, hour, dow, ret, garch_h,
+garch_regime ("LOW"/"MED"/"HIGH"), size_mult.
 
 The function **must**:
 - Start with `df = df.copy()`
-- Set `df["signal"]` to 1 (long), -1 (short), or 0 (flat) for every row
-- Set `df["SL_dist"]` = stop-loss distance in absolute price units (use ATR14)
-- Set `df["TP_dist"]` = take-profit distance (TP_dist / SL_dist ≥ 2.5)
+- Set `df["signal"]` to 1 (long), -1 (short), or 0 (flat)
+- Set `df["SL_dist"]` = ATR14 × sl_mult (absolute price units)
+- Set `df["TP_dist"]` = ATR14 × tp_mult (TP_dist / SL_dist ≥ 2.5)
 - Return `df`
 - Use only `numpy` (as `np`) and `pandas` (as `pd`) — both are pre-imported
 
 ## RESPONSE FORMAT
-Return **exactly** these three fenced blocks in order — nothing else:
+Return **exactly** these three fenced blocks — nothing else:
 
 ```json
 {{
   "strategy_type": "<trend_following|mean_reversion|breakout|range_trading|momentum>",
   "strategy_name": "<descriptive name>",
-  "sl_mult": <float, ATR multiple for SL, minimum 1.5>,
-  "tp_mult": <float, ATR multiple for TP, minimum sl_mult * 2.5>,
+  "sl_mult": <float, ≥ 1.5>,
+  "tp_mult": <float, ≥ sl_mult × 2.5>,
   "active_hours": [<start 0-23>, <end 0-23>],
   "commission": 0.0004,
   "slippage":   0.0001,
   "risk_per_trade": 0.01,
-  "rationale": "<one sentence: why this R:R beats commission given the expected win rate>"
+  "rationale": "<one sentence: regime → pattern → why R:R beats commission>"
 }}
 ```
 
 ```python
 def generate_signals_agent(df):
     df = df.copy()
-    # ... implementation ...
+    # ... your implementation ...
     return df
 ```
 
 ```markdown
 # Strategy Report: <strategy_name>
 
-## Statistical Analysis Summary
-[Key findings: Hurst, ACF, kurtosis, GARCH regimes, intraday patterns]
+## Statistical Regime
+[Hurst, ACF, kurtosis → regime conclusion]
 
-## Strategy Choice Rationale
-[Why this type is optimal for these statistical properties]
+## Parameter Calibration
+[ATR% → SL/TP in % terms → break-even WR → expected actual WR → edge]
 
-## Commission Analysis
-[Break-even WR at chosen R:R, expected actual WR, why the edge survives fees]
+## Entry Logic
+[Which pattern, what conditions, expected signal frequency]
 
-## Implementation Details
-[Entry/exit logic, filters, position sizing]
+## Active Hours
+[Why this window from best_hours_utc data]
 
-## Risk Parameters
-[SL/TP rationale with ATR multiples, active hours justification, expected N trades/year]
-
-## Expected Edge
-[Quantified: expected WR, PF, Sharpe based on historical data properties]
+## Expected Performance
+[Estimated WR, PF, Sharpe — and why these gates should be met]
 ```
 """
 
