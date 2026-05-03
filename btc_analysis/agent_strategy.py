@@ -191,7 +191,7 @@ def _build_context(asset: str = "BTC-USD") -> str:
                 f"- CAGR: {v4.get('cagr_pct','?')}%\n"
                 f"- Sharpe Ratio: {v4.get('sharpe_ratio','?')}\n"
                 f"- Max Drawdown: {v4.get('max_drawdown_pct','?')}%\n"
-                f"- Win Rate: {v4.get('win_rate','?')}%\n"
+                f"- Win Rate: {v4.get('win_rate_pct','?')}%\n"
                 f"- N trades: {v4.get('n_trades','?')}\n\n"
                 f"### Minimum Targets (non-negotiable)\n"
                 f"- Target Sharpe  ≥ {target_sharpe:.2f}\n"

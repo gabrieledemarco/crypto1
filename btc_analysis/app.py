@@ -121,7 +121,7 @@ def ensure_data():
         try:
             _run_script("01_data_download.py")
             if "trades.csv" in missing:
-                _run_script("04_strategy.py")
+                _run_script("04_backtest.py")
                 _run_script("06_enhanced_strategy.py")
         except subprocess.CalledProcessError as e:
             st.error(f"Errore generazione dati: {e.stderr.decode()[:400]}")
@@ -135,7 +135,11 @@ C_UP   = "#26a69a"
 C_DOWN = "#ef5350"
 C_LINE = "#2196f3"
 C_ACC  = "#ff9800"
-ASSET_COLORS = {"BTC": C_LINE, "ETH": "#9c27b0", "SOL": C_ACC}
+ASSET_COLORS = {
+    "BTC-USD": C_LINE,    "BTC": C_LINE,
+    "ETH-USD": "#9c27b0", "ETH": "#9c27b0",
+    "SOL-USD": C_ACC,     "SOL": C_ACC,
+}
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Sidebar
@@ -467,7 +471,6 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════════════
 
 @st.cache_data
-@st.cache_data
 def load_ohlcv_daily(sym: str) -> pd.DataFrame:
     fname = ticker_to_fname(sym)
     path_daily  = os.path.join(OUTPUT, f"{fname}_daily.csv")
@@ -524,10 +527,6 @@ def download_fine_grain(sym: str, interval: str, max_days: int) -> str | bool:
     """Download fine-grain data and save as {fname}_{interval}.csv.
     Returns True on success or an error string.
     """
-    import importlib.util as _ilufg
-    _spec = _ilufg.spec_from_file_location("dl01fg", os.path.join(BASE, "01_data_download.py"))
-    _mod  = _ilufg.module_from_spec(_spec)
-    _spec.loader.exec_module(_mod)
     import yfinance as yf
     fname = ticker_to_fname(sym)
     fpath = os.path.join(OUTPUT, f"{fname}_{interval}.csv")
@@ -742,7 +741,7 @@ with tab1:
             log_ret = np.log(d["Close"] / d["Close"].shift(1)).dropna()
             # Annualisation factor depends on interval
             _bars_per_year = {"1m": 525_600, "15m": 35_040, "30m": 17_520,
-                              "1h": 8_760,   "4h": 2_190,   "1d": 252}
+                              "1h": 8_760,   "4h": 2_190,   "1d": 365}
             _ann_factor = _bars_per_year.get(chart_interval, 8_760)
             col_l, col_r = st.columns(2)
             with col_l:
@@ -918,8 +917,9 @@ with tab2:
 
         # ── Equity curve + Drawdown ───────────────────────────────────────────
         eq_full = equity_curve(trades)
+        dd_full = drawdown_series(eq_full)
         eq = eq_full[eq_full.index >= chart_start] if chart_start is not None else eq_full
-        dd = drawdown_series(eq)
+        dd = dd_full[dd_full.index >= chart_start] if chart_start is not None else dd_full
 
         fig_eq = make_subplots(rows=2, cols=1, shared_xaxes=True,
                                row_heights=[0.7, 0.3], vertical_spacing=0.04)
@@ -927,7 +927,8 @@ with tab2:
                                     line=dict(color=C_UP, width=2),
                                     fill="tozeroy", fillcolor="rgba(38,166,154,0.1)",
                                     name="Equity"), row=1, col=1)
-        fig_eq.add_hline(y=10_000, line_dash="dash",
+        _eq_start = float(eq.iloc[0]) if len(eq) > 0 else 10_000
+        fig_eq.add_hline(y=_eq_start, line_dash="dash",
                          line_color="gray", row=1, col=1)
         fig_eq.add_trace(go.Scatter(x=dd.index, y=dd.values, mode="lines",
                                     line=dict(color=C_DOWN, width=1.5),
