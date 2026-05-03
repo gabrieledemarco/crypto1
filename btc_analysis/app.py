@@ -121,7 +121,7 @@ def ensure_data():
         try:
             _run_script("01_data_download.py")
             if "trades.csv" in missing:
-                _run_script("04_strategy.py")
+                _run_script("04_backtest.py")
                 _run_script("06_enhanced_strategy.py")
         except subprocess.CalledProcessError as e:
             st.error(f"Errore generazione dati: {e.stderr.decode()[:400]}")
@@ -135,7 +135,11 @@ C_UP   = "#26a69a"
 C_DOWN = "#ef5350"
 C_LINE = "#2196f3"
 C_ACC  = "#ff9800"
-ASSET_COLORS = {"BTC": C_LINE, "ETH": "#9c27b0", "SOL": C_ACC}
+ASSET_COLORS = {
+    "BTC-USD": C_LINE,    "BTC": C_LINE,
+    "ETH-USD": "#9c27b0", "ETH": "#9c27b0",
+    "SOL-USD": C_ACC,     "SOL": C_ACC,
+}
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Sidebar
@@ -378,19 +382,22 @@ with st.sidebar:
         return True
 
     # ── Step 1 ────────────────────────────────────────────────────────────────
-    if st.button("📊 1. Analisi Statistica", use_container_width=True,
-                 help="Calcola Hurst, ACF, GARCH e baseline V4 per l'asset selezionato"):
-        if _ensure_download():
-            with st.spinner(f"📊 Analisi statistica {asset}…"):
-                try:
-                    _run_script("02_analyze.py", extra_env=_env)
-                    st.cache_data.clear()
-                    st.success(f"✅ Analisi completata per {asset}.")
-                except subprocess.CalledProcessError as _e1:
-                    st.error(f"Analisi fallita:\n```\n{_e1.stderr.decode()[:400]}\n```")
+    if st.button("📥 1. Download + Analisi Statistica", use_container_width=True,
+                 help="Scarica dati OHLCV e calcola Hurst, ACF, GARCH, best hours → analysis_report.json"):
+        with st.spinner(f"📥 Download + analisi statistica {asset}…"):
+            try:
+                _do_download_module([asset], skip_existing=False)
+                st.cache_data.clear()
+                _run_script("02_analyze.py", extra_env=_env)
+                st.cache_data.clear()
+                st.success(f"✅ Download e analisi completati per {asset}.")
+            except subprocess.CalledProcessError as _e1:
+                st.error(f"Analisi fallita:\n```\n{_e1.stderr.decode()[:400]}\n```")
+            except Exception as _e1b:
+                st.error(f"Errore: {_e1b}")
 
     # ── Step 2 ────────────────────────────────────────────────────────────────
-    if st.button("🤖 2. Genera Strategia (Agent)", use_container_width=True,
+    if st.button("🤖 2. Elabora Strategia (Agent)", use_container_width=True,
                  help="Claude analizza le statistiche e scrive generate_signals_agent()"):
         if not _ant_key and not _or_key:
             st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
@@ -408,26 +415,38 @@ with st.sidebar:
                     _ag.save_outputs(_cfg_r, _code_r, _report_r)
                     st.success(
                         f"✅ Strategia `{_cfg_r.get('strategy_type','')}` generata. "
-                        "Esegui ora **📈 3. Backtest**."
+                        "Esegui ora **🔧 3. Costruisci Feature**."
                     )
                 except Exception as _ae:
                     st.error(f"Errore agent: {_ae}")
 
     # ── Step 3 ────────────────────────────────────────────────────────────────
-    if st.button("📈 3. Backtest + Walk-Forward", use_container_width=True,
-                 help="V1/V2/V4/V_Agent + WFO (4 window) + grid search SL/TP"):
+    if st.button("🔧 3. Costruisci Feature", use_container_width=True,
+                 help="Calcola ATR, RSI, EMA, GARCH(1,1) e salva features pre-computate"):
+        if _ensure_download():
+            with st.spinner(f"🔧 Calcolo feature {asset}… (~30s per GARCH)"):
+                try:
+                    _run_script("03_features.py", extra_env=_env)
+                    st.cache_data.clear()
+                    st.success("✅ Feature costruite. Esegui ora **📈 4. Backtest**.")
+                except subprocess.CalledProcessError as _fe:
+                    st.error(f"Feature construction fallita:\n```\n{_fe.stderr.decode()[:400]}\n```")
+
+    # ── Step 4 ────────────────────────────────────────────────────────────────
+    if st.button("📈 4. Backtest + Walk-Forward", use_container_width=True,
+                 help="V1/V2/V4/V_Agent + WFO rolling window + grid search SL/TP"):
         if _ensure_download():
             with st.spinner(f"📈 Backtest + WFO {asset}…"):
                 try:
                     _run_script("04_backtest.py", extra_env=_env)
                     st.cache_data.clear()
-                    st.success("✅ Backtest completato. Esegui ora **🎲 4. Monte Carlo**.")
+                    st.success("✅ Backtest completato. Esegui ora **🎲 5. Monte Carlo**.")
                 except subprocess.CalledProcessError as _be:
                     st.error(f"Backtest fallito:\n```\n{_be.stderr.decode()[:400]}\n```")
 
-    # ── Step 4 ────────────────────────────────────────────────────────────────
-    if st.button("🎲 4. Monte Carlo", use_container_width=True,
-                 help="Bootstrap 5000 sim + 4 stress scenarios da trades.csv"):
+    # ── Step 5 ────────────────────────────────────────────────────────────────
+    if st.button("🎲 5. Monte Carlo", use_container_width=True,
+                 help="Bootstrap 10.000 sim + 4 stress scenarios da trades.csv"):
         with st.spinner(f"🎲 Monte Carlo {asset}…"):
             try:
                 _run_script("05_montecarlo.py", extra_env=_env)
@@ -466,7 +485,6 @@ with st.sidebar:
 #  Data loaders (cached)
 # ══════════════════════════════════════════════════════════════════════════════
 
-@st.cache_data
 @st.cache_data
 def load_ohlcv_daily(sym: str) -> pd.DataFrame:
     fname = ticker_to_fname(sym)
@@ -524,10 +542,6 @@ def download_fine_grain(sym: str, interval: str, max_days: int) -> str | bool:
     """Download fine-grain data and save as {fname}_{interval}.csv.
     Returns True on success or an error string.
     """
-    import importlib.util as _ilufg
-    _spec = _ilufg.spec_from_file_location("dl01fg", os.path.join(BASE, "01_data_download.py"))
-    _mod  = _ilufg.module_from_spec(_spec)
-    _spec.loader.exec_module(_mod)
     import yfinance as yf
     fname = ticker_to_fname(sym)
     fpath = os.path.join(OUTPUT, f"{fname}_{interval}.csv")
@@ -742,7 +756,7 @@ with tab1:
             log_ret = np.log(d["Close"] / d["Close"].shift(1)).dropna()
             # Annualisation factor depends on interval
             _bars_per_year = {"1m": 525_600, "15m": 35_040, "30m": 17_520,
-                              "1h": 8_760,   "4h": 2_190,   "1d": 252}
+                              "1h": 8_760,   "4h": 2_190,   "1d": 365}
             _ann_factor = _bars_per_year.get(chart_interval, 8_760)
             col_l, col_r = st.columns(2)
             with col_l:
@@ -918,8 +932,9 @@ with tab2:
 
         # ── Equity curve + Drawdown ───────────────────────────────────────────
         eq_full = equity_curve(trades)
+        dd_full = drawdown_series(eq_full)
         eq = eq_full[eq_full.index >= chart_start] if chart_start is not None else eq_full
-        dd = drawdown_series(eq)
+        dd = dd_full[dd_full.index >= chart_start] if chart_start is not None else dd_full
 
         fig_eq = make_subplots(rows=2, cols=1, shared_xaxes=True,
                                row_heights=[0.7, 0.3], vertical_spacing=0.04)
@@ -927,7 +942,8 @@ with tab2:
                                     line=dict(color=C_UP, width=2),
                                     fill="tozeroy", fillcolor="rgba(38,166,154,0.1)",
                                     name="Equity"), row=1, col=1)
-        fig_eq.add_hline(y=10_000, line_dash="dash",
+        _eq_start = float(eq.iloc[0]) if len(eq) > 0 else 10_000
+        fig_eq.add_hline(y=_eq_start, line_dash="dash",
                          line_color="gray", row=1, col=1)
         fig_eq.add_trace(go.Scatter(x=dd.index, y=dd.values, mode="lines",
                                     line=dict(color=C_DOWN, width=1.5),
