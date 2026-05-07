@@ -9,6 +9,7 @@ yfinance>=0.2.40
 streamlit>=1.35
 plotly>=5.20
 anthropic>=0.40
-# Vibe-Trading strategy generation engine (Step 2)
-# Se non disponibile nell'ambiente, agent_strategy.py è il fallback automatico
-vibe-trading-ai
+# Vibe-Trading: opzionale — installare solo in locale o nel Railway service.
+# Su Streamlit Cloud usa VIBE_TRADING_API_URL per puntare al servizio Railway.
+# Se non installato e nessun URL configurato, agent_strategy.py è il fallback.
+# vibe-trading-ai

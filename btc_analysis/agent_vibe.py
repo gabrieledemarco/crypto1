@@ -1,30 +1,21 @@
 """
 agent_vibe.py
 =============
-Step 2: generazione strategia tramite Vibe-Trading CLI.
+Step 2: generazione strategia tramite Vibe-Trading.
 
-Compatibile con Streamlit Cloud: non avvia server locali, usa solo
-subprocess sincroni e il filesystem temporaneo.
-
-Flusso:
-  1. Costruisce un prompt ricco dal contesto statistico (analysis_report.json)
-  2. Esegue: vibe-trading run -f <prompt_file> --json --no-rich
-     (API keys iniettate come env vars per il provider LLM)
-  3. Legge il codice generato da run_dir o via `vibe-trading --code`
-  4. Adatta il codice al contratto generate_signals_agent(df) con una
-     chiamata rapida (haiku) se necessario
-  5. Salva agent_config.json + agent_strategy_code.py
-
-Fallback automatico su agent_strategy.run_agent() se:
-  - vibe-trading-ai non installato  (pip install vibe-trading-ai)
-  - il run fallisce per qualsiasi motivo
-  - l'adattamento del codice fallisce
+Modalità (in ordine di priorità):
+  1. RAILWAY  — se VIBE_TRADING_API_URL è impostato (o passato come parametro),
+                chiama il microservizio Railway via HTTP.
+                Funziona su Streamlit Cloud senza accesso al filesystem locale.
+  2. CLI      — se vibe-trading-ai è installato localmente, usa subprocess.
+  3. FALLBACK — agent_strategy.run_agent() (Anthropic / OpenRouter diretto).
 
 Ritorno: tuple (config, code, report, engine_used)
-  engine_used: "vibe-trading" | "agent_strategy (fallback: ...)"
+  engine_used: "vibe-trading (Railway)" | "vibe-trading (CLI)" |
+               "agent_strategy (fallback: …)"
 """
 
-import os, sys, json, re, subprocess, tempfile
+import os, sys, json, subprocess, tempfile
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -37,19 +28,7 @@ from agent_strategy import (
 )
 from strategy_core import OUTPUT_DIR
 
-VIBE_TIMEOUT = 600   # 10 min: vibe-trading scarica dati + genera + backtest
-
-# ── Install check ─────────────────────────────────────────────────────────────
-
-def _is_vibe_installed() -> bool:
-    try:
-        r = subprocess.run(
-            ["vibe-trading", "--help"],
-            capture_output=True, timeout=8,
-        )
-        return r.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+VIBE_TIMEOUT = 600   # 10 min
 
 
 # ── Prompt builder ────────────────────────────────────────────────────────────
@@ -121,13 +100,65 @@ def generate_signals_agent(df):
 """
 
 
-# ── LLM env vars for vibe-trading subprocess ─────────────────────────────────
+# ── Mode 1: Railway remote API ────────────────────────────────────────────────
+
+def _call_railway_api(
+    prompt: str,
+    api_url: str,
+    anthropic_key: str,
+    openrouter_key: str,
+    openrouter_model: str,
+    service_token: str = "",
+) -> str:
+    """POST to Railway microservice and return the raw generated code."""
+    import requests as _req
+
+    url = api_url.rstrip("/") + "/generate"
+    headers = {"Content-Type": "application/json"}
+    if service_token:
+        headers["Authorization"] = f"Bearer {service_token}"
+
+    resp = _req.post(
+        url,
+        json={
+            "prompt": prompt,
+            "anthropic_key": anthropic_key,
+            "openrouter_key": openrouter_key,
+            "openrouter_model": openrouter_model,
+        },
+        headers=headers,
+        timeout=VIBE_TIMEOUT + 30,  # slightly over internal timeout
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    if data.get("error"):
+        raise RuntimeError(f"Railway service error: {data['error']}")
+
+    code = data.get("code", "")
+    if not code:
+        raise RuntimeError("Railway service returned empty code")
+    return code
+
+
+# ── Mode 2: Local CLI ─────────────────────────────────────────────────────────
+
+def _is_vibe_installed() -> bool:
+    try:
+        r = subprocess.run(
+            ["vibe-trading", "--help"],
+            capture_output=True, timeout=8,
+        )
+        return r.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
 
 def _make_vibe_env(
     anthropic_key: str = "",
     openrouter_key: str = "",
     openrouter_model: str = "",
-) -> dict:
+) -> tuple:
     env = os.environ.copy()
     if anthropic_key:
         env["LANGCHAIN_PROVIDER"]   = "anthropic"
@@ -139,30 +170,23 @@ def _make_vibe_env(
         env["OPENAI_BASE_URL"]      = "https://openrouter.ai/api/v1"
         env["LANGCHAIN_MODEL_NAME"] = openrouter_model or "anthropic/claude-opus-4-7"
 
-    # Garantisce una home scrivibile per vibe-trading (necessario su Streamlit Cloud
-    # dove la home di default potrebbe non essere scrivibile)
     import tempfile as _tf
     _vibe_home = os.path.join(_tf.gettempdir(), "vibe_trading_home")
     os.makedirs(_vibe_home, exist_ok=True)
     env["HOME"]              = _vibe_home
-    env["VIBE_TRADING_HOME"] = _vibe_home   # usato da alcune versioni di vibe-trading
+    env["VIBE_TRADING_HOME"] = _vibe_home
     env["XDG_DATA_HOME"]     = os.path.join(_vibe_home, ".local", "share")
     env["XDG_CONFIG_HOME"]   = os.path.join(_vibe_home, ".config")
     env["XDG_CACHE_HOME"]    = os.path.join(_vibe_home, ".cache")
     return env, _vibe_home
 
 
-# ── CLI execution ─────────────────────────────────────────────────────────────
-
 def _run_cli(prompt_file: str, env: dict, cwd: str) -> dict:
-    """Esegue vibe-trading run e ritorna il dict JSON con run_id / run_dir."""
     r = subprocess.run(
         ["vibe-trading", "run", "-f", prompt_file, "--json", "--no-rich"],
         capture_output=True, text=True,
-        timeout=VIBE_TIMEOUT, env=env,
-        cwd=cwd,   # directory scrivibile per i file di run
+        timeout=VIBE_TIMEOUT, env=env, cwd=cwd,
     )
-    # Il JSON può essere preceduto da output colorato — cerca l'ultima riga JSON
     for line in reversed(r.stdout.splitlines()):
         line = line.strip()
         if line.startswith("{"):
@@ -179,8 +203,6 @@ def _run_cli(prompt_file: str, env: dict, cwd: str) -> dict:
 
 
 def _fetch_code(run_id: str, run_dir: str, env: dict) -> str:
-    """Recupera il codice Python generato da vibe-trading."""
-    # Metodo 1: vibe-trading --code <run_id>
     try:
         r = subprocess.run(
             ["vibe-trading", "--code", run_id],
@@ -191,7 +213,6 @@ def _fetch_code(run_id: str, run_dir: str, env: dict) -> str:
     except Exception:
         pass
 
-    # Metodo 2: legge i .py dal run_dir (il più grande, escl. test)
     if run_dir and os.path.isdir(run_dir):
         candidates = []
         for fname in os.listdir(run_dir):
@@ -212,7 +233,7 @@ def _fetch_code(run_id: str, run_dir: str, env: dict) -> str:
     )
 
 
-# ── Code adaptation ───────────────────────────────────────────────────────────
+# ── Code adaptation (shared by all modes) ────────────────────────────────────
 
 _ADAPT_SYSTEM = "You adapt trading strategy code to an exact Python function contract."
 
@@ -246,7 +267,6 @@ def _adapt_code(
     openrouter_key: str,
     openrouter_model: str,
 ) -> str:
-    """Se il codice non ha generate_signals_agent, lo adatta con una chiamata haiku."""
     if "def generate_signals_agent" in raw and 'df["signal"]' in raw:
         return raw
 
@@ -297,79 +317,30 @@ def _adapt_code(
         if adapted and "def generate_signals_agent" in adapted:
             return adapted
 
-    return raw   # ritorna il raw se l'adattamento fallisce
+    return raw
 
 
-# ── Main entry point ──────────────────────────────────────────────────────────
+# ── Shared post-processing ────────────────────────────────────────────────────
 
-def run_vibe_agent(
-    asset: str = "BTC-USD",
-    anthropic_key: str = "",
-    openrouter_key: str = "",
-    openrouter_model: str = "",
+def _post_process(
+    raw_code: str,
+    asset: str,
+    engine_label: str,
+    anthropic_key: str,
+    openrouter_key: str,
+    openrouter_model: str,
+    run_id: str = "",
 ) -> tuple:
-    """
-    Genera (config, code, report, engine_used).
+    """Adapt code, extract config, validate, build report. Returns (cfg, code, report)."""
+    code = _adapt_code(raw_code, anthropic_key, openrouter_key, openrouter_model)
+    _validate_code(code)  # raises ValueError if function missing
 
-    engine_used: "vibe-trading" | "agent_strategy (fallback: <motivo>)"
-    """
-    def _do_fallback(reason: str) -> tuple:
-        print(f"  [vibe] Fallback: {reason}")
-        cfg, code, report = _fallback_run_agent(
-            anthropic_key=anthropic_key,
-            openrouter_key=openrouter_key,
-            openrouter_model=openrouter_model,
-            asset=asset,
-        )
-        return cfg, code, report, f"agent_strategy (fallback: {reason})"
-
-    if not _is_vibe_installed():
-        return _do_fallback("vibe-trading-ai non installato")
-
-    env, vibe_home = _make_vibe_env(anthropic_key, openrouter_key, openrouter_model)
-    prompt = _build_vibe_prompt(asset)
-
-    prompt_file = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False, encoding="utf-8",
-            dir=vibe_home,
-        ) as f:
-            f.write(prompt)
-            prompt_file = f.name
-
-        print(f"  [vibe] Avvio run (timeout {VIBE_TIMEOUT}s, cwd={vibe_home})…")
-        data    = _run_cli(prompt_file, env, cwd=vibe_home)
-        run_id  = data.get("run_id", "")
-        run_dir = data.get("run_dir", "")
-        # run_dir potrebbe essere relativo al cwd — lo rendiamo assoluto
-        if run_dir and not os.path.isabs(run_dir):
-            run_dir = os.path.join(vibe_home, run_dir)
-        print(f"  [vibe] Run completato: {run_id}  run_dir={run_dir}")
-
-        raw_code = _fetch_code(run_id, run_dir, env)
-        print(f"  [vibe] Codice ({len(raw_code)} chars). Adattamento contratto…")
-
-        code = _adapt_code(raw_code, anthropic_key, openrouter_key, openrouter_model)
-
-    except Exception as exc:
-        if prompt_file:
-            try: os.unlink(prompt_file)
-            except: pass
-        return _do_fallback(str(exc)[:150])
-
-    finally:
-        if prompt_file:
-            try: os.unlink(prompt_file)
-            except: pass
-
-    # Prova a estrarre il config dal codice generato / raw
     cfg = None
     for src in (raw_code, code):
         raw_json = _extract_block(src, "json")
         if raw_json:
             try:
-                cfg = _validate_config(json.loads(raw_json), source="vibe-trading")
+                cfg = _validate_config(json.loads(raw_json), source=engine_label)
                 break
             except Exception:
                 pass
@@ -381,25 +352,131 @@ def run_vibe_agent(
             "active_hours":   [6, 22],
             "commission":     0.0004, "slippage": 0.0001,
             "risk_per_trade": 0.01,
-            "rationale":      "Generated by Vibe-Trading",
+            "rationale":      f"Generated by {engine_label}",
         }
 
-    # Valida il codice (raise se la funzione non è presente)
-    try:
-        _validate_code(code)
-    except ValueError as ve:
-        return _do_fallback(f"codice non valido dopo adattamento: {ve}")
-
+    run_suffix = f" | Run: {run_id}" if run_id else ""
     report = (
         f"# Strategy Report — {asset}\n"
-        f"*Engine: Vibe-Trading | Run ID: {run_id}*\n\n"
+        f"*Engine: {engine_label}{run_suffix}*\n\n"
         f"**{cfg.get('strategy_name')}** ({cfg.get('strategy_type')})\n"
         f"SL {cfg.get('sl_mult')}×ATR | TP {cfg.get('tp_mult')}×ATR | "
         f"active_hours {cfg.get('active_hours')}\n\n"
         f"---\n\n```python\n{code}\n```"
     )
+    return cfg, code, report
+
+
+# ── Main entry point ──────────────────────────────────────────────────────────
+
+def run_vibe_agent(
+    asset: str = "BTC-USD",
+    anthropic_key: str = "",
+    openrouter_key: str = "",
+    openrouter_model: str = "",
+    vibe_api_url: str = "",
+    vibe_service_token: str = "",
+) -> tuple:
+    """
+    Genera (config, code, report, engine_used).
+
+    engine_used: "vibe-trading (Railway)" | "vibe-trading (CLI)" |
+                 "agent_strategy (fallback: <motivo>)"
+
+    Priority:
+      1. Railway API  — if vibe_api_url is set (Streamlit Cloud / production)
+      2. Local CLI    — if vibe-trading-ai is installed
+      3. Fallback     — agent_strategy.run_agent()
+    """
+    # Read URL from env var if not passed explicitly
+    if not vibe_api_url:
+        vibe_api_url = os.environ.get("VIBE_TRADING_API_URL", "")
+    if not vibe_service_token:
+        vibe_service_token = os.environ.get("VIBE_SERVICE_TOKEN", "")
+
+    def _do_fallback(reason: str) -> tuple:
+        print(f"  [vibe] Fallback: {reason}")
+        cfg, code, report = _fallback_run_agent(
+            anthropic_key=anthropic_key,
+            openrouter_key=openrouter_key,
+            openrouter_model=openrouter_model,
+            asset=asset,
+        )
+        return cfg, code, report, f"agent_strategy (fallback: {reason})"
+
+    prompt = _build_vibe_prompt(asset)
+
+    # ── Mode 1: Railway remote API ────────────────────────────────────────────
+    if vibe_api_url:
+        print(f"  [vibe] Modalità Railway: {vibe_api_url}")
+        try:
+            raw_code = _call_railway_api(
+                prompt, vibe_api_url, anthropic_key,
+                openrouter_key, openrouter_model, vibe_service_token,
+            )
+            print(f"  [vibe] Codice ricevuto ({len(raw_code)} chars). Adattamento contratto…")
+            cfg, code, report = _post_process(
+                raw_code, asset, "Vibe-Trading (Railway)",
+                anthropic_key, openrouter_key, openrouter_model,
+            )
+            print(f"  [vibe] ✅ Strategia: {cfg.get('strategy_name')}")
+            return cfg, code, report, "vibe-trading (Railway)"
+        except ValueError as ve:
+            return _do_fallback(f"codice non valido dopo adattamento: {ve}")
+        except Exception as exc:
+            return _do_fallback(f"Railway API: {str(exc)[:150]}")
+
+    # ── Mode 2: Local CLI ─────────────────────────────────────────────────────
+    if not _is_vibe_installed():
+        return _do_fallback("vibe-trading-ai non installato e nessun URL Railway configurato")
+
+    env, vibe_home = _make_vibe_env(anthropic_key, openrouter_key, openrouter_model)
+    prompt_file = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8",
+            dir=vibe_home,
+        ) as f:
+            f.write(prompt)
+            prompt_file = f.name
+
+        print(f"  [vibe] CLI run (timeout {VIBE_TIMEOUT}s, cwd={vibe_home})…")
+        data    = _run_cli(prompt_file, env, cwd=vibe_home)
+        run_id  = data.get("run_id", "")
+        run_dir = data.get("run_dir", "")
+        if run_dir and not os.path.isabs(run_dir):
+            run_dir = os.path.join(vibe_home, run_dir)
+        print(f"  [vibe] Run completato: {run_id}  run_dir={run_dir}")
+
+        raw_code = _fetch_code(run_id, run_dir, env)
+        print(f"  [vibe] Codice ({len(raw_code)} chars). Adattamento contratto…")
+
+    except Exception as exc:
+        if prompt_file:
+            try:
+                os.unlink(prompt_file)
+            except Exception:
+                pass
+        return _do_fallback(str(exc)[:150])
+
+    finally:
+        if prompt_file:
+            try:
+                os.unlink(prompt_file)
+            except Exception:
+                pass
+
+    try:
+        cfg, code, report = _post_process(
+            raw_code, asset, "Vibe-Trading (CLI)",
+            anthropic_key, openrouter_key, openrouter_model,
+            run_id=run_id,
+        )
+    except ValueError as ve:
+        return _do_fallback(f"codice non valido dopo adattamento: {ve}")
+
     print(f"  [vibe] ✅ Strategia: {cfg.get('strategy_name')}")
-    return cfg, code, report, "vibe-trading"
+    return cfg, code, report, "vibe-trading (CLI)"
 
 
 if __name__ == "__main__":
@@ -409,6 +486,8 @@ if __name__ == "__main__":
     ant_key  = os.environ.get("ANTHROPIC_API_KEY",  "")
     or_key   = os.environ.get("OPENROUTER_API_KEY", "")
     or_model = os.environ.get("OPENROUTER_MODEL",   "")
+    api_url  = os.environ.get("VIBE_TRADING_API_URL", "")
+    svc_tok  = os.environ.get("VIBE_SERVICE_TOKEN", "")
 
     print("=" * 60)
     print(f"  AGENT VIBE — {asset}")
@@ -419,6 +498,8 @@ if __name__ == "__main__":
         anthropic_key=ant_key,
         openrouter_key=or_key,
         openrouter_model=or_model,
+        vibe_api_url=api_url,
+        vibe_service_token=svc_tok,
     )
     print(f"  Engine: {engine}")
     _ag.save_outputs(cfg, code, report)

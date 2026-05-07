@@ -321,6 +321,21 @@ with st.sidebar:
         help="Ignorato se si usa Anthropic diretto",
     )
 
+    st.caption("🚂 Vibe-Trading (Railway)")
+    _vibe_url = st.text_input(
+        "VIBE_TRADING_API_URL",
+        value=_sk.get("VIBE_TRADING_API_URL") or os.environ.get("VIBE_TRADING_API_URL", ""),
+        placeholder="https://your-service.up.railway.app",
+        help="URL del microservizio Vibe-Trading su Railway. "
+             "Lascia vuoto per usare la CLI locale (o il fallback AI).",
+    )
+    _vibe_token = st.text_input(
+        "VIBE_SERVICE_TOKEN",
+        value=_sk.get("VIBE_SERVICE_TOKEN") or os.environ.get("VIBE_SERVICE_TOKEN", ""),
+        type="password", placeholder="token opzionale",
+        help="SERVICE_TOKEN configurato sul servizio Railway (opzionale).",
+    )
+
     st.caption("📡 Dati (Alpaca Markets)")
     _alp_key = st.text_input(
         "ALPACA_API_KEY",
@@ -337,11 +352,13 @@ with st.sidebar:
     if st.button("💾 Salva tutte le chiavi", use_container_width=True,
                  help="Salva in output/api_keys.json (escluso da git)"):
         _save_api_keys({
-            "ANTHROPIC_API_KEY":  _ant_key,
-            "OPENROUTER_API_KEY": _or_key,
-            "OPENROUTER_MODEL":   _or_model,
-            "ALPACA_API_KEY":     _alp_key,
-            "ALPACA_SECRET_KEY":  _alp_sec,
+            "ANTHROPIC_API_KEY":    _ant_key,
+            "OPENROUTER_API_KEY":   _or_key,
+            "OPENROUTER_MODEL":     _or_model,
+            "VIBE_TRADING_API_URL": _vibe_url,
+            "VIBE_SERVICE_TOKEN":   _vibe_token,
+            "ALPACA_API_KEY":       _alp_key,
+            "ALPACA_SECRET_KEY":    _alp_sec,
         })
         st.success("Chiavi salvate.")
 
@@ -398,29 +415,35 @@ with st.sidebar:
 
     # ── Step 2 ────────────────────────────────────────────────────────────────
     if st.button("🤖 2. Elabora Strategia", use_container_width=True,
-                 help="Genera generate_signals_agent() via Vibe-Trading (74 finance skills). "
-                      "Fallback automatico su Anthropic/OpenRouter se non installato."):
+                 help="Genera generate_signals_agent() via Vibe-Trading (Railway/CLI). "
+                      "Fallback automatico su Anthropic/OpenRouter se non configurato."):
         if not _ant_key and not _or_key:
             st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
         elif _ensure_download():
             import importlib as _il
-            import agent_vibe as _av;    _il.reload(_av)
+            import agent_vibe as _av;     _il.reload(_av)
             import agent_strategy as _ag; _il.reload(_ag)
 
-            _vibe_ok = _av._is_vibe_installed()
-            _vibe_label = (
-                "Vibe-Trading in esecuzione (~5-10 min)…"
-                if _vibe_ok else
-                "Agent AI in esecuzione (Anthropic/OpenRouter)…"
-            )
+            if _vibe_url:
+                _vibe_label = "Vibe-Trading in esecuzione via Railway (~5-10 min)…"
+                _vibe_mode  = "Railway"
+            elif _av._is_vibe_installed():
+                _vibe_label = "Vibe-Trading in esecuzione (CLI locale)…"
+                _vibe_mode  = "CLI"
+            else:
+                _vibe_label = "Agent AI in esecuzione (Anthropic/OpenRouter)…"
+                _vibe_mode  = "agent_strategy"
+
             with st.status(f"🤖 {_vibe_label}", expanded=True) as _status:
                 try:
-                    st.write(f"Asset: **{asset}**  |  Motore: {'Vibe-Trading' if _vibe_ok else 'agent_strategy'}")
+                    st.write(f"Asset: **{asset}**  |  Motore previsto: **{_vibe_mode}**")
                     _cfg_r, _code_r, _report_r, _engine_r = _av.run_vibe_agent(
                         asset=asset,
                         anthropic_key=_ant_key,
                         openrouter_key=_or_key,
                         openrouter_model=_or_model,
+                        vibe_api_url=_vibe_url,
+                        vibe_service_token=_vibe_token,
                     )
                     _ag.save_outputs(_cfg_r, _code_r, _report_r)
                     st.write(f"✅ Motore effettivo: **{_engine_r}**")
