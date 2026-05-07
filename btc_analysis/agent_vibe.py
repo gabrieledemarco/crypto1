@@ -1,133 +1,45 @@
 """
 agent_vibe.py
 =============
-Step 2 della pipeline: generazione della strategia tramite Vibe-Trading
-(https://github.com/HKUDS/Vibe-Trading).
+Step 2: generazione strategia tramite Vibe-Trading CLI.
+
+Compatibile con Streamlit Cloud: non avvia server locali, usa solo
+subprocess sincroni e il filesystem temporaneo.
 
 Flusso:
-  1. Legge analysis_report.json prodotto dallo Step 1
-  2. Avvia vibe-trading serve localmente come subprocess
-  3. Configura il provider LLM con le nostre API key esistenti
-  4. Crea una sessione, invia il contesto statistico + contratto funzione
-  5. Raccoglie la risposta via SSE stream
-  6. Estrae generate_signals_agent(df) e agent_config.json
-  7. Arresta il server
-  8. I nostri 04_backtest.py + 05_montecarlo.py girano come verifica esterna
+  1. Costruisce un prompt ricco dal contesto statistico (analysis_report.json)
+  2. Esegue: vibe-trading run -f <prompt_file> --json --no-rich
+     (API keys iniettate come env vars per il provider LLM)
+  3. Legge il codice generato da run_dir o via `vibe-trading --code`
+  4. Adatta il codice al contratto generate_signals_agent(df) con una
+     chiamata rapida (haiku) se necessario
+  5. Salva agent_config.json + agent_strategy_code.py
 
-Fallback: se vibe-trading-ai non è installato o il server fallisce,
-chiama direttamente agent_strategy.run_agent().
+Fallback automatico su agent_strategy.run_agent() se:
+  - vibe-trading-ai non installato  (pip install vibe-trading-ai)
+  - il run fallisce per qualsiasi motivo
+  - l'adattamento del codice fallisce
 
-Installazione:  pip install vibe-trading-ai
-
-Output (stesso formato di agent_strategy.py):
-  output/agent_config.json
-  output/agent_strategy_code.py
-  output/agent_strategy_report.md
+Ritorno: tuple (config, code, report, engine_used)
+  engine_used: "vibe-trading" | "agent_strategy (fallback: ...)"
 """
 
-import subprocess, time, json, re, os, sys
+import os, sys, json, re, subprocess, tempfile
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 from agent_strategy import (
     _build_context, _atr_stats,
+    _extract_block, _validate_config, _validate_code,
     save_outputs,
     run_agent as _fallback_run_agent,
+    OPENROUTER_API_URL, OPENROUTER_DEFAULT_MODEL,
 )
 from strategy_core import OUTPUT_DIR
 
-VIBE_PORT       = 8899
-VIBE_BASE       = f"http://127.0.0.1:{VIBE_PORT}"
-STARTUP_TIMEOUT = 60    # secondi di attesa per il server
-RESPONSE_TIMEOUT = 360  # secondi di attesa per la risposta LLM
+VIBE_TIMEOUT = 600   # 10 min: vibe-trading scarica dati + genera + backtest
 
-
-# ── Prompt builder ────────────────────────────────────────────────────────────
-
-def _build_vibe_prompt(asset: str) -> str:
-    """Costruisce il prompt da passare a Vibe-Trading dalla nostra analisi statistica."""
-    context = _build_context(asset)
-    atr     = _atr_stats(asset)
-
-    return f"""You are a quantitative trading developer. Your ONLY task is to write
-a single Python function `generate_signals_agent(df)` for {asset}.
-
-DO NOT fetch data. DO NOT run a backtest. DO NOT import any library.
-ONLY write the function as specified below.
-
-══════════════════════════════════════════
-STATISTICAL ANALYSIS FOR {asset}
-══════════════════════════════════════════
-{context}
-
-ATR Calibration:
-- Median ATR%: {atr.get('median_atr_pct', 0.003)*100:.3f}%  (typical move per bar)
-- 2×ATR suggested SL: {atr.get('sl2x_pct', 0.006)*100:.3f}%
-
-══════════════════════════════════════════
-FUNCTION CONTRACT (mandatory)
-══════════════════════════════════════════
-Input `df` is a pandas DataFrame with these pre-computed columns:
-  Open, High, Low, Close, Volume
-  ATR14       — 14-period Average True Range (absolute price units)
-  RSI14       — 14-period RSI (0–100)
-  EMA50       — 50-period EMA of Close
-  EMA200      — 200-period EMA of Close
-  RollHigh6   — 6-bar rolling High, shifted 1 bar (breakout reference)
-  RollLow6    — 6-bar rolling Low,  shifted 1 bar
-  ATR_pct     — ATR14 / Close  (normalised volatility)
-  hour        — UTC hour 0–23
-  dow         — day of week 0=Mon
-  ret         — Close.pct_change()
-  garch_h     — GARCH(1,1) conditional variance
-  garch_regime — "LOW" / "MED" / "HIGH"  (GARCH volatility regime)
-  size_mult   — 0.0 (LOW) / 0.5 (HIGH) / 1.0 (MED)  (GARCH position size)
-
-The function MUST:
-  1. Start with:  df = df.copy()
-  2. Set df["signal"]   = 1 (long) / -1 (short) / 0 (flat) for EVERY row
-  3. Set df["SL_dist"]  = stop-loss distance in ABSOLUTE price units
-                         (recommended: ATR14 × sl_mult, where sl_mult ≥ 1.5)
-  4. Set df["TP_dist"]  = take-profit distance in ABSOLUTE price units
-                         (TP_dist / SL_dist MUST be ≥ 2.5)
-  5. Return df
-  6. Use ONLY pandas (pd) and numpy (np) — both are already imported
-  7. You MAY compute extra indicators inline, for example:
-       ema20    = df["Close"].ewm(span=20, adjust=False).mean()
-       bb_upper = df["Close"].rolling(20).mean() + 2*df["Close"].rolling(20).std()
-
-Commission context: 0.04%/side (0.08% round-trip).
-Required after-cost performance: Profit Factor > 1.3 | Sharpe > 0.5 |
-CAGR > 5% | N_trades ≥ 20.
-
-══════════════════════════════════════════
-REQUIRED OUTPUT FORMAT — nothing else
-══════════════════════════════════════════
-
-```json
-{{
-  "strategy_type": "<trend_following|mean_reversion|breakout|range_trading|momentum>",
-  "strategy_name": "<descriptive name>",
-  "sl_mult": <float ≥ 1.5>,
-  "tp_mult": <float ≥ sl_mult × 2.5>,
-  "active_hours": [<start_hour 0-23>, <end_hour 0-23>],
-  "commission": 0.0004,
-  "slippage": 0.0001,
-  "risk_per_trade": 0.01,
-  "rationale": "<one sentence: regime → pattern → why R:R beats commission>"
-}}
-```
-
-```python
-def generate_signals_agent(df):
-    df = df.copy()
-    # ... implementation using only pd and np ...
-    return df
-```
-"""
-
-
-# ── Server management ─────────────────────────────────────────────────────────
+# ── Install check ─────────────────────────────────────────────────────────────
 
 def _is_vibe_installed() -> bool:
     try:
@@ -140,214 +52,240 @@ def _is_vibe_installed() -> bool:
         return False
 
 
-def _start_server(extra_env: dict | None = None) -> subprocess.Popen:
-    import requests
-    env = {**os.environ, **(extra_env or {})}
-    proc = subprocess.Popen(
-        ["vibe-trading", "serve", "--port", str(VIBE_PORT)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env=env,
-    )
-    for _ in range(STARTUP_TIMEOUT):
-        if proc.poll() is not None:
-            raise RuntimeError("Il processo vibe-trading è uscito prematuramente")
-        try:
-            r = requests.get(f"{VIBE_BASE}/health", timeout=2)
-            if r.status_code == 200:
-                print(f"  [vibe] Server pronto su :{VIBE_PORT}")
-                return proc
-        except Exception:
-            pass
-        time.sleep(1)
-    proc.terminate()
-    raise RuntimeError(
-        f"Vibe-Trading server non avviato entro {STARTUP_TIMEOUT}s"
-    )
+# ── Prompt builder ────────────────────────────────────────────────────────────
+
+def _build_vibe_prompt(asset: str) -> str:
+    context = _build_context(asset)
+    atr     = _atr_stats(asset)
+    return f"""You are a quantitative trading developer for {asset}.
+Your task: write one Python function `generate_signals_agent(df)`.
+
+IMPORTANT: Do NOT download data. Do NOT import libraries. ONLY write the function.
+
+══ STATISTICAL ANALYSIS ══
+{context}
+
+ATR: median {atr.get('median_atr_pct', 0.003)*100:.3f}%
+2×ATR stop-loss: {atr.get('sl2x_pct', 0.006)*100:.3f}%
+
+══ FUNCTION CONTRACT ══
+Input df has pre-computed columns:
+  Open, High, Low, Close, Volume
+  ATR14       — 14-period ATR (absolute price)
+  RSI14       — RSI 0-100
+  EMA50       — 50-period EMA
+  EMA200      — 200-period EMA
+  RollHigh6   — 6-bar rolling High (shifted 1 bar)
+  RollLow6    — 6-bar rolling Low  (shifted 1 bar)
+  ATR_pct     — ATR14 / Close
+  hour        — UTC hour 0-23
+  dow         — weekday 0=Mon
+  ret         — pct_change()
+  garch_h     — GARCH variance
+  garch_regime — "LOW" / "MED" / "HIGH"
+  size_mult   — 0.0/0.5/1.0 from GARCH
+
+Rules:
+1. Start: df = df.copy()
+2. df["signal"]  = 1 (long) / -1 (short) / 0 (flat)
+3. df["SL_dist"] = ATR14 × sl_mult  (absolute price, sl_mult ≥ 1.5)
+4. df["TP_dist"] = ATR14 × tp_mult  (TP/SL ≥ 2.5)
+5. Return df
+6. Use ONLY pd and np (already imported). Extra indicators inline are OK:
+   ema20 = df["Close"].ewm(span=20, adjust=False).mean()
+
+Commission: 0.04%/side. Targets: Sharpe > 0.5, PF > 1.3, CAGR > 5%, N_trades ≥ 20.
+
+══ OUTPUT FORMAT — nothing else ══
+
+```json
+{{
+  "strategy_type": "<trend_following|mean_reversion|breakout|momentum>",
+  "strategy_name": "<descriptive name>",
+  "sl_mult": <float ≥ 1.5>,
+  "tp_mult": <float ≥ sl_mult × 2.5>,
+  "active_hours": [<start 0-23>, <end 0-23>],
+  "commission": 0.0004,
+  "slippage": 0.0001,
+  "risk_per_trade": 0.01,
+  "rationale": "<one sentence>"
+}}
+```
+
+```python
+def generate_signals_agent(df):
+    df = df.copy()
+    # implementation using only pd and np
+    return df
+```
+"""
 
 
-def _stop_server(proc: subprocess.Popen):
-    import requests
-    try:
-        requests.post(f"{VIBE_BASE}/system/shutdown", timeout=3)
-    except Exception:
-        pass
-    proc.terminate()
-    try:
-        proc.wait(timeout=6)
-    except subprocess.TimeoutExpired:
-        proc.kill()
+# ── LLM env vars for vibe-trading subprocess ─────────────────────────────────
 
-
-# ── LLM provider configuration ────────────────────────────────────────────────
-
-def _configure_llm(
+def _make_vibe_env(
     anthropic_key: str = "",
     openrouter_key: str = "",
     openrouter_model: str = "",
-):
-    """Configura il provider LLM di Vibe-Trading con le nostre API key."""
-    import requests
-    if not anthropic_key and not openrouter_key:
-        print("  [vibe] Nessuna API key fornita — usando configurazione default di Vibe-Trading.")
-        return
+) -> dict:
+    env = os.environ.copy()
+    if anthropic_key:
+        env["LANGCHAIN_PROVIDER"]   = "anthropic"
+        env["ANTHROPIC_API_KEY"]    = anthropic_key
+        env["LANGCHAIN_MODEL_NAME"] = "claude-opus-4-7"
+    elif openrouter_key:
+        env["LANGCHAIN_PROVIDER"]   = "openai"
+        env["OPENAI_API_KEY"]       = openrouter_key
+        env["OPENAI_BASE_URL"]      = "https://openrouter.ai/api/v1"
+        env["LANGCHAIN_MODEL_NAME"] = openrouter_model or "anthropic/claude-opus-4-7"
+    return env
+
+
+# ── CLI execution ─────────────────────────────────────────────────────────────
+
+def _run_cli(prompt_file: str, env: dict) -> dict:
+    """Esegue vibe-trading run e ritorna il dict JSON con run_id / run_dir."""
+    r = subprocess.run(
+        ["vibe-trading", "run", "-f", prompt_file, "--json", "--no-rich"],
+        capture_output=True, text=True,
+        timeout=VIBE_TIMEOUT, env=env,
+    )
+    # Il JSON può essere preceduto da output colorato — cerca l'ultima riga JSON
+    for line in reversed(r.stdout.splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                data = json.loads(line)
+                if "run_id" in data:
+                    return data
+            except json.JSONDecodeError:
+                pass
+    raise RuntimeError(
+        f"vibe-trading exit={r.returncode}. "
+        f"stdout: {r.stdout[-400:]!r}  stderr: {r.stderr[-200:]!r}"
+    )
+
+
+def _fetch_code(run_id: str, run_dir: str, env: dict) -> str:
+    """Recupera il codice Python generato da vibe-trading."""
+    # Metodo 1: vibe-trading --code <run_id>
+    try:
+        r = subprocess.run(
+            ["vibe-trading", "--code", run_id],
+            capture_output=True, text=True, timeout=30, env=env,
+        )
+        if r.returncode == 0 and "def " in r.stdout:
+            return r.stdout
+    except Exception:
+        pass
+
+    # Metodo 2: legge i .py dal run_dir (il più grande, escl. test)
+    if run_dir and os.path.isdir(run_dir):
+        candidates = []
+        for fname in os.listdir(run_dir):
+            if not fname.endswith(".py") or "test" in fname.lower():
+                continue
+            fpath = os.path.join(run_dir, fname)
+            try:
+                content = open(fpath, encoding="utf-8").read()
+                if "def " in content and len(content) > 100:
+                    candidates.append((len(content), content))
+            except Exception:
+                pass
+        if candidates:
+            return sorted(candidates, reverse=True)[0][1]
+
+    raise RuntimeError(
+        f"Codice non trovato: run_id={run_id!r}  run_dir={run_dir!r}"
+    )
+
+
+# ── Code adaptation ───────────────────────────────────────────────────────────
+
+_ADAPT_SYSTEM = "You adapt trading strategy code to an exact Python function contract."
+
+_ADAPT_USER = """\
+Rewrite the following code to match this EXACT signature:
+
+def generate_signals_agent(df):
+    df = df.copy()
+    # use only pd and np (already imported)
+    # df["signal"]  = 1 / -1 / 0
+    # df["SL_dist"] = ATR14 * sl_mult  (absolute price, sl_mult >= 1.5)
+    # df["TP_dist"] = ATR14 * tp_mult  (TP_dist / SL_dist >= 2.5)
+    return df
+
+Available df columns: Open, High, Low, Close, Volume, ATR14, RSI14, EMA50, EMA200,
+RollHigh6, RollLow6, ATR_pct, hour, dow, ret, garch_h, garch_regime, size_mult.
+Extra indicators may be computed inline. Do NOT import anything.
+
+Original code:
+```python
+{code}
+```
+
+Return ONLY a ```python block containing the adapted function.
+"""
+
+
+def _adapt_code(
+    raw: str,
+    anthropic_key: str,
+    openrouter_key: str,
+    openrouter_model: str,
+) -> str:
+    """Se il codice non ha generate_signals_agent, lo adatta con una chiamata haiku."""
+    if "def generate_signals_agent" in raw and 'df["signal"]' in raw:
+        return raw
+
+    prompt = _ADAPT_USER.format(code=raw[:4000])
+    text = ""
 
     if anthropic_key:
-        payload = {
-            "provider": "anthropic",
-            "model":    "claude-opus-4-7",
-            "api_key":  anthropic_key,
-        }
-    else:
-        payload = {
-            "provider": "openai",
-            "model":    openrouter_model or "anthropic/claude-opus-4-7",
-            "base_url": "https://openrouter.ai/api/v1",
-            "api_key":  openrouter_key,
-        }
+        try:
+            import anthropic as _sdk
+            resp = _sdk.Anthropic(api_key=anthropic_key).messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=2048,
+                system=_ADAPT_SYSTEM,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = resp.content[0].text
+        except Exception as e:
+            print(f"  [vibe] Adattamento haiku fallito: {e}")
 
-    try:
-        r = requests.put(f"{VIBE_BASE}/settings/llm", json=payload, timeout=10)
-        if r.status_code == 200:
-            print(f"  [vibe] LLM: {payload['provider']} / {payload['model']}")
-        else:
-            print(f"  [vibe] Avviso configurazione LLM: {r.status_code} {r.text[:120]}")
-    except Exception as e:
-        print(f"  [vibe] Avviso: impossibile configurare LLM ({e}) — usando default.")
+    elif openrouter_key:
+        try:
+            import requests as _req
+            model = openrouter_model or "anthropic/claude-haiku-4-5"
+            resp = _req.post(
+                OPENROUTER_API_URL,
+                headers={
+                    "Authorization": f"Bearer {openrouter_key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://github.com/gabrieledemarco/crypto1",
+                },
+                json={
+                    "model": model,
+                    "max_tokens": 2048,
+                    "messages": [
+                        {"role": "system", "content": _ADAPT_SYSTEM},
+                        {"role": "user",   "content": prompt},
+                    ],
+                },
+                timeout=60,
+            )
+            resp.raise_for_status()
+            text = resp.json()["choices"][0]["message"]["content"]
+        except Exception as e:
+            print(f"  [vibe] Adattamento openrouter fallito: {e}")
 
+    if text:
+        adapted = _extract_block(text, "python")
+        if adapted and "def generate_signals_agent" in adapted:
+            return adapted
 
-# ── Session / messaging ───────────────────────────────────────────────────────
-
-def _create_session(title: str) -> str:
-    import requests
-    r = requests.post(
-        f"{VIBE_BASE}/sessions",
-        json={"title": title},
-        timeout=15,
-    )
-    r.raise_for_status()
-    return r.json()["session_id"]
-
-
-def _send_message(session_id: str, content: str) -> str:
-    import requests
-    r = requests.post(
-        f"{VIBE_BASE}/sessions/{session_id}/messages",
-        json={"content": content},
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json().get("message_id", "")
-
-
-def _collect_sse(session_id: str, timeout: int = RESPONSE_TIMEOUT) -> str:
-    """
-    Legge lo stream SSE di una sessione e restituisce il testo completo.
-    Gestisce diversi formati di evento (type:text, type:token, data string).
-    """
-    import requests
-
-    collected: list[str] = []
-    deadline = time.time() + timeout
-
-    try:
-        with requests.get(
-            f"{VIBE_BASE}/sessions/{session_id}/events",
-            stream=True,
-            timeout=timeout,
-        ) as stream:
-            buffer = ""
-            for raw in stream.iter_content(chunk_size=None):
-                if time.time() > deadline:
-                    print("  [vibe] Timeout risposta raggiunto.")
-                    break
-                buffer += raw.decode("utf-8", errors="replace")
-                # Process complete SSE lines
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
-                    line = line.strip()
-                    if not line.startswith("data:"):
-                        continue
-                    payload = line[5:].strip()
-                    if not payload or payload == "[DONE]":
-                        continue
-                    try:
-                        evt = json.loads(payload)
-                    except json.JSONDecodeError:
-                        # plain text payload
-                        collected.append(payload)
-                        continue
-
-                    etype = evt.get("type", "")
-                    if etype == "done":
-                        return "".join(collected)
-
-                    # Extract text from various event shapes
-                    for key in ("content", "text", "delta", "data", "message"):
-                        val = evt.get(key)
-                        if isinstance(val, str) and val:
-                            collected.append(val)
-                            break
-                        elif isinstance(val, dict):
-                            # openai-style: {"delta": {"content": "..."}}
-                            inner = val.get("content") or val.get("text", "")
-                            if inner:
-                                collected.append(inner)
-                            break
-
-    except Exception as e:
-        print(f"  [vibe] SSE stream interrotto: {e}")
-
-    return "".join(collected)
-
-
-# ── Code and config extraction ────────────────────────────────────────────────
-
-def _extract_json_config(text: str) -> dict | None:
-    match = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
-    if not match:
-        return None
-    try:
-        return json.loads(match.group(1))
-    except json.JSONDecodeError:
-        return None
-
-
-def _extract_python_code(text: str) -> str:
-    # 1. Fenced block containing the function
-    match = re.search(
-        r"```python\s*(def generate_signals_agent.*?)```",
-        text, re.DOTALL | re.IGNORECASE
-    )
-    if match:
-        return match.group(1).strip()
-    # 2. Any fenced python block
-    match = re.search(r"```python\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
-    if match:
-        code = match.group(1).strip()
-        if "def generate_signals_agent" in code:
-            return code
-    # 3. Bare function anywhere in text
-    match = re.search(r"(def generate_signals_agent\s*\(df\).*)", text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    raise ValueError(
-        "Nessun codice generate_signals_agent trovato nella risposta di Vibe-Trading.\n"
-        f"Risposta ricevuta (primi 500 char): {text[:500]}"
-    )
-
-
-_DEFAULT_CONFIG = {
-    "strategy_type":  "unknown",
-    "strategy_name":  "VibeTrade Strategy",
-    "sl_mult":        2.0,
-    "tp_mult":        5.0,
-    "active_hours":   [6, 22],
-    "commission":     0.0004,
-    "slippage":       0.0001,
-    "risk_per_trade": 0.01,
-    "rationale":      "Generated by Vibe-Trading",
-}
+    return raw   # ritorna il raw se l'adattamento fallisce
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -359,97 +297,93 @@ def run_vibe_agent(
     openrouter_model: str = "",
 ) -> tuple:
     """
-    Genera (config_dict, code_str, report_str) usando Vibe-Trading come motore.
+    Genera (config, code, report, engine_used).
 
-    Falls back to agent_strategy.run_agent() se:
-    - vibe-trading-ai non è installato
-    - il server non si avvia
-    - la risposta è vuota o non parsabile
+    engine_used: "vibe-trading" | "agent_strategy (fallback: <motivo>)"
     """
-    if not _is_vibe_installed():
-        print("  [vibe] vibe-trading-ai non trovato.")
-        print("  Suggerimento: pip install vibe-trading-ai")
-        print("  Fallback: agent_strategy.run_agent()")
-        return _fallback_run_agent(
+    def _do_fallback(reason: str) -> tuple:
+        print(f"  [vibe] Fallback: {reason}")
+        cfg, code, report = _fallback_run_agent(
             anthropic_key=anthropic_key,
             openrouter_key=openrouter_key,
             openrouter_model=openrouter_model,
             asset=asset,
         )
+        return cfg, code, report, f"agent_strategy (fallback: {reason})"
 
+    if not _is_vibe_installed():
+        return _do_fallback("vibe-trading-ai non installato")
+
+    env    = _make_vibe_env(anthropic_key, openrouter_key, openrouter_model)
     prompt = _build_vibe_prompt(asset)
-    proc = None
-    response = ""
 
+    prompt_file = None
     try:
-        print("  [vibe] Avvio server Vibe-Trading...")
-        proc = _start_server()
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(prompt)
+            prompt_file = f.name
 
-        _configure_llm(anthropic_key, openrouter_key, openrouter_model)
+        print(f"  [vibe] Avvio run (timeout {VIBE_TIMEOUT}s)…")
+        data    = _run_cli(prompt_file, env)
+        run_id  = data.get("run_id", "")
+        run_dir = data.get("run_dir", "")
+        print(f"  [vibe] Run completato: {run_id}")
 
-        session_id = _create_session(f"Strategy {asset}")
-        print(f"  [vibe] Sessione: {session_id}")
+        raw_code = _fetch_code(run_id, run_dir, env)
+        print(f"  [vibe] Codice ({len(raw_code)} chars). Adattamento contratto…")
 
-        print("  [vibe] Invio contesto statistico ({} chars)...".format(len(prompt)))
-        _send_message(session_id, prompt)
-
-        print(f"  [vibe] Generazione strategia (timeout {RESPONSE_TIMEOUT}s)...")
-        response = _collect_sse(session_id, timeout=RESPONSE_TIMEOUT)
-
-        if not response.strip():
-            raise ValueError("Risposta vuota da Vibe-Trading")
-
-        print(f"  [vibe] Risposta ricevuta ({len(response)} chars).")
+        code = _adapt_code(raw_code, anthropic_key, openrouter_key, openrouter_model)
 
     except Exception as exc:
-        print(f"  [vibe] Errore: {exc}")
-        print("  Fallback: agent_strategy.run_agent()")
-        if proc is not None:
-            _stop_server(proc)
-        return _fallback_run_agent(
-            anthropic_key=anthropic_key,
-            openrouter_key=openrouter_key,
-            openrouter_model=openrouter_model,
-            asset=asset,
-        )
+        if prompt_file:
+            try: os.unlink(prompt_file)
+            except: pass
+        return _do_fallback(str(exc)[:120])
 
     finally:
-        if proc is not None:
-            _stop_server(proc)
-            print("  [vibe] Server arrestato.")
+        if prompt_file:
+            try: os.unlink(prompt_file)
+            except: pass
 
-    # Parse extracted output
+    # Prova a estrarre il config dal codice generato / raw
+    cfg = None
+    for src in (raw_code, code):
+        raw_json = _extract_block(src, "json")
+        if raw_json:
+            try:
+                cfg = _validate_config(json.loads(raw_json), source="vibe-trading")
+                break
+            except Exception:
+                pass
+    if not cfg:
+        cfg = {
+            "strategy_type":  "unknown",
+            "strategy_name":  f"VibeTrade {asset}",
+            "sl_mult":        2.0,  "tp_mult": 5.0,
+            "active_hours":   [6, 22],
+            "commission":     0.0004, "slippage": 0.0001,
+            "risk_per_trade": 0.01,
+            "rationale":      "Generated by Vibe-Trading",
+        }
+
+    # Valida il codice (raise se la funzione non è presente)
     try:
-        code = _extract_python_code(response)
-    except ValueError as e:
-        print(f"  [vibe] Parsing codice fallito: {e}")
-        print("  Fallback: agent_strategy.run_agent()")
-        return _fallback_run_agent(
-            anthropic_key=anthropic_key,
-            openrouter_key=openrouter_key,
-            openrouter_model=openrouter_model,
-            asset=asset,
-        )
-
-    cfg = _extract_json_config(response) or dict(_DEFAULT_CONFIG)
-    cfg.setdefault("strategy_name", f"VibeTrade {asset}")
-    cfg.setdefault("commission",    0.0004)
-    cfg.setdefault("slippage",      0.0001)
-    cfg.setdefault("risk_per_trade", 0.01)
+        _validate_code(code)
+    except ValueError as ve:
+        return _do_fallback(f"codice non valido dopo adattamento: {ve}")
 
     report = (
         f"# Strategy Report — {asset}\n"
-        f"*Generated by Vibe-Trading*\n\n"
-        f"**Strategy**: {cfg.get('strategy_name')}\n"
-        f"**Type**: {cfg.get('strategy_type')}\n"
-        f"**SL**: {cfg.get('sl_mult')}×ATR  |  "
-        f"**TP**: {cfg.get('tp_mult')}×ATR  |  "
-        f"**Hours**: {cfg.get('active_hours')}\n\n"
-        f"---\n\n{response}"
+        f"*Engine: Vibe-Trading | Run ID: {run_id}*\n\n"
+        f"**{cfg.get('strategy_name')}** ({cfg.get('strategy_type')})\n"
+        f"SL {cfg.get('sl_mult')}×ATR | TP {cfg.get('tp_mult')}×ATR | "
+        f"active_hours {cfg.get('active_hours')}\n\n"
+        f"---\n\n```python\n{code}\n```"
     )
-
-    print(f"  [vibe] Strategia generata: {cfg.get('strategy_name')}")
-    return cfg, code, report
+    print(f"  [vibe] ✅ Strategia: {cfg.get('strategy_name')}")
+    return cfg, code, report, "vibe-trading"
 
 
 if __name__ == "__main__":
@@ -464,12 +398,12 @@ if __name__ == "__main__":
     print(f"  AGENT VIBE — {asset}")
     print("=" * 60)
 
-    cfg, code, report = run_vibe_agent(
+    cfg, code, report, engine = run_vibe_agent(
         asset=asset,
         anthropic_key=ant_key,
         openrouter_key=or_key,
         openrouter_model=or_model,
     )
+    print(f"  Engine: {engine}")
     _ag.save_outputs(cfg, code, report)
-
     print("\nAgent Vibe completato.")

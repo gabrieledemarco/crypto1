@@ -9,6 +9,6 @@ yfinance>=0.2.40
 streamlit>=1.35
 plotly>=5.20
 anthropic>=0.40
-# Optional — Vibe-Trading strategy generation engine (Step 2)
-# Install to enable: pip install vibe-trading-ai
-# vibe-trading-ai
+# Vibe-Trading strategy generation engine (Step 2)
+# Se non disponibile nell'ambiente, agent_strategy.py è il fallback automatico
+vibe-trading-ai
