@@ -397,44 +397,25 @@ with st.sidebar:
                 st.error(f"Errore: {_e1b}")
 
     # ── Step 2 ────────────────────────────────────────────────────────────────
-    # Vibe-Trading installation badge (shown always, no button press needed)
-    import sys as _sys; _sys.path.insert(0, BASE)
-    import importlib
-    try:
-        import agent_vibe as _av; importlib.reload(_av)
-        _vibe_ok = _av._is_vibe_installed()
-    except Exception:
-        _vibe_ok = False
-    if _vibe_ok:
-        st.caption("🟢 vibe-trading-ai installato — generazione avanzata attiva")
-    else:
-        st.caption(
-            "🟡 vibe-trading-ai non installato — "
-            "la generazione userà Anthropic/OpenRouter diretto. "
-            "Per attivare Vibe-Trading: `pip install vibe-trading-ai`"
-        )
-
     if st.button("🤖 2. Elabora Strategia", use_container_width=True,
                  help="Genera generate_signals_agent() via Vibe-Trading (74 finance skills). "
                       "Fallback automatico su Anthropic/OpenRouter se non installato."):
         if not _ant_key and not _or_key:
             st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
         elif _ensure_download():
-            import agent_strategy as _ag; importlib.reload(_ag)
+            import importlib as _il
+            import agent_vibe as _av;    _il.reload(_av)
+            import agent_strategy as _ag; _il.reload(_ag)
 
+            _vibe_ok = _av._is_vibe_installed()
             _vibe_label = (
-                "Vibe-Trading in esecuzione (~5-10 min: analisi + generazione codice + adattamento)…"
+                "Vibe-Trading in esecuzione (~5-10 min)…"
                 if _vibe_ok else
                 "Agent AI in esecuzione (Anthropic/OpenRouter)…"
             )
             with st.status(f"🤖 {_vibe_label}", expanded=True) as _status:
                 try:
-                    st.write(f"Asset: **{asset}**")
-                    if _vibe_ok:
-                        st.write("⏳ Vibe-Trading analizza il contesto statistico e genera la strategia…")
-                    else:
-                        st.write("⏳ Chiamata API AI in corso…")
-
+                    st.write(f"Asset: **{asset}**  |  Motore: {'Vibe-Trading' if _vibe_ok else 'agent_strategy'}")
                     _cfg_r, _code_r, _report_r, _engine_r = _av.run_vibe_agent(
                         asset=asset,
                         anthropic_key=_ant_key,
@@ -442,16 +423,15 @@ with st.sidebar:
                         openrouter_model=_or_model,
                     )
                     _ag.save_outputs(_cfg_r, _code_r, _report_r)
-
-                    st.write(f"✅ Motore: **{_engine_r}**")
+                    st.write(f"✅ Motore effettivo: **{_engine_r}**")
                     st.write(
-                        f"Strategia: `{_cfg_r.get('strategy_name', '?')}` "
-                        f"({_cfg_r.get('strategy_type', '?')}) | "
+                        f"`{_cfg_r.get('strategy_name','?')}` "
+                        f"({_cfg_r.get('strategy_type','?')}) | "
                         f"SL {_cfg_r.get('sl_mult')}×ATR | "
                         f"TP {_cfg_r.get('tp_mult')}×ATR"
                     )
                     _status.update(
-                        label=f"✅ Strategia generata via {_engine_r}",
+                        label=f"✅ Strategia generata — {_engine_r}",
                         state="complete", expanded=False,
                     )
                     st.success("Esegui ora **🔧 3. Costruisci Feature**.")
