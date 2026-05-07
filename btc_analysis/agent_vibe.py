@@ -138,17 +138,29 @@ def _make_vibe_env(
         env["OPENAI_API_KEY"]       = openrouter_key
         env["OPENAI_BASE_URL"]      = "https://openrouter.ai/api/v1"
         env["LANGCHAIN_MODEL_NAME"] = openrouter_model or "anthropic/claude-opus-4-7"
-    return env
+
+    # Garantisce una home scrivibile per vibe-trading (necessario su Streamlit Cloud
+    # dove la home di default potrebbe non essere scrivibile)
+    import tempfile as _tf
+    _vibe_home = os.path.join(_tf.gettempdir(), "vibe_trading_home")
+    os.makedirs(_vibe_home, exist_ok=True)
+    env["HOME"]              = _vibe_home
+    env["VIBE_TRADING_HOME"] = _vibe_home   # usato da alcune versioni di vibe-trading
+    env["XDG_DATA_HOME"]     = os.path.join(_vibe_home, ".local", "share")
+    env["XDG_CONFIG_HOME"]   = os.path.join(_vibe_home, ".config")
+    env["XDG_CACHE_HOME"]    = os.path.join(_vibe_home, ".cache")
+    return env, _vibe_home
 
 
 # ── CLI execution ─────────────────────────────────────────────────────────────
 
-def _run_cli(prompt_file: str, env: dict) -> dict:
+def _run_cli(prompt_file: str, env: dict, cwd: str) -> dict:
     """Esegue vibe-trading run e ritorna il dict JSON con run_id / run_dir."""
     r = subprocess.run(
         ["vibe-trading", "run", "-f", prompt_file, "--json", "--no-rich"],
         capture_output=True, text=True,
         timeout=VIBE_TIMEOUT, env=env,
+        cwd=cwd,   # directory scrivibile per i file di run
     )
     # Il JSON può essere preceduto da output colorato — cerca l'ultima riga JSON
     for line in reversed(r.stdout.splitlines()):
@@ -162,7 +174,7 @@ def _run_cli(prompt_file: str, env: dict) -> dict:
                 pass
     raise RuntimeError(
         f"vibe-trading exit={r.returncode}. "
-        f"stdout: {r.stdout[-400:]!r}  stderr: {r.stderr[-200:]!r}"
+        f"stdout: {r.stdout[-400:]!r}  stderr: {r.stderr[-300:]!r}"
     )
 
 
@@ -314,22 +326,26 @@ def run_vibe_agent(
     if not _is_vibe_installed():
         return _do_fallback("vibe-trading-ai non installato")
 
-    env    = _make_vibe_env(anthropic_key, openrouter_key, openrouter_model)
+    env, vibe_home = _make_vibe_env(anthropic_key, openrouter_key, openrouter_model)
     prompt = _build_vibe_prompt(asset)
 
     prompt_file = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+            mode="w", suffix=".txt", delete=False, encoding="utf-8",
+            dir=vibe_home,
         ) as f:
             f.write(prompt)
             prompt_file = f.name
 
-        print(f"  [vibe] Avvio run (timeout {VIBE_TIMEOUT}s)…")
-        data    = _run_cli(prompt_file, env)
+        print(f"  [vibe] Avvio run (timeout {VIBE_TIMEOUT}s, cwd={vibe_home})…")
+        data    = _run_cli(prompt_file, env, cwd=vibe_home)
         run_id  = data.get("run_id", "")
         run_dir = data.get("run_dir", "")
-        print(f"  [vibe] Run completato: {run_id}")
+        # run_dir potrebbe essere relativo al cwd — lo rendiamo assoluto
+        if run_dir and not os.path.isabs(run_dir):
+            run_dir = os.path.join(vibe_home, run_dir)
+        print(f"  [vibe] Run completato: {run_id}  run_dir={run_dir}")
 
         raw_code = _fetch_code(run_id, run_dir, env)
         print(f"  [vibe] Codice ({len(raw_code)} chars). Adattamento contratto…")
@@ -340,7 +356,7 @@ def run_vibe_agent(
         if prompt_file:
             try: os.unlink(prompt_file)
             except: pass
-        return _do_fallback(str(exc)[:120])
+        return _do_fallback(str(exc)[:150])
 
     finally:
         if prompt_file:
