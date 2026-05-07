@@ -397,28 +397,47 @@ with st.sidebar:
                 st.error(f"Errore: {_e1b}")
 
     # ── Step 2 ────────────────────────────────────────────────────────────────
-    if st.button("🤖 2. Elabora Strategia (Agent)", use_container_width=True,
-                 help="Claude analizza le statistiche e scrive generate_signals_agent()"):
+    if st.button("🤖 2. Elabora Strategia", use_container_width=True,
+                 help="Genera generate_signals_agent() via Vibe-Trading (74 finance skills). "
+                      "Fallback automatico su Anthropic/OpenRouter se non installato."):
         if not _ant_key and not _or_key:
             st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
         elif _ensure_download():
-            import sys as _sys; _sys.path.insert(0, BASE)
-            import importlib, agent_strategy as _ag; importlib.reload(_ag)
-            with st.spinner(f"🤖 Agent progetta strategia {asset}… (max 3 tentativi)"):
+            import importlib as _il
+            import agent_vibe as _av;    _il.reload(_av)
+            import agent_strategy as _ag; _il.reload(_ag)
+
+            _vibe_ok = _av._is_vibe_installed()
+            _vibe_label = (
+                "Vibe-Trading in esecuzione (~5-10 min)…"
+                if _vibe_ok else
+                "Agent AI in esecuzione (Anthropic/OpenRouter)…"
+            )
+            with st.status(f"🤖 {_vibe_label}", expanded=True) as _status:
                 try:
-                    _cfg_r, _code_r, _report_r = _ag.run_agent(
+                    st.write(f"Asset: **{asset}**  |  Motore: {'Vibe-Trading' if _vibe_ok else 'agent_strategy'}")
+                    _cfg_r, _code_r, _report_r, _engine_r = _av.run_vibe_agent(
+                        asset=asset,
                         anthropic_key=_ant_key,
                         openrouter_key=_or_key,
                         openrouter_model=_or_model,
-                        asset=asset,
                     )
                     _ag.save_outputs(_cfg_r, _code_r, _report_r)
-                    st.success(
-                        f"✅ Strategia `{_cfg_r.get('strategy_type','')}` generata. "
-                        "Esegui ora **🔧 3. Costruisci Feature**."
+                    st.write(f"✅ Motore effettivo: **{_engine_r}**")
+                    st.write(
+                        f"`{_cfg_r.get('strategy_name','?')}` "
+                        f"({_cfg_r.get('strategy_type','?')}) | "
+                        f"SL {_cfg_r.get('sl_mult')}×ATR | "
+                        f"TP {_cfg_r.get('tp_mult')}×ATR"
                     )
+                    _status.update(
+                        label=f"✅ Strategia generata — {_engine_r}",
+                        state="complete", expanded=False,
+                    )
+                    st.success("Esegui ora **🔧 3. Costruisci Feature**.")
                 except Exception as _ae:
-                    st.error(f"Errore agent: {_ae}")
+                    _status.update(label="❌ Generazione fallita", state="error")
+                    st.error(f"Errore: {_ae}")
 
     # ── Step 3 ────────────────────────────────────────────────────────────────
     if st.button("🔧 3. Costruisci Feature", use_container_width=True,
