@@ -7,10 +7,10 @@ Entry point — esegue la pipeline completa di analisi e backtesting.
    02_analyze.py         Hurst, ACF, kurtosis, GARCH baseline,
                          best_hours_utc → analysis_report.json
 
- FASE 2 — Elaborazione Strategia (AI Agent)
-   agent_strategy.py     Claude analizza il report statistico e
-                         scrive generate_signals_agent() +
-                         agent_config.json
+ FASE 2 — Elaborazione Strategia (Vibe-Trading + AI Agent)
+   agent_vibe.py         Vibe-Trading genera generate_signals_agent()
+                         usando le 74 finance skills.
+                         Fallback: agent_strategy.py (Anthropic/OpenRouter)
 
  FASE 3 — Costruzione Feature
    03_features.py        Calcola ATR, RSI, EMA, GARCH(1,1) e
@@ -36,7 +36,7 @@ PIPELINE = [
     # (script, descrizione, fase)
     ("01_data_download.py",  "Download dati OHLCV (Yahoo Finance)",                1),
     ("02_analyze.py",        "Analisi statistica + baseline V4",                   1),
-    ("agent_strategy.py",    "AI Agent — progettazione strategia ottimale",        2),
+    ("agent_vibe.py",         "Vibe-Trading — generazione strategia (con fallback)", 2),
     ("03_features.py",       "Costruzione feature (ATR, RSI, EMA, GARCH)",         3),
     ("04_backtest.py",       "Backtest V1-V4/Agent + Walk-Forward + Grid Search",  4),
     ("05_montecarlo.py",     "Monte Carlo (bootstrap + stress test)",              5),
