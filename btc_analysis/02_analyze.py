@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 from strategy_core import (
     load_hourly, compute_indicators_v2, generate_signals_v2,
-    backtest_v2, compute_metrics, fit_garch11, OUTPUT_DIR,
+    backtest_v2, compute_metrics, fit_garch11, OUTPUT_DIR, ticker_to_fname,
 )
 
 STRATEGY_ASSET  = os.environ.get("STRATEGY_ASSET", "BTC-USD")
@@ -193,10 +193,15 @@ if __name__ == "__main__":
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+    # Generic file (backward-compat) + asset-specific file
     json_path = os.path.join(OUTPUT_DIR, "analysis_report.json")
     with open(json_path, "w") as f:
         json.dump(report, f, indent=2)
-    print(f"  Saved: analysis_report.json")
+    fname = ticker_to_fname(STRATEGY_ASSET)
+    asset_json = os.path.join(OUTPUT_DIR, f"analysis_report_{fname}.json")
+    with open(asset_json, "w") as f:
+        json.dump(report, f, indent=2)
+    print(f"  Saved: analysis_report.json + analysis_report_{fname}.json")
 
     txt_path = os.path.join(OUTPUT_DIR, "REPORT.txt")
     with open(txt_path, "w") as f:
