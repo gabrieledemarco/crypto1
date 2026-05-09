@@ -293,7 +293,10 @@ def _adapt_code(
     if "def generate_signals_agent" in raw and all(c in raw for c in _ADAPT_COLS):
         return raw
 
+    print(f"  [vibe] Adattamento codice ({len(raw)} chars): {raw[:120]!r}…")
+
     def _call_llm(prompt: str) -> str:
+        """Try anthropic first, then openrouter as fallback (not elif)."""
         if anthropic_key:
             try:
                 import anthropic as _sdk
@@ -305,8 +308,8 @@ def _adapt_code(
                 )
                 return resp.content[0].text
             except Exception as e:
-                print(f"  [vibe] Adattamento haiku fallito: {e}")
-        elif openrouter_key:
+                print(f"  [vibe] Adattamento haiku fallito: {e} — provo openrouter…")
+        if openrouter_key:
             try:
                 import requests as _req
                 model = openrouter_model or "anthropic/claude-haiku-4-5"
@@ -337,18 +340,37 @@ def _adapt_code(
     text = _call_llm(_ADAPT_USER.format(code=raw[:4000]))
     if text:
         adapted = _extract_block(text, "python")
+        print(f"  [vibe] Adattamento risultato: {adapted[:80]!r}…" if adapted else "  [vibe] Nessun blocco python estratto dal risultato")
         if adapted and "def generate_signals_agent" in adapted:
             if all(c in adapted for c in _ADAPT_COLS):
                 return adapted
-            print("  [vibe] Adattamento: colonne mancanti, retry esplicito…")
-            # Attempt 2: explicit retry focused on the missing columns
+            print("  [vibe] Colonne mancanti, retry esplicito…")
+            # Attempt 2: explicit retry with the missing columns spelled out
             text2 = _call_llm(_ADAPT_RETRY.format(code=adapted[:4000]))
             if text2:
                 adapted2 = _extract_block(text2, "python")
                 if adapted2 and "def generate_signals_agent" in adapted2:
                     return adapted2
 
-    return raw
+    # Last resort: minimal valid strategy so the pipeline can continue
+    print("  [vibe] Adattamento fallito — uso strategia minima hardcoded")
+    return _MINIMAL_STRATEGY
+
+
+_MINIMAL_STRATEGY = '''\
+def generate_signals_agent(df):
+    """Minimal ATR-EMA crossover strategy (auto-generated fallback)."""
+    df = df.copy()
+    ema20 = df["Close"].ewm(span=20, adjust=False).mean()
+    bull  = (ema20 > df["EMA50"]) & (df["EMA50"] > df["EMA200"])
+    bear  = (ema20 < df["EMA50"]) & (df["EMA50"] < df["EMA200"])
+    df["signal"] = 0
+    df.loc[bull & (df["RSI14"] < 65) & (df["garch_regime"] != "HIGH"), "signal"] =  1
+    df.loc[bear & (df["RSI14"] > 35) & (df["garch_regime"] != "HIGH"), "signal"] = -1
+    df["SL_dist"] = df["ATR14"] * 2.0
+    df["TP_dist"] = df["ATR14"] * 5.0
+    return df
+'''
 
 
 # ── Shared post-processing ────────────────────────────────────────────────────
