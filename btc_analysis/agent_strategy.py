@@ -198,7 +198,10 @@ def _best_active_hours(best_hours: list) -> list:
 
 
 def _build_context(asset: str = "BTC-USD") -> str:
-    report_json = os.path.join(OUTPUT_DIR, "analysis_report.json")
+    _fname = re.sub(r"[^a-z0-9]", "_", asset.lower()).strip("_")
+    asset_json   = os.path.join(OUTPUT_DIR, f"analysis_report_{_fname}.json")
+    generic_json = os.path.join(OUTPUT_DIR, "analysis_report.json")
+    report_json  = asset_json if os.path.exists(asset_json) else generic_json
     if os.path.exists(report_json):
         try:
             with open(report_json) as f:
