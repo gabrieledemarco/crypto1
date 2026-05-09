@@ -58,6 +58,94 @@ class GenerateResponse(BaseModel):
     error: str = ""
 
 
+# ── Code extraction helpers ───────────────────────────────────────────────────
+
+import re as _re
+
+
+def _find_python_in_text(text: str) -> str:
+    """Return the largest Python block found in text (markdown or raw)."""
+    # ```python ... ``` blocks
+    blocks = _re.findall(r"```python\s*\n(.*?)```", text, _re.DOTALL)
+    if not blocks:
+        blocks = _re.findall(r"```\s*\n(.*?)```", text, _re.DOTALL)
+    if blocks:
+        return max(blocks, key=len)
+    # raw Python heuristic
+    if "def " in text and "return" in text and len(text) > 80:
+        return text
+    return ""
+
+
+def _walk_json(obj, depth: int = 0) -> list:
+    """Recursively collect string leaves from JSON that look like Python."""
+    if depth > 12:
+        return []
+    if isinstance(obj, str):
+        code = _find_python_in_text(obj)
+        return [code] if code else []
+    if isinstance(obj, dict):
+        out = []
+        for v in obj.values():
+            out.extend(_walk_json(v, depth + 1))
+        return out
+    if isinstance(obj, list):
+        out = []
+        for item in obj:
+            out.extend(_walk_json(item, depth + 1))
+        return out
+    return []
+
+
+def _extract_code_from_run_dir(run_dir: str, all_files: list) -> str:
+    """
+    vibe-trading stores its output in JSON files (trace.jsonl, state.json).
+    Parse them all and return the longest Python snippet found.
+    """
+    candidates: list[tuple[int, str]] = []
+
+    for fpath in all_files:
+        try:
+            raw = open(fpath, encoding="utf-8").read()
+        except Exception:
+            continue
+
+        # JSONL: each line is a JSON object
+        if fpath.endswith(".jsonl"):
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    for snippet in _walk_json(obj):
+                        candidates.append((len(snippet), snippet))
+                except json.JSONDecodeError:
+                    pass
+            # also scan the raw text for code blocks
+            code = _find_python_in_text(raw)
+            if code:
+                candidates.append((len(code), code))
+
+        elif fpath.endswith(".json"):
+            try:
+                obj = json.loads(raw)
+                for snippet in _walk_json(obj):
+                    candidates.append((len(snippet), snippet))
+            except json.JSONDecodeError:
+                pass
+
+        elif fpath.endswith(".py"):
+            if len(raw) > 30:
+                candidates.append((len(raw), raw))
+
+    if not candidates:
+        return ""
+    best = sorted(candidates, reverse=True)[0][1]
+    print(f"[vibe] extracted code ({len(best)} chars) from run_dir", flush=True)
+    return best
+
+
 # ── Core vibe-trading runner ──────────────────────────────────────────────────
 
 def _run_vibe(req: GenerateRequest) -> str:
@@ -132,7 +220,8 @@ def _run_vibe(req: GenerateRequest) -> str:
         except Exception as e:
             print(f"[vibe] --code exception: {e}", flush=True)
 
-        # Method 2: scan run_dir recursively for .py files
+        # Method 2: extract code from JSON files in run_dir
+        # vibe-trading stores output in trace.jsonl / state.json (no .py files)
         if run_dir and os.path.isdir(run_dir):
             all_files = []
             for root, _, files in os.walk(run_dir):
@@ -140,18 +229,9 @@ def _run_vibe(req: GenerateRequest) -> str:
                     all_files.append(os.path.join(root, fname))
             print(f"[vibe] run_dir={run_dir!r} files={all_files}", flush=True)
 
-            candidates = []
-            for fpath in all_files:
-                if not fpath.endswith(".py"):
-                    continue
-                try:
-                    content = open(fpath, encoding="utf-8").read()
-                    if len(content) > 30:
-                        candidates.append((len(content), content))
-                except Exception:
-                    pass
-            if candidates:
-                return sorted(candidates, reverse=True)[0][1]
+            code = _extract_code_from_run_dir(run_dir, all_files)
+            if code:
+                return code
 
         raise RuntimeError(
             f"No code found: run_id={run_id!r}  run_dir={run_dir!r}"
