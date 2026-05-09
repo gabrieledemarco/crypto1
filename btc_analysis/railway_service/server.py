@@ -101,10 +101,16 @@ def _extract_code_from_run_dir(run_dir: str, all_files: list) -> str:
     """
     vibe-trading stores its output in JSON files (trace.jsonl, state.json).
     Parse them all and return the longest Python snippet found.
+    req.json is the saved prompt file — always excluded to avoid extracting
+    the placeholder function from the prompt template itself.
     """
     candidates: list[tuple[int, str]] = []
 
     for fpath in all_files:
+        # Skip the request/prompt file — it contains our template placeholder code
+        if os.path.basename(fpath) == "req.json":
+            continue
+
         try:
             raw = open(fpath, encoding="utf-8").read()
         except Exception:
@@ -208,6 +214,13 @@ def _run_vibe(req: GenerateRequest) -> str:
         if run_dir and not os.path.isabs(run_dir):
             run_dir = os.path.join(vibe_home, run_dir)
 
+        # Method 0: scan full stdout for Python blocks
+        # (vibe-trading may stream LLM output to stdout before the JSON line)
+        stdout_code = _find_python_in_text(r.stdout)
+        if stdout_code and len(stdout_code) > 150:
+            print(f"[vibe] found code in stdout ({len(stdout_code)} chars)", flush=True)
+            return stdout_code
+
         # Method 1: vibe-trading --code <run_id>
         try:
             rc = subprocess.run(
@@ -221,7 +234,8 @@ def _run_vibe(req: GenerateRequest) -> str:
             print(f"[vibe] --code exception: {e}", flush=True)
 
         # Method 2: extract code from JSON files in run_dir
-        # vibe-trading stores output in trace.jsonl / state.json (no .py files)
+        # vibe-trading stores output in trace.jsonl / state.json (no .py files).
+        # req.json is the saved prompt file and is excluded by _extract_code_from_run_dir.
         if run_dir and os.path.isdir(run_dir):
             all_files = []
             for root, _, files in os.walk(run_dir):
