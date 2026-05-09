@@ -6,13 +6,12 @@ Step 2: generazione strategia tramite Vibe-Trading.
 Modalità (in ordine di priorità):
   1. RAILWAY  — se VIBE_TRADING_API_URL è impostato (o passato come parametro),
                 chiama il microservizio Railway via HTTP.
-                Funziona su Streamlit Cloud senza accesso al filesystem locale.
   2. CLI      — se vibe-trading-ai è installato localmente, usa subprocess.
-  3. FALLBACK — agent_strategy.run_agent() (Anthropic / OpenRouter diretto).
+
+In caso di errore, propaga l'eccezione (nessun fallback silenzioso).
 
 Ritorno: tuple (config, code, report, engine_used)
-  engine_used: "vibe-trading (Railway)" | "vibe-trading (CLI)" |
-               "agent_strategy (fallback: …)"
+  engine_used: "vibe-trading (Railway)" | "vibe-trading (CLI)"
 """
 
 import os, sys, json, subprocess, tempfile
@@ -23,7 +22,6 @@ from agent_strategy import (
     _build_context, _atr_stats,
     _extract_block, _validate_config, _validate_code,
     save_outputs,
-    run_agent as _fallback_run_agent,
     OPENROUTER_API_URL, OPENROUTER_DEFAULT_MODEL,
 )
 from strategy_core import OUTPUT_DIR
@@ -297,14 +295,18 @@ def _adapt_code(
     openrouter_key: str,
     openrouter_model: str,
 ) -> str:
-    # Already valid (accept both quote styles)
-    if "def generate_signals_agent" in raw and _has_cols(raw):
-        return raw
+    # Test raw first with actual execution
+    if "def generate_signals_agent" in raw:
+        try:
+            _validate_code(raw)
+            return raw
+        except Exception:
+            pass
 
     print(f"  [vibe] Adattamento codice ({len(raw)} chars): {raw[:120]!r}…")
 
     def _call_llm(prompt: str) -> str:
-        """Try anthropic first, then openrouter as fallback."""
+        """Try anthropic first, then openrouter as cascade."""
         if anthropic_key:
             try:
                 import anthropic as _sdk
@@ -348,48 +350,38 @@ def _adapt_code(
                 print(f"  [vibe] openrouter fallito: {e}")
         return ""
 
-    # Attempt 1: standard adaptation
-    text = _call_llm(_ADAPT_USER.format(code=raw[:4000]))
-    if text:
+    def _try_adapt(prompt: str, label: str):
+        text = _call_llm(prompt)
+        if not text:
+            print(f"  [vibe] {label}: LLM non ha risposto")
+            return None
         adapted = _extract_block(text, "python")
         if not adapted:
-            print("  [vibe] Attempt 1: nessun blocco ```python trovato nel risultato")
-        elif "def generate_signals_agent" not in adapted:
-            print(f"  [vibe] Attempt 1: funzione mancante. Inizio: {adapted[:80]!r}")
-        elif _has_cols(adapted):
-            print("  [vibe] Attempt 1: ✅ codice valido")
+            print(f"  [vibe] {label}: nessun blocco ```python trovato")
+            return None
+        if "def generate_signals_agent" not in adapted:
+            print(f"  [vibe] {label}: funzione mancante. Inizio: {adapted[:80]!r}")
+            return None
+        try:
+            _validate_code(adapted)
+            print(f"  [vibe] {label}: ✅ codice valido")
             return adapted
-        else:
-            missing = [c for c in _REQUIRED_COLS
-                       if f'"{c}"' not in adapted and f"'{c}'" not in adapted]
-            print(f"  [vibe] Attempt 1: colonne mancanti {missing}, retry…")
-            # Attempt 2: explicit retry with missing columns spelled out
-            text2 = _call_llm(_ADAPT_RETRY.format(code=adapted[:4000]))
-            if text2:
-                adapted2 = _extract_block(text2, "python")
-                if adapted2 and "def generate_signals_agent" in adapted2:
-                    print(f"  [vibe] Attempt 2: cols={_has_cols(adapted2)} → uso questo")
-                    return adapted2
+        except Exception as ve:
+            print(f"  [vibe] {label}: _validate_code fallita → {ve}")
+            return None
 
-    # Last resort: minimal valid strategy so the pipeline can continue
-    print("  [vibe] Tutti i tentativi falliti — uso _MINIMAL_STRATEGY")
-    return _MINIMAL_STRATEGY
+    result = _try_adapt(_ADAPT_USER.format(code=raw[:4000]), "Attempt 1")
+    if result:
+        return result
 
+    result = _try_adapt(_ADAPT_RETRY.format(code=raw[:4000]), "Attempt 2")
+    if result:
+        return result
 
-_MINIMAL_STRATEGY = '''\
-def generate_signals_agent(df):
-    """Minimal ATR-EMA crossover strategy (auto-generated fallback)."""
-    df = df.copy()
-    ema20 = df["Close"].ewm(span=20, adjust=False).mean()
-    bull  = (ema20 > df["EMA50"]) & (df["EMA50"] > df["EMA200"])
-    bear  = (ema20 < df["EMA50"]) & (df["EMA50"] < df["EMA200"])
-    df["signal"] = 0
-    df.loc[bull & (df["RSI14"] < 65) & (df["garch_regime"] != "HIGH"), "signal"] =  1
-    df.loc[bear & (df["RSI14"] > 35) & (df["garch_regime"] != "HIGH"), "signal"] = -1
-    df["SL_dist"] = df["ATR14"] * 2.0
-    df["TP_dist"] = df["ATR14"] * 5.0
-    return df
-'''
+    raise ValueError(
+        f"Adattamento fallito dopo 2 tentativi LLM. "
+        f"Codice estratto ({len(raw)} chars): {raw[:200]!r}"
+    )
 
 
 # ── Shared post-processing ────────────────────────────────────────────────────
@@ -452,55 +444,42 @@ def run_vibe_agent(
     """
     Genera (config, code, report, engine_used).
 
-    engine_used: "vibe-trading (Railway)" | "vibe-trading (CLI)" |
-                 "agent_strategy (fallback: <motivo>)"
+    engine_used: "vibe-trading (Railway)" | "vibe-trading (CLI)"
 
     Priority:
       1. Railway API  — if vibe_api_url is set (Streamlit Cloud / production)
       2. Local CLI    — if vibe-trading-ai is installed
-      3. Fallback     — agent_strategy.run_agent()
+
+    Raises RuntimeError or ValueError on failure (no fallback).
     """
-    # Read URL from env var if not passed explicitly
     if not vibe_api_url:
         vibe_api_url = os.environ.get("VIBE_TRADING_API_URL", "")
     if not vibe_service_token:
         vibe_service_token = os.environ.get("VIBE_SERVICE_TOKEN", "")
-
-    def _do_fallback(reason: str) -> tuple:
-        print(f"  [vibe] Fallback: {reason}")
-        cfg, code, report = _fallback_run_agent(
-            anthropic_key=anthropic_key,
-            openrouter_key=openrouter_key,
-            openrouter_model=openrouter_model,
-            asset=asset,
-        )
-        return cfg, code, report, f"agent_strategy (fallback: {reason})"
 
     prompt = _build_vibe_prompt(asset)
 
     # ── Mode 1: Railway remote API ────────────────────────────────────────────
     if vibe_api_url:
         print(f"  [vibe] Modalità Railway: {vibe_api_url}")
-        try:
-            raw_code = _call_railway_api(
-                prompt, vibe_api_url, anthropic_key,
-                openrouter_key, openrouter_model, vibe_service_token,
-            )
-            print(f"  [vibe] Codice ricevuto ({len(raw_code)} chars). Adattamento contratto…")
-            cfg, code, report = _post_process(
-                raw_code, asset, "Vibe-Trading (Railway)",
-                anthropic_key, openrouter_key, openrouter_model,
-            )
-            print(f"  [vibe] ✅ Strategia: {cfg.get('strategy_name')}")
-            return cfg, code, report, "vibe-trading (Railway)"
-        except ValueError as ve:
-            return _do_fallback(f"codice non valido dopo adattamento: {ve}")
-        except Exception as exc:
-            return _do_fallback(f"Railway API: {str(exc)[:150]}")
+        raw_code = _call_railway_api(
+            prompt, vibe_api_url, anthropic_key,
+            openrouter_key, openrouter_model, vibe_service_token,
+        )
+        print(f"  [vibe] Codice ricevuto ({len(raw_code)} chars). Adattamento contratto…")
+        cfg, code, report = _post_process(
+            raw_code, asset, "Vibe-Trading (Railway)",
+            anthropic_key, openrouter_key, openrouter_model,
+        )
+        print(f"  [vibe] ✅ Strategia: {cfg.get('strategy_name')}")
+        return cfg, code, report, "vibe-trading (Railway)"
 
     # ── Mode 2: Local CLI ─────────────────────────────────────────────────────
     if not _is_vibe_installed():
-        return _do_fallback("vibe-trading-ai non installato e nessun URL Railway configurato")
+        raise RuntimeError(
+            "vibe-trading-ai non installato e nessun URL Railway configurato. "
+            "Configura VIBE_TRADING_API_URL nella sidebar."
+        )
 
     env, vibe_home = _make_vibe_env(anthropic_key, openrouter_key, openrouter_model)
     prompt_file = None
@@ -523,14 +502,6 @@ def run_vibe_agent(
         raw_code = _fetch_code(run_id, run_dir, env)
         print(f"  [vibe] Codice ({len(raw_code)} chars). Adattamento contratto…")
 
-    except Exception as exc:
-        if prompt_file:
-            try:
-                os.unlink(prompt_file)
-            except Exception:
-                pass
-        return _do_fallback(str(exc)[:150])
-
     finally:
         if prompt_file:
             try:
@@ -538,15 +509,11 @@ def run_vibe_agent(
             except Exception:
                 pass
 
-    try:
-        cfg, code, report = _post_process(
-            raw_code, asset, "Vibe-Trading (CLI)",
-            anthropic_key, openrouter_key, openrouter_model,
-            run_id=run_id,
-        )
-    except ValueError as ve:
-        return _do_fallback(f"codice non valido dopo adattamento: {ve}")
-
+    cfg, code, report = _post_process(
+        raw_code, asset, "Vibe-Trading (CLI)",
+        anthropic_key, openrouter_key, openrouter_model,
+        run_id=run_id,
+    )
     print(f"  [vibe] ✅ Strategia: {cfg.get('strategy_name')}")
     return cfg, code, report, "vibe-trading (CLI)"
 

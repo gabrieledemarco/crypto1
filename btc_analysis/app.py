@@ -419,9 +419,9 @@ with st.sidebar:
     # ── Step 2 ────────────────────────────────────────────────────────────────
     if st.button("🤖 2. Elabora Strategia", use_container_width=True,
                  help="Genera generate_signals_agent() via Vibe-Trading (Railway/CLI). "
-                      "Fallback automatico su Anthropic/OpenRouter se non configurato."):
+                      "Richiede VIBE_TRADING_API_URL oppure vibe-trading-ai installato localmente."):
         if not _ant_key and not _or_key:
-            st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
+            st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter) per l'adattamento codice.")
         elif _ensure_download():
             import importlib as _il
             import agent_vibe as _av;     _il.reload(_av)
@@ -434,8 +434,8 @@ with st.sidebar:
                 _vibe_label = "Vibe-Trading in esecuzione (CLI locale)…"
                 _vibe_mode  = "CLI"
             else:
-                _vibe_label = "Agent AI in esecuzione (Anthropic/OpenRouter)…"
-                _vibe_mode  = "agent_strategy"
+                _vibe_label = "Avvio generazione strategia…"
+                _vibe_mode  = "—"
 
             with st.status(f"🤖 {_vibe_label}", expanded=True) as _status:
                 try:
