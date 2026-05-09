@@ -947,7 +947,7 @@ with tab2:
         st.info(
             f"Il backtest è calcolato su **{_strat_name}** ({_strat_asset}). "
             f"Per calcolarlo su **{_CATALOG_FLAT.get(asset, asset)}** ({asset}), "
-            "seleziona l'asset e premi ▶ Esegui Agent nella sidebar."
+            "esegui **Step 1** (Download + Analisi) e **Step 2** (Elabora Strategia) nella sidebar."
         )
     elif _strat_asset != "BTC-USD":
         st.success(f"Backtest calcolato su **{_strat_name}** ({_strat_asset}).")
@@ -1073,7 +1073,7 @@ with tab3:
         st.info(
             f"La Walk-Forward è calcolata su **{_strat_name3}** ({_strat_asset3}). "
             f"Per calcolarla su **{_CATALOG_FLAT.get(asset, asset)}** ({asset}), "
-            "esegui l'Agent AI nella sidebar."
+            "esegui **Step 1** e **Step 2** nella sidebar."
         )
     elif _strat_asset3 != "BTC-USD":
         st.success(f"Walk-Forward calcolata su **{_strat_name3}** ({_strat_asset3}).")
@@ -1181,7 +1181,7 @@ with tab4:
         st.info(
             f"Il Monte Carlo è calcolato su **{_strat_name4}** ({_strat_asset4}). "
             f"Per calcolarlo su **{_CATALOG_FLAT.get(asset, asset)}** ({asset}), "
-            "esegui l'Agent AI nella sidebar."
+            "esegui **Step 1** e **Step 2** nella sidebar."
         )
     elif _strat_asset4 != "BTC-USD":
         st.success(f"Monte Carlo calcolato su **{_strat_name4}** ({_strat_asset4}).")
@@ -1451,8 +1451,8 @@ with tab6:
 
     if not os.path.exists(_cfg_path):
         st.info(
-            "L'agent non è ancora stato eseguito. Configura una chiave API "
-            "nella sidebar e clicca **▶ Esegui Agent**, oppure esegui `run_all.py`."
+            "Nessuna strategia generata. Nella sidebar esegui **Step 1** (Download + Analisi) "
+            "poi **Step 2** (Elabora Strategia), oppure lancia `run_all.py` da terminale."
         )
     else:
         try:
@@ -1509,7 +1509,7 @@ with tab6:
                                 f"`{_v4r['max_drawdown_pct']:.1f}%`"
                             )
                     else:
-                        st.info("Esegui **▶ Esegui Agent** per calcolare il backtest V_Agent.")
+                        st.info("Esegui **Step 2 (Elabora Strategia)** nella sidebar per calcolare il backtest V_Agent.")
                 except Exception as _ce:
                     st.warning(f"Errore lettura metriche backtest: {_ce}")
 
