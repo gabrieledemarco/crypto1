@@ -36,19 +36,18 @@ PIPELINE = [
     # (script, descrizione, fase)
     ("01_data_download.py",  "Download dati OHLCV (Yahoo Finance)",                1),
     ("02_analyze.py",        "Analisi statistica + baseline V4",                   1),
-    ("agent_vibe.py",         "Vibe-Trading — generazione strategia (con fallback)", 2),
-    ("03_features.py",       "Costruzione feature (ATR, RSI, EMA, GARCH)",         3),
-    ("04_backtest.py",       "Backtest V1-V4/Agent + Walk-Forward + Grid Search",  4),
-    ("05_montecarlo.py",     "Monte Carlo (bootstrap + stress test)",              5),
+    ("03_features.py",       "Costruzione feature (ATR, RSI, EMA, GARCH)",         1),
+    ("agent_vibe.py",        "Vibe-Trading — generazione strategia (con fallback)", 2),
+    ("04_backtest.py",       "Backtest V1-V4/Agent + Walk-Forward + Grid Search",  3),
+    ("05_montecarlo.py",     "Monte Carlo (bootstrap + stress test)",              4),
     ("05_report.py",         "Generazione report finale",                          0),
 ]
 
 PHASE_NAMES = {
-    1: "FASE 1 — Download + Analisi Statistica",
+    1: "FASE 1 — Download + Analisi + Feature",
     2: "FASE 2 — Elaborazione Strategia (Agent)",
-    3: "FASE 3 — Costruzione Feature",
-    4: "FASE 4 — Backtest",
-    5: "FASE 5 — Monte Carlo",
+    3: "FASE 3 — Backtest",
+    4: "FASE 4 — Monte Carlo",
     0: "REPORT",
 }
 

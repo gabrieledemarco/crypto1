@@ -400,14 +400,17 @@ with st.sidebar:
 
     # ── Step 1 ────────────────────────────────────────────────────────────────
     if st.button("📥 1. Download + Analisi Statistica", use_container_width=True,
-                 help="Scarica dati OHLCV e calcola Hurst, ACF, GARCH, best hours → analysis_report.json"):
-        with st.spinner(f"📥 Download + analisi statistica {asset}…"):
+                 help="Scarica dati OHLCV, calcola Hurst/ACF/GARCH/best hours e "
+                      "pre-computa le feature (ATR, RSI, EMA, GARCH) in un unico step."):
+        with st.spinner(f"📥 Download + analisi + feature {asset}…"):
             try:
                 _do_download_module([asset], skip_existing=False)
                 st.cache_data.clear()
                 _run_script("02_analyze.py", extra_env=_env)
+                _run_script("03_features.py", extra_env=_env)
                 st.cache_data.clear()
-                st.success(f"✅ Download e analisi completati per {asset}.")
+                st.success(f"✅ Download, analisi e feature completati per **{asset}**. "
+                           f"Esegui ora **🤖 2. Elabora Strategia**.")
             except subprocess.CalledProcessError as _e1:
                 st.error(f"Analisi fallita:\n```\n{_e1.stderr.decode()[:400]}\n```")
             except Exception as _e1b:
@@ -457,37 +460,25 @@ with st.sidebar:
                         label=f"✅ Strategia generata — {_engine_r}",
                         state="complete", expanded=False,
                     )
-                    st.success("Esegui ora **🔧 3. Costruisci Feature**.")
+                    st.success("Esegui ora **📈 3. Backtest**.")
                 except Exception as _ae:
                     _status.update(label="❌ Generazione fallita", state="error")
                     st.error(f"Errore: {_ae}")
 
     # ── Step 3 ────────────────────────────────────────────────────────────────
-    if st.button("🔧 3. Costruisci Feature", use_container_width=True,
-                 help="Calcola ATR, RSI, EMA, GARCH(1,1) e salva features pre-computate"):
-        if _ensure_download():
-            with st.spinner(f"🔧 Calcolo feature {asset}… (~30s per GARCH)"):
-                try:
-                    _run_script("03_features.py", extra_env=_env)
-                    st.cache_data.clear()
-                    st.success("✅ Feature costruite. Esegui ora **📈 4. Backtest**.")
-                except subprocess.CalledProcessError as _fe:
-                    st.error(f"Feature construction fallita:\n```\n{_fe.stderr.decode()[:400]}\n```")
-
-    # ── Step 4 ────────────────────────────────────────────────────────────────
-    if st.button("📈 4. Backtest + Walk-Forward", use_container_width=True,
+    if st.button("📈 3. Backtest + Walk-Forward", use_container_width=True,
                  help="V1/V2/V4/V_Agent + WFO rolling window + grid search SL/TP"):
         if _ensure_download():
             with st.spinner(f"📈 Backtest + WFO {asset}…"):
                 try:
                     _run_script("04_backtest.py", extra_env=_env)
                     st.cache_data.clear()
-                    st.success("✅ Backtest completato. Esegui ora **🎲 5. Monte Carlo**.")
+                    st.success("✅ Backtest completato. Esegui ora **🎲 4. Monte Carlo**.")
                 except subprocess.CalledProcessError as _be:
                     st.error(f"Backtest fallito:\n```\n{_be.stderr.decode()[:400]}\n```")
 
-    # ── Step 5 ────────────────────────────────────────────────────────────────
-    if st.button("🎲 5. Monte Carlo", use_container_width=True,
+    # ── Step 4 ────────────────────────────────────────────────────────────────
+    if st.button("🎲 4. Monte Carlo", use_container_width=True,
                  help="Bootstrap 10.000 sim + 4 stress scenarios da trades.csv"):
         with st.spinner(f"🎲 Monte Carlo {asset}…"):
             try:
