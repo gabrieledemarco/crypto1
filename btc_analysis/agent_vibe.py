@@ -113,6 +113,8 @@ def _call_railway_api(
     """POST to Railway microservice and return the raw generated code."""
     import requests as _req
 
+    if not api_url.startswith(("http://", "https://")):
+        api_url = "https://" + api_url
     url = api_url.rstrip("/") + "/generate"
     headers = {"Content-Type": "application/json"}
     if service_token:
