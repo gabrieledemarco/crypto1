@@ -30,6 +30,9 @@ app = FastAPI(title="Vibe-Trading Strategy Service", version="1.0.0")
 VIBE_TIMEOUT = int(os.environ.get("VIBE_TIMEOUT", 600))
 SERVICE_TOKEN = os.environ.get("SERVICE_TOKEN", "")
 
+_port = os.environ.get("PORT", "8080")
+print(f"[startup] Vibe-Trading service — PORT={_port}  SERVICE_TOKEN={'SET' if SERVICE_TOKEN else 'OPEN'}", flush=True)
+
 
 # ── Auth helper ───────────────────────────────────────────────────────────────
 
