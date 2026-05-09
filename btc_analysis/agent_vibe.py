@@ -280,7 +280,15 @@ Source:
 Return ONLY a ```python block.
 """
 
-_ADAPT_COLS = ('df["signal"]', 'df["SL_dist"]', 'df["TP_dist"]')
+_REQUIRED_COLS = ("signal", "SL_dist", "TP_dist")
+
+
+def _has_cols(code: str) -> bool:
+    """Accept both single and double quote styles for column assignment."""
+    return all(
+        f'"{c}"' in code or f"'{c}'" in code
+        for c in _REQUIRED_COLS
+    )
 
 
 def _adapt_code(
@@ -289,14 +297,14 @@ def _adapt_code(
     openrouter_key: str,
     openrouter_model: str,
 ) -> str:
-    # Already valid — nothing to do
-    if "def generate_signals_agent" in raw and all(c in raw for c in _ADAPT_COLS):
+    # Already valid (accept both quote styles)
+    if "def generate_signals_agent" in raw and _has_cols(raw):
         return raw
 
     print(f"  [vibe] Adattamento codice ({len(raw)} chars): {raw[:120]!r}…")
 
     def _call_llm(prompt: str) -> str:
-        """Try anthropic first, then openrouter as fallback (not elif)."""
+        """Try anthropic first, then openrouter as fallback."""
         if anthropic_key:
             try:
                 import anthropic as _sdk
@@ -306,9 +314,11 @@ def _adapt_code(
                     system=_ADAPT_SYSTEM,
                     messages=[{"role": "user", "content": prompt}],
                 )
-                return resp.content[0].text
+                result = resp.content[0].text
+                print(f"  [vibe] haiku ok ({len(result)} chars)")
+                return result
             except Exception as e:
-                print(f"  [vibe] Adattamento haiku fallito: {e} — provo openrouter…")
+                print(f"  [vibe] haiku fallito: {e} — provo openrouter…")
         if openrouter_key:
             try:
                 import requests as _req
@@ -331,29 +341,38 @@ def _adapt_code(
                     timeout=60,
                 )
                 resp.raise_for_status()
-                return resp.json()["choices"][0]["message"]["content"]
+                result = resp.json()["choices"][0]["message"]["content"]
+                print(f"  [vibe] openrouter ok ({len(result)} chars)")
+                return result
             except Exception as e:
-                print(f"  [vibe] Adattamento openrouter fallito: {e}")
+                print(f"  [vibe] openrouter fallito: {e}")
         return ""
 
     # Attempt 1: standard adaptation
     text = _call_llm(_ADAPT_USER.format(code=raw[:4000]))
     if text:
         adapted = _extract_block(text, "python")
-        print(f"  [vibe] Adattamento risultato: {adapted[:80]!r}…" if adapted else "  [vibe] Nessun blocco python estratto dal risultato")
-        if adapted and "def generate_signals_agent" in adapted:
-            if all(c in adapted for c in _ADAPT_COLS):
-                return adapted
-            print("  [vibe] Colonne mancanti, retry esplicito…")
-            # Attempt 2: explicit retry with the missing columns spelled out
+        if not adapted:
+            print("  [vibe] Attempt 1: nessun blocco ```python trovato nel risultato")
+        elif "def generate_signals_agent" not in adapted:
+            print(f"  [vibe] Attempt 1: funzione mancante. Inizio: {adapted[:80]!r}")
+        elif _has_cols(adapted):
+            print("  [vibe] Attempt 1: ✅ codice valido")
+            return adapted
+        else:
+            missing = [c for c in _REQUIRED_COLS
+                       if f'"{c}"' not in adapted and f"'{c}'" not in adapted]
+            print(f"  [vibe] Attempt 1: colonne mancanti {missing}, retry…")
+            # Attempt 2: explicit retry with missing columns spelled out
             text2 = _call_llm(_ADAPT_RETRY.format(code=adapted[:4000]))
             if text2:
                 adapted2 = _extract_block(text2, "python")
                 if adapted2 and "def generate_signals_agent" in adapted2:
+                    print(f"  [vibe] Attempt 2: cols={_has_cols(adapted2)} → uso questo")
                     return adapted2
 
     # Last resort: minimal valid strategy so the pipeline can continue
-    print("  [vibe] Adattamento fallito — uso strategia minima hardcoded")
+    print("  [vibe] Tutti i tentativi falliti — uso _MINIMAL_STRATEGY")
     return _MINIMAL_STRATEGY
 
 
