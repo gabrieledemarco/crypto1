@@ -262,6 +262,26 @@ Original code:
 Return ONLY a ```python block containing the adapted function.
 """
 
+_ADAPT_RETRY = """\
+CRITICAL: your previous adaptation is missing required columns.
+The function MUST assign ALL three of:
+  df["signal"]  = 1 (long) / -1 (short) / 0 (flat)
+  df["SL_dist"] = df["ATR14"] * sl_mult   (sl_mult >= 1.5)
+  df["TP_dist"] = df["ATR14"] * tp_mult   (tp_mult >= 3.75)
+
+Rewrite `generate_signals_agent(df)` preserving the trading logic below
+but ensuring every row has all three columns. Use ONLY pd and np. No imports.
+
+Source:
+```python
+{code}
+```
+
+Return ONLY a ```python block.
+"""
+
+_ADAPT_COLS = ('df["signal"]', 'df["SL_dist"]', 'df["TP_dist"]')
+
 
 def _adapt_code(
     raw: str,
@@ -269,55 +289,64 @@ def _adapt_code(
     openrouter_key: str,
     openrouter_model: str,
 ) -> str:
-    if "def generate_signals_agent" in raw and 'df["signal"]' in raw:
+    # Already valid — nothing to do
+    if "def generate_signals_agent" in raw and all(c in raw for c in _ADAPT_COLS):
         return raw
 
-    prompt = _ADAPT_USER.format(code=raw[:4000])
-    text = ""
+    def _call_llm(prompt: str) -> str:
+        if anthropic_key:
+            try:
+                import anthropic as _sdk
+                resp = _sdk.Anthropic(api_key=anthropic_key).messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=2048,
+                    system=_ADAPT_SYSTEM,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                return resp.content[0].text
+            except Exception as e:
+                print(f"  [vibe] Adattamento haiku fallito: {e}")
+        elif openrouter_key:
+            try:
+                import requests as _req
+                model = openrouter_model or "anthropic/claude-haiku-4-5"
+                resp = _req.post(
+                    OPENROUTER_API_URL,
+                    headers={
+                        "Authorization": f"Bearer {openrouter_key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://github.com/gabrieledemarco/crypto1",
+                    },
+                    json={
+                        "model": model,
+                        "max_tokens": 2048,
+                        "messages": [
+                            {"role": "system", "content": _ADAPT_SYSTEM},
+                            {"role": "user",   "content": prompt},
+                        ],
+                    },
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                return resp.json()["choices"][0]["message"]["content"]
+            except Exception as e:
+                print(f"  [vibe] Adattamento openrouter fallito: {e}")
+        return ""
 
-    if anthropic_key:
-        try:
-            import anthropic as _sdk
-            resp = _sdk.Anthropic(api_key=anthropic_key).messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=2048,
-                system=_ADAPT_SYSTEM,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            text = resp.content[0].text
-        except Exception as e:
-            print(f"  [vibe] Adattamento haiku fallito: {e}")
-
-    elif openrouter_key:
-        try:
-            import requests as _req
-            model = openrouter_model or "anthropic/claude-haiku-4-5"
-            resp = _req.post(
-                OPENROUTER_API_URL,
-                headers={
-                    "Authorization": f"Bearer {openrouter_key}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://github.com/gabrieledemarco/crypto1",
-                },
-                json={
-                    "model": model,
-                    "max_tokens": 2048,
-                    "messages": [
-                        {"role": "system", "content": _ADAPT_SYSTEM},
-                        {"role": "user",   "content": prompt},
-                    ],
-                },
-                timeout=60,
-            )
-            resp.raise_for_status()
-            text = resp.json()["choices"][0]["message"]["content"]
-        except Exception as e:
-            print(f"  [vibe] Adattamento openrouter fallito: {e}")
-
+    # Attempt 1: standard adaptation
+    text = _call_llm(_ADAPT_USER.format(code=raw[:4000]))
     if text:
         adapted = _extract_block(text, "python")
         if adapted and "def generate_signals_agent" in adapted:
-            return adapted
+            if all(c in adapted for c in _ADAPT_COLS):
+                return adapted
+            print("  [vibe] Adattamento: colonne mancanti, retry esplicito…")
+            # Attempt 2: explicit retry focused on the missing columns
+            text2 = _call_llm(_ADAPT_RETRY.format(code=adapted[:4000]))
+            if text2:
+                adapted2 = _extract_block(text2, "python")
+                if adapted2 and "def generate_signals_agent" in adapted2:
+                    return adapted2
 
     return raw
 
