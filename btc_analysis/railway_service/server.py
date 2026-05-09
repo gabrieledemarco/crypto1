@@ -30,6 +30,9 @@ app = FastAPI(title="Vibe-Trading Strategy Service", version="1.0.0")
 VIBE_TIMEOUT = int(os.environ.get("VIBE_TIMEOUT", 600))
 SERVICE_TOKEN = os.environ.get("SERVICE_TOKEN", "")
 
+_port = os.environ.get("PORT", "8080")
+print(f"[startup] Vibe-Trading service — PORT={_port}  SERVICE_TOKEN={'SET' if SERVICE_TOKEN else 'OPEN'}", flush=True)
+
 
 # ── Auth helper ───────────────────────────────────────────────────────────────
 
@@ -123,21 +126,27 @@ def _run_vibe(req: GenerateRequest) -> str:
                 ["vibe-trading", "--code", run_id],
                 capture_output=True, text=True, timeout=30, env=env,
             )
-            if rc.returncode == 0 and "def " in rc.stdout:
+            print(f"[vibe] --code exit={rc.returncode} len={len(rc.stdout)}", flush=True)
+            if rc.returncode == 0 and len(rc.stdout.strip()) > 20:
                 return rc.stdout
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[vibe] --code exception: {e}", flush=True)
 
-        # Method 2: largest .py in run_dir
+        # Method 2: scan run_dir recursively for .py files
         if run_dir and os.path.isdir(run_dir):
+            all_files = []
+            for root, _, files in os.walk(run_dir):
+                for fname in files:
+                    all_files.append(os.path.join(root, fname))
+            print(f"[vibe] run_dir={run_dir!r} files={all_files}", flush=True)
+
             candidates = []
-            for fname in os.listdir(run_dir):
-                if not fname.endswith(".py") or "test" in fname.lower():
+            for fpath in all_files:
+                if not fpath.endswith(".py"):
                     continue
-                fpath = os.path.join(run_dir, fname)
                 try:
                     content = open(fpath, encoding="utf-8").read()
-                    if "def " in content and len(content) > 100:
+                    if len(content) > 30:
                         candidates.append((len(content), content))
                 except Exception:
                     pass
