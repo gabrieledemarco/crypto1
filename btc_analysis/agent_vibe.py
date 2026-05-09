@@ -280,6 +280,11 @@ Return ONLY a ```python block.
 
 _REQUIRED_COLS = ("signal", "SL_dist", "TP_dist")
 
+# Sentinel present in the prompt template placeholder — if this appears in the
+# extracted code it means the Railway service returned the prompt example instead
+# of the actual LLM-generated strategy.
+_PLACEHOLDER_SENTINEL = "# implementation using only pd and np"
+
 
 def _has_cols(code: str) -> bool:
     """Accept both single and double quote styles for column assignment."""
@@ -295,6 +300,15 @@ def _adapt_code(
     openrouter_key: str,
     openrouter_model: str,
 ) -> str:
+    # Detect the prompt placeholder — Railway extracted the template instead of
+    # the real strategy (happens when req.json is scanned instead of trace.jsonl)
+    if _PLACEHOLDER_SENTINEL in raw:
+        raise ValueError(
+            "Il servizio Railway ha restituito il codice placeholder del prompt "
+            "invece della strategia generata. Verifica che vibe-trading stia "
+            "completando correttamente l'esecuzione (controlla i log Railway)."
+        )
+
     # Test raw first with actual execution
     if "def generate_signals_agent" in raw:
         try:
