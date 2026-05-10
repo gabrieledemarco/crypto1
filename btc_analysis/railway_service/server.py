@@ -203,6 +203,11 @@ def _run_vibe(req: GenerateRequest) -> str:
                 except json.JSONDecodeError:
                     pass
 
+        print(f"[vibe] exit={r.returncode} stdout_len={len(r.stdout)} stderr_len={len(r.stderr)}", flush=True)
+        print(f"[vibe] stdout (last 600): {r.stdout[-600:]!r}", flush=True)
+        if r.stderr:
+            print(f"[vibe] stderr (last 300): {r.stderr[-300:]!r}", flush=True)
+
         if not run_data:
             raise RuntimeError(
                 f"vibe-trading exit={r.returncode}. "
@@ -242,6 +247,21 @@ def _run_vibe(req: GenerateRequest) -> str:
                 for fname in files:
                     all_files.append(os.path.join(root, fname))
             print(f"[vibe] run_dir={run_dir!r} files={all_files}", flush=True)
+
+            # Diagnostic: dump first 800 chars of each non-req file so we can
+            # see the actual format and fix extraction if needed.
+            for fpath in all_files:
+                if os.path.basename(fpath) == "req.json":
+                    continue
+                try:
+                    raw = open(fpath, encoding="utf-8").read()
+                    print(
+                        f"[vibe] {os.path.basename(fpath)} "
+                        f"({len(raw)} chars): {raw[:800]!r}",
+                        flush=True,
+                    )
+                except Exception as exc:
+                    print(f"[vibe] cannot read {fpath}: {exc}", flush=True)
 
             code = _extract_code_from_run_dir(run_dir, all_files)
             if code:
