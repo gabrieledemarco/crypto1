@@ -1,11 +1,12 @@
 """
 agent_vibe.py
 =============
-Step 2: generazione strategia tramite Vibe-Trading.
+Step 2: generazione strategia tramite il Railway LLM service.
 
 Modalità (in ordine di priorità):
-  1. RAILWAY  — se VIBE_TRADING_API_URL è impostato (o passato come parametro),
-                chiama il microservizio Railway via HTTP.
+  1. RAILWAY  — se VIBE_TRADING_API_URL è impostato, chiama il microservizio
+                Railway (FastAPI) che a sua volta chiama Claude/OpenRouter.
+                Il servizio Railway risolve i limiti di timeout di Streamlit Cloud.
   2. CLI      — se vibe-trading-ai è installato localmente, usa subprocess.
 
 In caso di errore, propaga l'eccezione (nessun fallback silenzioso).
