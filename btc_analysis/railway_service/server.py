@@ -368,51 +368,6 @@ def _run_vibe_cli(req: GenerateRequest) -> str:
         shutil.rmtree(vibe_home, ignore_errors=True)
 
 
-# ── Direct LLM fallback ───────────────────────────────────────────────────────
-
-def _call_llm_direct(req: GenerateRequest) -> str:
-    """Call Anthropic or OpenRouter directly (fallback when vibe-trading fails)."""
-    if req.anthropic_key:
-        import anthropic
-        print("[llm] fallback: Anthropic claude-opus-4-7 …", flush=True)
-        client = anthropic.Anthropic(api_key=req.anthropic_key)
-        response = client.messages.create(
-            model="claude-opus-4-7",
-            max_tokens=4096,
-            messages=[{"role": "user", "content": req.prompt}],
-        )
-        result = "".join(
-            block.text for block in response.content if hasattr(block, "text")
-        )
-        print(f"[llm] Anthropic ok ({len(result)} chars)", flush=True)
-        return result
-
-    if req.openrouter_key:
-        import requests as _req
-        model = req.openrouter_model or "anthropic/claude-opus-4-7"
-        print(f"[llm] fallback: OpenRouter {model} …", flush=True)
-        resp = _req.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {req.openrouter_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/gabrieledemarco/crypto1",
-            },
-            json={
-                "model": model,
-                "max_tokens": 4096,
-                "messages": [{"role": "user", "content": req.prompt}],
-            },
-            timeout=300,
-        )
-        resp.raise_for_status()
-        result = resp.json()["choices"][0]["message"]["content"]
-        print(f"[llm] OpenRouter ok ({len(result)} chars)", flush=True)
-        return result
-
-    raise RuntimeError("No API keys provided.")
-
-
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -427,13 +382,7 @@ def generate(
 ):
     _check_auth(authorization)
     try:
-        # Primary: vibe-trading with user's LLM
-        try:
-            code = _run_vibe_cli(req)
-            return GenerateResponse(code=code)
-        except Exception as vibe_exc:
-            print(f"[vibe] failed ({vibe_exc}) — fallback to direct LLM", flush=True)
-            code = _call_llm_direct(req)
-            return GenerateResponse(code=code)
+        code = _run_vibe_cli(req)
+        return GenerateResponse(code=code)
     except Exception as exc:
         return GenerateResponse(error=str(exc))
