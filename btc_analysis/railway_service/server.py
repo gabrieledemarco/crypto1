@@ -162,17 +162,30 @@ def _extract_code_from_run_dir(run_dir: str, all_files: list) -> str:
 def _find_vibe_agent_dir() -> str:
     """
     Find the vibe-trading agent/ directory that contains the .env file.
-    vibe-trading stores runs at <site-packages>/runs/ so agent/ is in
-    the same site-packages root.
+    The stack trace shows src/providers/llm.py is at site-packages level,
+    so agent/ is in the same site-packages root.
     """
-    # Direct check: site-packages/agent/
+    # Strategy 1: find via src.providers.llm (visible in the error stack trace)
+    # Path: <site-packages>/src/providers/llm.py → 3 dirname() → site-packages
+    try:
+        spec = importlib.util.find_spec("src.providers.llm")
+        if spec and spec.origin:
+            site_pkgs = os.path.dirname(os.path.dirname(os.path.dirname(spec.origin)))
+            candidate = os.path.join(site_pkgs, "agent")
+            if os.path.isdir(candidate):
+                print(f"[vibe] found agent/ via src.providers.llm: {candidate}", flush=True)
+                return candidate
+    except Exception as exc:
+        print(f"[vibe] src.providers.llm lookup failed: {exc}", flush=True)
+
+    # Strategy 2: scan sys.path for agent/ subdirectory
     for path in sys.path:
         candidate = os.path.join(path, "agent")
         if os.path.isdir(candidate):
-            print(f"[vibe] found agent/ at {candidate}", flush=True)
+            print(f"[vibe] found agent/ via sys.path: {candidate}", flush=True)
             return candidate
 
-    # Via importlib
+    # Strategy 3: importlib on vibe_trading module
     for mod_name in ("vibe_trading", "vibe-trading"):
         try:
             spec = importlib.util.find_spec(mod_name)
@@ -181,12 +194,20 @@ def _find_vibe_agent_dir() -> str:
                 for rel in ("agent", "../agent"):
                     candidate = os.path.normpath(os.path.join(pkg_dir, rel))
                     if os.path.isdir(candidate):
-                        print(f"[vibe] found agent/ at {candidate}", flush=True)
+                        print(f"[vibe] found agent/ via {mod_name}: {candidate}", flush=True)
                         return candidate
         except Exception:
             pass
 
-    print("[vibe] WARNING: agent/ directory not found", flush=True)
+    # Strategy 4: hardcoded known path (Python 3.11 site-packages on Railway)
+    hardcoded = "/usr/local/lib/python3.11/site-packages/agent"
+    if os.path.isdir(hardcoded):
+        print(f"[vibe] found agent/ via hardcoded path: {hardcoded}", flush=True)
+        return hardcoded
+
+    print("[vibe] WARNING: agent/ directory not found — listing sys.path:", flush=True)
+    for p in sys.path:
+        print(f"  {p}", flush=True)
     return ""
 
 
@@ -247,9 +268,14 @@ def _run_vibe_cli(req: GenerateRequest) -> str:
     try:
         env = os.environ.copy()
         if req.anthropic_key:
-            env["ANTHROPIC_API_KEY"] = req.anthropic_key
-        if req.openrouter_key:
-            env["OPENROUTER_API_KEY"] = req.openrouter_key
+            env["LANGCHAIN_PROVIDER"]   = "anthropic"
+            env["LANGCHAIN_MODEL_NAME"] = "claude-opus-4-7"
+            env["ANTHROPIC_API_KEY"]    = req.anthropic_key
+        elif req.openrouter_key:
+            model = req.openrouter_model or "anthropic/claude-opus-4-7"
+            env["LANGCHAIN_PROVIDER"]   = "openrouter"
+            env["LANGCHAIN_MODEL_NAME"] = model
+            env["OPENROUTER_API_KEY"]   = req.openrouter_key
         env["HOME"]              = vibe_home
         env["VIBE_TRADING_HOME"] = vibe_home
         env["XDG_DATA_HOME"]     = os.path.join(vibe_home, ".local", "share")
