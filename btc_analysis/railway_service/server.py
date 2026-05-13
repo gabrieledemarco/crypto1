@@ -207,15 +207,7 @@ def _write_vibe_config(
     env_path = _find_vibe_env_path()
     lines: list[str] = []
 
-    if anthropic_key:
-        lines = [
-            "LANGCHAIN_PROVIDER=anthropic",
-            "LANGCHAIN_MODEL_NAME=claude-opus-4-7",
-            f"ANTHROPIC_API_KEY={anthropic_key}",
-        ]
-        print(f"[vibe] writing config: anthropic/claude-opus-4-7 → {env_path}", flush=True)
-
-    elif openrouter_key:
+    if openrouter_key:
         model = openrouter_model or "anthropic/claude-opus-4-7"
         lines = [
             "LANGCHAIN_PROVIDER=openrouter",
@@ -223,6 +215,14 @@ def _write_vibe_config(
             f"OPENROUTER_API_KEY={openrouter_key}",
         ]
         print(f"[vibe] writing config: openrouter/{model} → {env_path}", flush=True)
+
+    elif anthropic_key:
+        lines = [
+            "LANGCHAIN_PROVIDER=anthropic",
+            "LANGCHAIN_MODEL_NAME=claude-opus-4-7",
+            f"ANTHROPIC_API_KEY={anthropic_key}",
+        ]
+        print(f"[vibe] writing config: anthropic/claude-opus-4-7 → {env_path}", flush=True)
 
     if not lines:
         return False
@@ -247,20 +247,24 @@ def _run_vibe_cli(req: GenerateRequest) -> str:
     prompt_file = None
     try:
         env = os.environ.copy()
-        # Remove any stale LLM keys that the container may have inherited
+        # Clear any stale LLM config that may be in the container env
         for _k in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
                    "LANGCHAIN_PROVIDER", "LANGCHAIN_MODEL_NAME"):
             env.pop(_k, None)
 
-        if req.anthropic_key:
-            env["LANGCHAIN_PROVIDER"]   = "anthropic"
-            env["LANGCHAIN_MODEL_NAME"] = "claude-opus-4-7"
-            env["ANTHROPIC_API_KEY"]    = req.anthropic_key
-        elif req.openrouter_key:
-            model = req.openrouter_model or "anthropic/claude-opus-4-7"
+        # Prefer keys passed in the request; fall back to Railway env vars
+        _ant_key = req.anthropic_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        _or_key  = req.openrouter_key or os.environ.get("OPENROUTER_API_KEY", "")
+
+        if _or_key:
+            model = req.openrouter_model or os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-4-7")
             env["LANGCHAIN_PROVIDER"]   = "openrouter"
             env["LANGCHAIN_MODEL_NAME"] = model
-            env["OPENROUTER_API_KEY"]   = req.openrouter_key
+            env["OPENROUTER_API_KEY"]   = _or_key
+        elif _ant_key:
+            env["LANGCHAIN_PROVIDER"]   = "anthropic"
+            env["LANGCHAIN_MODEL_NAME"] = "claude-opus-4-7"
+            env["ANTHROPIC_API_KEY"]    = _ant_key
         env["HOME"]              = vibe_home
         env["VIBE_TRADING_HOME"] = vibe_home
         env["XDG_DATA_HOME"]     = os.path.join(vibe_home, ".local", "share")
