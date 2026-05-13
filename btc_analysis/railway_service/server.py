@@ -159,56 +159,43 @@ def _extract_code_from_run_dir(run_dir: str, all_files: list) -> str:
 
 # ── vibe-trading config writer ────────────────────────────────────────────────
 
-def _find_vibe_agent_dir() -> str:
+def _find_vibe_env_path() -> str:
     """
-    Find the vibe-trading agent/ directory that contains the .env file.
-    The stack trace shows src/providers/llm.py is at site-packages level,
-    so agent/ is in the same site-packages root.
+    Find the path where vibe-trading reads its .env config.
+
+    The vibe-trading-ai package (HKUDS/Vibe-Trading) installs the contents
+    of its agent/ directory directly into site-packages, so:
+      agent/src/providers/llm.py  →  <site-packages>/src/providers/llm.py
+      agent/.env                  →  <site-packages>/.env
+
+    We locate site-packages via src.providers.llm (visible in stack traces).
     """
-    # Strategy 1: find via src.providers.llm (visible in the error stack trace)
-    # Path: <site-packages>/src/providers/llm.py → 3 dirname() → site-packages
+    # Strategy 1: src.providers.llm → 3×dirname → site-packages
     try:
         spec = importlib.util.find_spec("src.providers.llm")
         if spec and spec.origin:
-            site_pkgs = os.path.dirname(os.path.dirname(os.path.dirname(spec.origin)))
-            candidate = os.path.join(site_pkgs, "agent")
-            if os.path.isdir(candidate):
-                print(f"[vibe] found agent/ via src.providers.llm: {candidate}", flush=True)
-                return candidate
+            site_pkgs = os.path.dirname(  # site-packages
+                os.path.dirname(          # src/
+                    os.path.dirname(spec.origin)  # src/providers/
+                )
+            )
+            path = os.path.join(site_pkgs, ".env")
+            print(f"[vibe] .env path (via src.providers.llm): {path}", flush=True)
+            return path
     except Exception as exc:
         print(f"[vibe] src.providers.llm lookup failed: {exc}", flush=True)
 
-    # Strategy 2: scan sys.path for agent/ subdirectory
-    for path in sys.path:
-        candidate = os.path.join(path, "agent")
-        if os.path.isdir(candidate):
-            print(f"[vibe] found agent/ via sys.path: {candidate}", flush=True)
-            return candidate
-
-    # Strategy 3: importlib on vibe_trading module
-    for mod_name in ("vibe_trading", "vibe-trading"):
-        try:
-            spec = importlib.util.find_spec(mod_name)
-            if spec and spec.origin:
-                pkg_dir = os.path.dirname(spec.origin)
-                for rel in ("agent", "../agent"):
-                    candidate = os.path.normpath(os.path.join(pkg_dir, rel))
-                    if os.path.isdir(candidate):
-                        print(f"[vibe] found agent/ via {mod_name}: {candidate}", flush=True)
-                        return candidate
-        except Exception:
-            pass
-
-    # Strategy 4: hardcoded known path (Python 3.11 site-packages on Railway)
-    hardcoded = "/usr/local/lib/python3.11/site-packages/agent"
-    if os.path.isdir(hardcoded):
-        print(f"[vibe] found agent/ via hardcoded path: {hardcoded}", flush=True)
-        return hardcoded
-
-    print("[vibe] WARNING: agent/ directory not found — listing sys.path:", flush=True)
+    # Strategy 2: scan sys.path — find the entry that contains src/providers/
     for p in sys.path:
-        print(f"  {p}", flush=True)
-    return ""
+        if os.path.isfile(os.path.join(p, "src", "providers", "llm.py")):
+            path = os.path.join(p, ".env")
+            print(f"[vibe] .env path (via sys.path scan): {path}", flush=True)
+            return path
+
+    # Strategy 3: hardcoded Railway Python 3.11 location
+    hardcoded = "/usr/local/lib/python3.11/site-packages/.env"
+    print(f"[vibe] .env path (hardcoded fallback): {hardcoded}", flush=True)
+    return hardcoded
 
 
 def _write_vibe_config(
@@ -216,15 +203,8 @@ def _write_vibe_config(
     openrouter_key: str,
     openrouter_model: str,
 ) -> bool:
-    """
-    Write agent/.env so vibe-trading uses the caller's LLM instead of
-    the container's hardcoded default.
-    """
-    agent_dir = _find_vibe_agent_dir()
-    if not agent_dir:
-        return False
-
-    env_path = os.path.join(agent_dir, ".env")
+    """Write vibe-trading's .env so it uses the caller's LLM."""
+    env_path = _find_vibe_env_path()
     lines: list[str] = []
 
     if anthropic_key:
@@ -233,7 +213,7 @@ def _write_vibe_config(
             "LANGCHAIN_MODEL_NAME=claude-opus-4-7",
             f"ANTHROPIC_API_KEY={anthropic_key}",
         ]
-        print(f"[vibe] writing config: anthropic / claude-opus-4-7 → {env_path}", flush=True)
+        print(f"[vibe] writing config: anthropic/claude-opus-4-7 → {env_path}", flush=True)
 
     elif openrouter_key:
         model = openrouter_model or "anthropic/claude-opus-4-7"
@@ -242,7 +222,7 @@ def _write_vibe_config(
             f"LANGCHAIN_MODEL_NAME={model}",
             f"OPENROUTER_API_KEY={openrouter_key}",
         ]
-        print(f"[vibe] writing config: openrouter / {model} → {env_path}", flush=True)
+        print(f"[vibe] writing config: openrouter/{model} → {env_path}", flush=True)
 
     if not lines:
         return False
@@ -267,6 +247,11 @@ def _run_vibe_cli(req: GenerateRequest) -> str:
     prompt_file = None
     try:
         env = os.environ.copy()
+        # Remove any stale LLM keys that the container may have inherited
+        for _k in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
+                   "LANGCHAIN_PROVIDER", "LANGCHAIN_MODEL_NAME"):
+            env.pop(_k, None)
+
         if req.anthropic_key:
             env["LANGCHAIN_PROVIDER"]   = "anthropic"
             env["LANGCHAIN_MODEL_NAME"] = "claude-opus-4-7"
