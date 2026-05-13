@@ -209,12 +209,15 @@ def _write_vibe_config(
 
     if openrouter_key:
         model = openrouter_model or "anthropic/claude-opus-4-7"
+        # OpenRouter is OpenAI-API-compatible: use openai provider + custom base URL
         lines = [
-            "LANGCHAIN_PROVIDER=openrouter",
+            "LANGCHAIN_PROVIDER=openai",
             f"LANGCHAIN_MODEL_NAME={model}",
-            f"OPENROUTER_API_KEY={openrouter_key}",
+            f"OPENAI_API_KEY={openrouter_key}",
+            "OPENAI_BASE_URL=https://openrouter.ai/api/v1",
+            "OPENAI_API_BASE=https://openrouter.ai/api/v1",
         ]
-        print(f"[vibe] writing config: openrouter/{model} → {env_path}", flush=True)
+        print(f"[vibe] writing config: openrouter(openai)/{model} → {env_path}", flush=True)
 
     elif anthropic_key:
         lines = [
@@ -248,7 +251,8 @@ def _run_vibe_cli(req: GenerateRequest) -> str:
     try:
         env = os.environ.copy()
         # Clear any stale LLM config that may be in the container env
-        for _k in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
+        for _k in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_API_BASE",
+                   "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
                    "LANGCHAIN_PROVIDER", "LANGCHAIN_MODEL_NAME"):
             env.pop(_k, None)
 
@@ -258,9 +262,12 @@ def _run_vibe_cli(req: GenerateRequest) -> str:
 
         if _or_key:
             model = req.openrouter_model or os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-4-7")
-            env["LANGCHAIN_PROVIDER"]   = "openrouter"
+            # OpenRouter is OpenAI-API-compatible: use openai provider + custom base URL
+            env["LANGCHAIN_PROVIDER"]   = "openai"
             env["LANGCHAIN_MODEL_NAME"] = model
-            env["OPENROUTER_API_KEY"]   = _or_key
+            env["OPENAI_API_KEY"]       = _or_key
+            env["OPENAI_BASE_URL"]      = "https://openrouter.ai/api/v1"
+            env["OPENAI_API_BASE"]      = "https://openrouter.ai/api/v1"
         elif _ant_key:
             env["LANGCHAIN_PROVIDER"]   = "anthropic"
             env["LANGCHAIN_MODEL_NAME"] = "claude-opus-4-7"
