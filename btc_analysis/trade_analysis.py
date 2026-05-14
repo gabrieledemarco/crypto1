@@ -32,6 +32,10 @@ def load_trades(asset: str = "BTC-USD") -> pd.DataFrame:
     df["entry_month"] = pd.to_datetime(df["entry_time"]).dt.to_period("M").astype(str)
     df["win"] = df["pnl"] > 0
     df["rr"] = df["pnl_pct"].abs()  # proxy for R:R magnitude
+    if "duration_h" not in df.columns:
+        df["duration_h"] = (
+            pd.to_datetime(df["exit_time"]) - pd.to_datetime(df["entry_time"])
+        ).dt.total_seconds() / 3600
     # Enrich with GARCH regime from hourly data
     _enrich_regime(df, fname)
     return df
@@ -83,6 +87,7 @@ def direction_stats(df: pd.DataFrame) -> pd.DataFrame:
         losses = sub[~sub["win"]]
         gross_profit = wins["pnl"].sum() if not wins.empty else 0.0
         gross_loss   = abs(losses["pnl"].sum()) if not losses.empty else 1e-9
+        dur_mean = round(sub["duration_h"].mean(), 1) if "duration_h" in sub.columns else None
         rows.append({
             "Direzione":       direction,
             "N trade":         len(sub),
@@ -93,7 +98,7 @@ def direction_stats(df: pd.DataFrame) -> pd.DataFrame:
             "P&L totale":      round(sub["pnl"].sum(), 2),
             "SL hit %":        round((sub["exit_reason"] == "SL").mean() * 100, 1),
             "TP hit %":        round((sub["exit_reason"] == "TP").mean() * 100, 1),
-            "Durata media h":  round(sub["duration_h"].mean(), 1),
+            "Durata media h":  dur_mean,
         })
     return pd.DataFrame(rows)
 
