@@ -43,8 +43,8 @@ IMPORTANT: Do NOT download data. Do NOT import libraries. ONLY write the functio
 ══ STATISTICAL ANALYSIS ══
 {context}
 
-ATR: median {atr.get('median_atr_pct', 0.003)*100:.3f}%
-2×ATR stop-loss: {atr.get('sl2x_pct', 0.006)*100:.3f}%
+ATR: median {atr.get('median_atr_pct', 0.3):.3f}%
+2×ATR stop-loss: {atr.get('sl2x_pct', 0.6):.3f}%
 
 ══ FUNCTION CONTRACT ══
 Input df has pre-computed columns:
@@ -166,9 +166,9 @@ def _make_vibe_env(
         env["ANTHROPIC_API_KEY"]    = anthropic_key
         env["LANGCHAIN_MODEL_NAME"] = "claude-opus-4-7"
     elif openrouter_key:
-        env["LANGCHAIN_PROVIDER"]   = "openai"
-        env["OPENAI_API_KEY"]       = openrouter_key
-        env["OPENAI_BASE_URL"]      = "https://openrouter.ai/api/v1"
+        env["LANGCHAIN_PROVIDER"]   = "openrouter"
+        env["OPENROUTER_API_KEY"]   = openrouter_key
+        env["OPENROUTER_BASE_URL"]  = "https://openrouter.ai/api/v1"
         env["LANGCHAIN_MODEL_NAME"] = openrouter_model or "anthropic/claude-opus-4-7"
 
     import tempfile as _tf
@@ -491,12 +491,60 @@ def run_vibe_agent(
 
     # ── Mode 2: Local CLI ─────────────────────────────────────────────────────
     if not _is_vibe_installed():
-        raise RuntimeError(
-            "vibe-trading-ai non installato e nessun URL Railway configurato. "
-            "Configura VIBE_TRADING_API_URL nella sidebar."
-        )
+        print("  [vibe] vibe-trading CLI non disponibile — generazione stats-based...")
+        from agent_strategy import _generate_strategy_from_stats, _quick_backtest
+        cfg, code, report = _generate_strategy_from_stats(asset)
+        metrics = _quick_backtest(code, asset)
+        if metrics:
+            n  = metrics.get("n_trades", 0)
+            sh = metrics.get("sharpe", -999.0)
+            pf = metrics.get("profit_factor", 0.0)
+            wr = metrics.get("win_rate", 0.0)
+            cagr = metrics.get("cagr", -999.0)
+            print(
+                f"  [vibe] Backtest: N={n}  WR={wr:.1f}%  "
+                f"Sharpe={sh:.3f}  CAGR={cagr:.1f}%  PF={pf:.3f}"
+            )
+            report += (
+                f"\n\n## Backtest (in-sample)\n"
+                f"| Metric | Value |\n|---|---|\n"
+                f"| N trades | {n} |\n"
+                f"| Win Rate | {wr:.1f}% |\n"
+                f"| Sharpe   | {sh:.3f} |\n"
+                f"| CAGR     | {cagr:.1f}% |\n"
+                f"| Profit Factor | {pf:.3f} |\n"
+            )
+        print(f"  [vibe] ✅ Strategia stats-based: {cfg.get('strategy_name')}")
+        return cfg, code, report, "stats-derived"
 
     env, vibe_home = _make_vibe_env(anthropic_key, openrouter_key, openrouter_model)
+
+    # Write .env to vibe_home CWD — load_dotenv() checks CWD before site-packages
+    _or = openrouter_key or os.environ.get("OPENROUTER_API_KEY", "")
+    _ant = anthropic_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    _mod = openrouter_model or os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-4-7")
+    if _or:
+        _env_lines = [
+            "LANGCHAIN_PROVIDER=openrouter",
+            f"LANGCHAIN_MODEL_NAME={_mod}",
+            f"OPENROUTER_API_KEY={_or}",
+            "OPENROUTER_BASE_URL=https://openrouter.ai/api/v1",
+        ]
+    elif _ant:
+        _env_lines = [
+            "LANGCHAIN_PROVIDER=anthropic",
+            "LANGCHAIN_MODEL_NAME=claude-opus-4-7",
+            f"ANTHROPIC_API_KEY={_ant}",
+        ]
+    else:
+        _env_lines = []
+    if _env_lines:
+        try:
+            with open(os.path.join(vibe_home, ".env"), "w") as _f:
+                _f.write("\n".join(_env_lines) + "\n")
+        except Exception as _we:
+            print(f"  [vibe] WARNING: cannot write vibe_home/.env: {_we}")
+
     prompt_file = None
     try:
         with tempfile.NamedTemporaryFile(
