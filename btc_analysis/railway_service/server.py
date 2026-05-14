@@ -213,15 +213,16 @@ def _write_vibe_config(
 
     if openrouter_key:
         model = openrouter_model or "anthropic/claude-opus-4-7"
-        # OpenRouter is OpenAI-API-compatible: use openai provider + custom base URL
+        # vibe-trading has a native openrouter provider that reads
+        # OPENROUTER_API_KEY + OPENROUTER_BASE_URL (without OPENROUTER_BASE_URL
+        # it silently falls back to OpenAI's endpoint → 401)
         lines = [
-            "LANGCHAIN_PROVIDER=openai",
+            "LANGCHAIN_PROVIDER=openrouter",
             f"LANGCHAIN_MODEL_NAME={model}",
-            f"OPENAI_API_KEY={openrouter_key}",
-            "OPENAI_BASE_URL=https://openrouter.ai/api/v1",
-            "OPENAI_API_BASE=https://openrouter.ai/api/v1",
+            f"OPENROUTER_API_KEY={openrouter_key}",
+            "OPENROUTER_BASE_URL=https://openrouter.ai/api/v1",
         ]
-        print(f"[vibe] writing config: openrouter(openai)/{model} → {env_path}", flush=True)
+        print(f"[vibe] writing config: openrouter/{model} → {env_path}", flush=True)
 
     elif anthropic_key:
         lines = [
@@ -261,17 +262,18 @@ def _run_vibe_cli(req: GenerateRequest) -> str:
         env = os.environ.copy()
         # Clear any stale LLM config that may be in the container env
         for _k in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_API_BASE",
-                   "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
+                   "OPENROUTER_API_KEY", "OPENROUTER_BASE_URL",
+                   "ANTHROPIC_API_KEY",
                    "LANGCHAIN_PROVIDER", "LANGCHAIN_MODEL_NAME"):
             env.pop(_k, None)
 
         if _or_key:
-            # OpenRouter is OpenAI-API-compatible: use openai provider + custom base URL
-            env["LANGCHAIN_PROVIDER"]   = "openai"
-            env["LANGCHAIN_MODEL_NAME"] = _model
-            env["OPENAI_API_KEY"]       = _or_key
-            env["OPENAI_BASE_URL"]      = "https://openrouter.ai/api/v1"
-            env["OPENAI_API_BASE"]      = "https://openrouter.ai/api/v1"
+            # vibe-trading native openrouter provider: needs OPENROUTER_BASE_URL
+            # Without it, vibe-trading falls back to OpenAI endpoint → 401
+            env["LANGCHAIN_PROVIDER"]    = "openrouter"
+            env["LANGCHAIN_MODEL_NAME"]  = _model
+            env["OPENROUTER_API_KEY"]    = _or_key
+            env["OPENROUTER_BASE_URL"]   = "https://openrouter.ai/api/v1"
         elif _ant_key:
             env["LANGCHAIN_PROVIDER"]   = "anthropic"
             env["LANGCHAIN_MODEL_NAME"] = "claude-opus-4-7"
