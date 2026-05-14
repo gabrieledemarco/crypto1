@@ -416,6 +416,74 @@ with st.sidebar:
             except Exception as _e1b:
                 st.error(f"Errore: {_e1b}")
 
+    # ── Step 1.5: Natural-language strategy input ─────────────────────────────
+    with st.expander("✍️ Descrivi la tua strategia in linguaggio naturale (opzionale)", expanded=False):
+        st.caption(
+            "Scrivi la tua idea di strategia in italiano o inglese. "
+            "Vibe-Trading la implementerà e ottimizzerà automaticamente per massimizzare le performance."
+        )
+        _nl_desc = st.text_area(
+            "Descrizione strategia",
+            placeholder=(
+                "Esempio: Voglio fare trend following su BTC comprando quando il prezzo supera "
+                "i massimi delle ultime 6 barre e l'EMA50 è sopra l'EMA200. "
+                "Chiudo in profitto a 3× il rischio e taglio le perdite a 1.5× l'ATR."
+            ),
+            height=120,
+            label_visibility="collapsed",
+            key="nl_strategy_desc",
+        )
+        _nl_btn = st.button(
+            "✨ Genera da Descrizione",
+            use_container_width=True,
+            disabled=not _nl_desc.strip(),
+            help="Chiama Vibe-Trading passando la tua descrizione + analisi statistica BTC.",
+        )
+
+        if _nl_btn and _nl_desc.strip():
+            if not _ant_key and not _or_key:
+                st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter) per generare la strategia.")
+            elif _ensure_download():
+                import importlib as _il0
+                import agent_vibe as _av0;     _il0.reload(_av0)
+                import agent_strategy as _ag0; _il0.reload(_ag0)
+
+                with st.status("✨ Generazione strategia da descrizione naturale…", expanded=True) as _nl_status:
+                    try:
+                        st.write("📝 Descrizione ricevuta, costruisco il prompt ottimizzato…")
+                        _nl_prompt = _av0.build_user_description_prompt(_nl_desc.strip(), asset)
+                        st.write(f"✅ Prompt costruito ({len(_nl_prompt)} chars) — invio a Vibe-Trading…")
+
+                        _cfg_nl, _code_nl, _report_nl, _engine_nl = _av0.run_vibe_agent(
+                            asset=asset,
+                            anthropic_key=_ant_key,
+                            openrouter_key=_or_key,
+                            openrouter_model=_or_model,
+                            vibe_api_url=_vibe_url,
+                            vibe_service_token=_vibe_token,
+                            prompt_override=_nl_prompt,
+                        )
+                        _ag0.save_outputs(_cfg_nl, _code_nl, _report_nl)
+                        st.write(f"✅ Strategia generata via **{_engine_nl}**")
+                        st.write(
+                            f"`{_cfg_nl.get('strategy_name','?')}` "
+                            f"({_cfg_nl.get('strategy_type','?')}) | "
+                            f"SL {_cfg_nl.get('sl_mult')}×ATR | "
+                            f"TP {_cfg_nl.get('tp_mult')}×ATR"
+                        )
+                        if _cfg_nl.get("rationale"):
+                            st.info(_cfg_nl["rationale"])
+
+                        st.write("📈 Eseguo backtest della nuova strategia…")
+                        _run_script("04_backtest.py", extra_env=_env)
+                        st.cache_data.clear()
+
+                        _nl_status.update(label="✅ Strategia da descrizione pronta", state="complete", expanded=False)
+                        st.success("Strategia generata e testata. Consulta i grafici nella pagina principale.")
+                    except Exception as _nl_e:
+                        _nl_status.update(label="❌ Generazione fallita", state="error")
+                        st.error(f"Errore: {_nl_e}")
+
     # ── Step 2 ────────────────────────────────────────────────────────────────
     if st.button("🤖 2. Elabora Strategia", use_container_width=True,
                  help="Genera generate_signals_agent() via Vibe-Trading (Railway/CLI). "

@@ -3,14 +3,14 @@
   "strategy_type": "trend_following",
   "strategy_name": "Stat-Derived Trend Following \u2014 BTC-USD",
   "sl_mult": 2.5,
-  "tp_mult": 6.5,
+  "tp_mult": 7.0,
   "active_hours": [
-    5,
-    11
+    6,
+    17
   ],
   "commission": 0.0004,
   "slippage": 0.0001,
   "risk_per_trade": 0.01,
-  "rationale": "Hurst=0.5916>0.55 \u2192 momentum/trending regime; ACF(1)=0.0319 (momentum); kurtosis=8.95\u2192SL=2.5\u00d7ATR; active_hours=[5, 11] from best UTC hours [6, 7, 9, 10].",
+  "rationale": "Hurst=0.5916>0.55 \u2192 momentum/trending regime; kurtosis=8.95\u2192SL=2.5\u00d7ATR; TP=7.0\u00d7ATR\u2192R:R=2.8:1; two windows: EU morning [6-10] + US open [13-17] UTC; EMA gap 0.1% filter for confirmed trend (best hours 9h=4.9bps, 10h=3.0, 15h=2.4, 13h=1.9).",
   "source": "stats_derived"
 }
