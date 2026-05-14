@@ -114,41 +114,66 @@ def direction_stats(df: pd.DataFrame) -> pd.DataFrame:
 
 # ── Per-fold IS/OOS trade breakdown ──────────────────────────────────────────
 
+def _normalize_ts(s) -> pd.Series:
+    """Convert a series to timezone-naive UTC timestamps (floor to second)."""
+    s = pd.to_datetime(s, utc=True, errors="coerce")
+    if hasattr(s, "dt"):
+        return s.dt.tz_localize(None) if s.dt.tz is None else s.dt.tz_convert(None)
+    return s
+
+
 def fold_direction_stats(trades_df: pd.DataFrame, wfo_df: pd.DataFrame) -> pd.DataFrame:
     """For each WFO fold: LONG vs SHORT stats in the OOS period."""
     if trades_df.empty or wfo_df.empty:
         return pd.DataFrame()
+
+    # Normalize entry_time to timezone-naive to avoid comparison errors
+    try:
+        entry_ts = pd.to_datetime(trades_df["entry_time"], utc=True, errors="coerce")
+        # Remove timezone info so comparison with naive WFO timestamps works
+        if entry_ts.dt.tz is not None:
+            entry_ts = entry_ts.dt.tz_convert(None)
+    except Exception:
+        entry_ts = pd.to_datetime(trades_df["entry_time"], errors="coerce")
+
     rows = []
     for _, fold in wfo_df.iterrows():
         try:
-            t_start = pd.to_datetime(fold.get("test_start", fold.get("train_end")))
-            t_end   = pd.to_datetime(fold.get("test_end"))
+            raw_start = fold.get("test_start") or fold.get("train_end")
+            raw_end   = fold.get("test_end")
+            if pd.isna(raw_start) or pd.isna(raw_end):
+                continue
+            t_start = pd.to_datetime(raw_start, utc=False)
+            t_end   = pd.to_datetime(raw_end,   utc=False)
+            if pd.isna(t_start) or pd.isna(t_end):
+                continue
         except Exception:
             continue
-        oos = trades_df[
-            (pd.to_datetime(trades_df["entry_time"]) >= t_start) &
-            (pd.to_datetime(trades_df["entry_time"]) < t_end)
-        ]
-        fold_num = fold.get("fold", "?")
-        period   = fold.get("period", "?")
+
+        mask = (entry_ts >= t_start) & (entry_ts < t_end)
+        oos  = trades_df[mask]
+
+        fold_num   = fold.get("fold", "?")
+        period     = fold.get("period", "?")
         oos_sharpe = fold.get("oos_sharpe", None)
+
         for direction in ["LONG", "SHORT", "ALL"]:
             sub = oos if direction == "ALL" else oos[oos["direction"] == direction]
             n = len(sub)
             wins   = sub[sub["win"]]
             losses = sub[~sub["win"]]
-            gp = wins["pnl"].sum()   if not wins.empty   else 0.0
+            gp = wins["pnl"].sum()        if not wins.empty   else 0.0
             gl = abs(losses["pnl"].sum()) if not losses.empty else 1e-9
             rows.append({
-                "Fold":         fold_num,
-                "Periodo OOS":  period,
-                "OOS Sharpe":   round(float(oos_sharpe), 3) if oos_sharpe is not None else None,
-                "Direzione":    direction,
-                "N trade":      n,
-                "Win rate %":   round(sub["win"].mean() * 100, 1) if n > 0 else 0.0,
-                "PF":           round(gp / gl, 3) if n > 0 else 0.0,
-                "P&L totale":   round(sub["pnl"].sum(), 2),
-                "SL hit %":     round((sub["exit_reason"] == "SL").mean() * 100, 1) if n > 0 else 0.0,
+                "Fold":        fold_num,
+                "Periodo OOS": period,
+                "OOS Sharpe":  round(float(oos_sharpe), 3) if oos_sharpe is not None else None,
+                "Direzione":   direction,
+                "N trade":     n,
+                "Win rate %":  round(sub["win"].mean() * 100, 1) if n > 0 else 0.0,
+                "PF":          round(gp / gl, 3)                  if n > 0 else 0.0,
+                "P&L totale":  round(sub["pnl"].sum(), 2),
+                "SL hit %":    round((sub["exit_reason"] == "SL").mean() * 100, 1) if n > 0 else 0.0,
             })
     return pd.DataFrame(rows)
 
