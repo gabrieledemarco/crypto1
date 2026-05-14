@@ -202,22 +202,27 @@ def _write_vibe_config(
     anthropic_key: str,
     openrouter_key: str,
     openrouter_model: str,
+    dest: str = "",
 ) -> bool:
-    """Write vibe-trading's .env so it uses the caller's LLM."""
-    env_path = _find_vibe_env_path()
+    """Write vibe-trading's .env so it uses the caller's LLM.
+
+    dest: explicit path; if empty, auto-detect via _find_vibe_env_path().
+    """
+    env_path = dest or _find_vibe_env_path()
     lines: list[str] = []
 
     if openrouter_key:
         model = openrouter_model or "anthropic/claude-opus-4-7"
-        # OpenRouter is OpenAI-API-compatible: use openai provider + custom base URL
+        # vibe-trading has a native openrouter provider that reads
+        # OPENROUTER_API_KEY + OPENROUTER_BASE_URL (without OPENROUTER_BASE_URL
+        # it silently falls back to OpenAI's endpoint → 401)
         lines = [
-            "LANGCHAIN_PROVIDER=openai",
+            "LANGCHAIN_PROVIDER=openrouter",
             f"LANGCHAIN_MODEL_NAME={model}",
-            f"OPENAI_API_KEY={openrouter_key}",
-            "OPENAI_BASE_URL=https://openrouter.ai/api/v1",
-            "OPENAI_API_BASE=https://openrouter.ai/api/v1",
+            f"OPENROUTER_API_KEY={openrouter_key}",
+            "OPENROUTER_BASE_URL=https://openrouter.ai/api/v1",
         ]
-        print(f"[vibe] writing config: openrouter(openai)/{model} → {env_path}", flush=True)
+        print(f"[vibe] writing config: openrouter/{model} → {env_path}", flush=True)
 
     elif anthropic_key:
         lines = [
@@ -243,8 +248,13 @@ def _write_vibe_config(
 
 def _run_vibe_cli(req: GenerateRequest) -> str:
     """Run vibe-trading CLI and return the generated code. Raises on failure."""
-    # Configure model BEFORE starting (writes agent/.env)
-    _write_vibe_config(req.anthropic_key, req.openrouter_key, req.openrouter_model)
+    # Resolve effective keys FIRST: request takes priority, Railway env as fallback
+    _ant_key = req.anthropic_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    _or_key  = req.openrouter_key or os.environ.get("OPENROUTER_API_KEY", "")
+    _model   = req.openrouter_model or os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-4-7")
+
+    # Write vibe-trading's site-packages .env with resolved keys
+    _write_vibe_config(_ant_key, _or_key, _model)
 
     vibe_home  = tempfile.mkdtemp(prefix="vibe_home_")
     prompt_file = None
@@ -252,22 +262,18 @@ def _run_vibe_cli(req: GenerateRequest) -> str:
         env = os.environ.copy()
         # Clear any stale LLM config that may be in the container env
         for _k in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_API_BASE",
-                   "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
+                   "OPENROUTER_API_KEY", "OPENROUTER_BASE_URL",
+                   "ANTHROPIC_API_KEY",
                    "LANGCHAIN_PROVIDER", "LANGCHAIN_MODEL_NAME"):
             env.pop(_k, None)
 
-        # Prefer keys passed in the request; fall back to Railway env vars
-        _ant_key = req.anthropic_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        _or_key  = req.openrouter_key or os.environ.get("OPENROUTER_API_KEY", "")
-
         if _or_key:
-            model = req.openrouter_model or os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-4-7")
-            # OpenRouter is OpenAI-API-compatible: use openai provider + custom base URL
-            env["LANGCHAIN_PROVIDER"]   = "openai"
-            env["LANGCHAIN_MODEL_NAME"] = model
-            env["OPENAI_API_KEY"]       = _or_key
-            env["OPENAI_BASE_URL"]      = "https://openrouter.ai/api/v1"
-            env["OPENAI_API_BASE"]      = "https://openrouter.ai/api/v1"
+            # vibe-trading native openrouter provider: needs OPENROUTER_BASE_URL
+            # Without it, vibe-trading falls back to OpenAI endpoint → 401
+            env["LANGCHAIN_PROVIDER"]    = "openrouter"
+            env["LANGCHAIN_MODEL_NAME"]  = _model
+            env["OPENROUTER_API_KEY"]    = _or_key
+            env["OPENROUTER_BASE_URL"]   = "https://openrouter.ai/api/v1"
         elif _ant_key:
             env["LANGCHAIN_PROVIDER"]   = "anthropic"
             env["LANGCHAIN_MODEL_NAME"] = "claude-opus-4-7"
@@ -277,6 +283,9 @@ def _run_vibe_cli(req: GenerateRequest) -> str:
         env["XDG_DATA_HOME"]     = os.path.join(vibe_home, ".local", "share")
         env["XDG_CONFIG_HOME"]   = os.path.join(vibe_home, ".config")
         env["XDG_CACHE_HOME"]    = os.path.join(vibe_home, ".cache")
+
+        # Write .env to vibe_home (CWD of subprocess) — load_dotenv() checks CWD first
+        _write_vibe_config(_ant_key, _or_key, _model, dest=os.path.join(vibe_home, ".env"))
 
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".txt", delete=False,
