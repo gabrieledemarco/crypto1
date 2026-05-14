@@ -99,6 +99,89 @@ def generate_signals_agent(df):
 """
 
 
+# ── Natural-language prompt builder ──────────────────────────────────────────
+
+def build_user_description_prompt(description: str, asset: str) -> str:
+    """Build a vibe-trading prompt from a user's natural-language strategy description.
+
+    The user's intent is preserved as the PRIMARY requirement; statistical context
+    is injected so the LLM can calibrate SL/TP and filters to maximise performance.
+    """
+    context = _build_context(asset)
+    atr     = _atr_stats(asset)
+    return f"""You are a quantitative trading developer for {asset}.
+
+The user has described the following strategy in natural language:
+
+"{description}"
+
+Your job:
+1. Interpret the user's intent and translate it into concrete technical indicators
+   and entry/exit rules for `generate_signals_agent(df)`.
+2. OPTIMISE the implementation to MAXIMISE Sharpe ratio and CAGR using the
+   statistical analysis provided below — choose the best hours, SL/TP multiples,
+   and any quality filters that boost performance.
+3. The user's core idea must be preserved; optimisation should REFINE it, not
+   ignore it.
+
+══ STATISTICAL ANALYSIS (use to calibrate parameters) ══
+{context}
+
+ATR: median {atr.get('median_atr_pct', 0.3):.3f}%
+2×ATR stop-loss: {atr.get('sl2x_pct', 0.6):.3f}%
+
+══ FUNCTION CONTRACT ══
+Input df has pre-computed columns:
+  Open, High, Low, Close, Volume
+  ATR14       — 14-period ATR (absolute price)
+  RSI14       — RSI 0-100
+  EMA50       — 50-period EMA
+  EMA200      — 200-period EMA
+  RollHigh6   — 6-bar rolling High (shifted 1 bar)
+  RollLow6    — 6-bar rolling Low  (shifted 1 bar)
+  ATR_pct     — ATR14 / Close
+  hour        — UTC hour 0-23
+  dow         — weekday 0=Mon
+  ret         — pct_change()
+  garch_h     — GARCH variance
+  garch_regime — "LOW" / "MED" / "HIGH"
+  size_mult   — 0.0/0.5/1.0 from GARCH
+
+Rules:
+1. Start: df = df.copy()
+2. df["signal"]  = 1 (long) / -1 (short) / 0 (flat)
+3. df["SL_dist"] = ATR14 × sl_mult  (absolute price, sl_mult ≥ 1.5)
+4. df["TP_dist"] = ATR14 × tp_mult  (TP/SL ≥ 2.5)
+5. Return df
+6. Use ONLY pd and np (already imported). Extra indicators inline are OK.
+
+Commission: 0.04%/side. Targets: Sharpe > 0.5, PF > 1.3, CAGR > 5%, N_trades ≥ 20.
+
+══ OUTPUT FORMAT — nothing else ══
+
+```json
+{{
+  "strategy_type": "<trend_following|mean_reversion|breakout|momentum>",
+  "strategy_name": "<descriptive name reflecting user intent>",
+  "sl_mult": <float ≥ 1.5>,
+  "tp_mult": <float ≥ sl_mult × 2.5>,
+  "active_hours": [<start 0-23>, <end 0-23>],
+  "commission": 0.0004,
+  "slippage": 0.0001,
+  "risk_per_trade": 0.01,
+  "rationale": "<one sentence: user intent → implementation → why R:R beats commission>"
+}}
+```
+
+```python
+def generate_signals_agent(df):
+    df = df.copy()
+    # implement user strategy: {description[:80]}
+    return df
+```
+"""
+
+
 # ── Mode 1: Railway remote API ────────────────────────────────────────────────
 
 def _call_railway_api(
