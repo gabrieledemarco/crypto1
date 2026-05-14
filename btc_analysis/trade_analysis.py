@@ -87,7 +87,16 @@ def direction_stats(df: pd.DataFrame) -> pd.DataFrame:
         losses = sub[~sub["win"]]
         gross_profit = wins["pnl"].sum() if not wins.empty else 0.0
         gross_loss   = abs(losses["pnl"].sum()) if not losses.empty else 1e-9
-        dur_mean = round(sub["duration_h"].mean(), 1) if "duration_h" in sub.columns else None
+        try:
+            dur_mean = round(sub["duration_h"].mean(), 1)
+        except (KeyError, TypeError):
+            try:
+                dur_mean = round(
+                    (pd.to_datetime(sub["exit_time"]) - pd.to_datetime(sub["entry_time"]))
+                    .dt.total_seconds().mean() / 3600, 1
+                )
+            except Exception:
+                dur_mean = None
         rows.append({
             "Direzione":       direction,
             "N trade":         len(sub),
