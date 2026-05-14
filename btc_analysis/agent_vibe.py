@@ -491,10 +491,31 @@ def run_vibe_agent(
 
     # ── Mode 2: Local CLI ─────────────────────────────────────────────────────
     if not _is_vibe_installed():
-        raise RuntimeError(
-            "vibe-trading-ai non installato e nessun URL Railway configurato. "
-            "Configura VIBE_TRADING_API_URL nella sidebar."
-        )
+        print("  [vibe] vibe-trading CLI non disponibile — generazione stats-based...")
+        from agent_strategy import _generate_strategy_from_stats, _quick_backtest
+        cfg, code, report = _generate_strategy_from_stats(asset)
+        metrics = _quick_backtest(code, asset)
+        if metrics:
+            n  = metrics.get("n_trades", 0)
+            sh = metrics.get("sharpe", -999.0)
+            pf = metrics.get("profit_factor", 0.0)
+            wr = metrics.get("win_rate", 0.0)
+            cagr = metrics.get("cagr", -999.0)
+            print(
+                f"  [vibe] Backtest: N={n}  WR={wr:.1f}%  "
+                f"Sharpe={sh:.3f}  CAGR={cagr:.1f}%  PF={pf:.3f}"
+            )
+            report += (
+                f"\n\n## Backtest (in-sample)\n"
+                f"| Metric | Value |\n|---|---|\n"
+                f"| N trades | {n} |\n"
+                f"| Win Rate | {wr:.1f}% |\n"
+                f"| Sharpe   | {sh:.3f} |\n"
+                f"| CAGR     | {cagr:.1f}% |\n"
+                f"| Profit Factor | {pf:.3f} |\n"
+            )
+        print(f"  [vibe] ✅ Strategia stats-based: {cfg.get('strategy_name')}")
+        return cfg, code, report, "stats-derived"
 
     env, vibe_home = _make_vibe_env(anthropic_key, openrouter_key, openrouter_model)
 

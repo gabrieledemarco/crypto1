@@ -1,15 +1,16 @@
 {
-  "strategy_type": "breakout",
-  "strategy_name": "ATR Breakout + GARCH Filter (V5 Default)",
-  "sl_mult": 2.0,
-  "tp_mult": 5.0,
+  "asset": "BTC-USD",
+  "strategy_type": "trend_following",
+  "strategy_name": "Stat-Derived Trend Following \u2014 BTC-USD",
+  "sl_mult": 2.5,
+  "tp_mult": 6.5,
   "active_hours": [
-    6,
-    22
+    5,
+    11
   ],
-  "commission": 0.0001,
+  "commission": 0.0004,
   "slippage": 0.0001,
   "risk_per_trade": 0.01,
-  "rationale": "Default V5: ATR breakout + GARCH filter, SL=2\u00d7ATR, TP=5\u00d7ATR, maker fee 0.01%/side, active hours 06-22 UTC.",
-  "source": "default"
+  "rationale": "Hurst=0.5916>0.55 \u2192 momentum/trending regime; ACF(1)=0.0319 (momentum); kurtosis=8.95\u2192SL=2.5\u00d7ATR; active_hours=[5, 11] from best UTC hours [6, 7, 9, 10].",
+  "source": "stats_derived"
 }

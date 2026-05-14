@@ -698,8 +698,8 @@ def _quick_backtest(code_str: str, asset: str) -> dict:
         gain  = delta.clip(lower=0).rolling(14).mean()
         loss  = (-delta.clip(upper=0)).rolling(14).mean()
         df["RSI14"]    = 100 - 100 / (1 + gain / loss.replace(0, _np.nan))
-        df["RollHigh6"] = df["High"].rolling(6).max()
-        df["RollLow6"]  = df["Low"].rolling(6).min()
+        df["RollHigh6"] = df["High"].rolling(6).max().shift(1)
+        df["RollLow6"]  = df["Low"].rolling(6).min().shift(1)
         idx = _pd.to_datetime(df.index)
         df["hour"] = idx.hour
         df["dow"]  = idx.dayofweek
@@ -779,6 +779,203 @@ def _quick_backtest(code_str: str, asset: str) -> dict:
         return {}
 
 
+# ── Stats-based strategy generator (no LLM required) ─────────────────────────
+
+def _generate_strategy_from_stats(asset: str = "BTC-USD") -> tuple:
+    """Translate statistical properties into a trading strategy without an LLM.
+
+    Rules applied:
+      Hurst > 0.55 → trend following (EMA cross + breakout entry)
+      Hurst < 0.45 → mean reversion  (RSI + Bollinger Band entry)
+      Hurst 0.45-0.55 → breakout     (ATR channel breakout)
+      Kurtosis > 7 → SL = 2.5×ATR   (fat tails)
+      Kurtosis > 4 → SL = 2.0×ATR
+      else         → SL = 1.5×ATR
+      GARCH persistence > 0.85 → apply regime filter
+      Best UTC hours → derive active window
+    """
+    _fname = re.sub(r"[^a-z0-9]", "_", asset.lower()).strip("_")
+    report_path = os.path.join(OUTPUT_DIR, f"analysis_report_{_fname}.json")
+    if not os.path.exists(report_path):
+        report_path = os.path.join(OUTPUT_DIR, "analysis_report.json")
+
+    with open(report_path) as _f:
+        rpt = json.load(_f)
+
+    s = rpt.get("statistics", {})
+    g = rpt.get("garch", {})
+
+    hurst      = float(s.get("hurst_exponent", 0.5))
+    acf1       = float(s.get("acf_lag1", 0))
+    kurt       = float(s.get("excess_kurtosis", 3))
+    best_hours = s.get("best_hours_utc", [6, 7, 9, 10, 13, 15, 16, 17])
+    garch_pers = float(g.get("persistence", 0.95))
+    regime     = str(s.get("regime", "breakout"))
+
+    atr_data     = _atr_stats(asset)
+    active_hours = _best_active_hours(best_hours)
+    h_start, h_end = active_hours
+
+    # SL calibration
+    if kurt > 7:
+        sl_mult = 2.5
+    elif kurt > 4:
+        sl_mult = 2.0
+    else:
+        sl_mult = 1.5
+
+    # TP: maintain ≥ 2.6:1 R:R after 0.08% round-trip commission
+    tp_mult = round(sl_mult * 2.6, 1)
+
+    use_garch = garch_pers > 0.85
+
+    garch_block = (
+        '    if "garch_regime" in df.columns:\n'
+        '        garch_ok = df["garch_regime"] != "LOW"\n'
+        "    else:\n"
+        "        garch_ok = True"
+        if use_garch else
+        "    garch_ok = True"
+    )
+
+    if hurst > 0.55:
+        strategy_type = "trend_following"
+        strategy_name = f"Stat-Derived Trend Following — {asset}"
+        rationale = (
+            f"Hurst={hurst:.4f}>0.55 → momentum/trending regime; "
+            f"ACF(1)={acf1:.4f} ({'momentum' if acf1>0 else 'mean-reversion'}); "
+            f"kurtosis={kurt:.2f}→SL={sl_mult}×ATR; "
+            f"active_hours={active_hours} from best UTC hours {best_hours[:4]}."
+        )
+        code = (
+            "def generate_signals_agent(df):\n"
+            "    df = df.copy()\n"
+            f"    # Active window: UTC {h_start}-{h_end} (best hours {best_hours[:4]})\n"
+            f"    time_ok = (df[\"hour\"] >= {h_start}) & (df[\"hour\"] <= {h_end})\n"
+            f"    # Trend filter: EMA50/EMA200 (Hurst={hurst:.3f} → trend following)\n"
+            "    trend_long  = df[\"EMA50\"] > df[\"EMA200\"]\n"
+            "    trend_short = df[\"EMA50\"] < df[\"EMA200\"]\n"
+            "    # Entry: price breaks 6-bar rolling high/low\n"
+            "    bo_long  = df[\"Close\"] > df[\"RollHigh6\"]\n"
+            "    bo_short = df[\"Close\"] < df[\"RollLow6\"]\n"
+            "    # Momentum confirmation: short EMA slope\n"
+            "    ema20 = df[\"Close\"].ewm(span=20, adjust=False).mean()\n"
+            "    mom_long  = ema20 > ema20.shift(3)\n"
+            "    mom_short = ema20 < ema20.shift(3)\n"
+            "    # RSI: avoid overbought/oversold extremes\n"
+            "    rsi_long  = df[\"RSI14\"] < 68\n"
+            "    rsi_short = df[\"RSI14\"] > 32\n"
+            "    # Volatility filter: require active market\n"
+            "    atr_ok = df[\"ATR_pct\"] > 0.0025\n"
+            f"    # GARCH regime filter (persistence={garch_pers:.4f} → clusters)\n"
+            f"{garch_block}\n"
+            "    df[\"signal\"] = 0\n"
+            "    longs  = bo_long  & trend_long  & mom_long  & rsi_long  & atr_ok & garch_ok & time_ok\n"
+            "    shorts = bo_short & trend_short & mom_short & rsi_short & atr_ok & garch_ok & time_ok\n"
+            "    df.loc[longs,  \"signal\"] =  1\n"
+            "    df.loc[shorts, \"signal\"] = -1\n"
+            f"    # SL={sl_mult}×ATR (kurtosis={kurt:.2f}→fat tails), TP={tp_mult}×ATR→R:R={tp_mult/sl_mult:.1f}:1\n"
+            f"    df[\"SL_dist\"] = df[\"ATR14\"] * {sl_mult}\n"
+            f"    df[\"TP_dist\"] = df[\"ATR14\"] * {tp_mult}\n"
+            "    return df\n"
+        )
+
+    elif hurst < 0.45:
+        strategy_type = "mean_reversion"
+        strategy_name = f"Stat-Derived Mean Reversion — {asset}"
+        rationale = (
+            f"Hurst={hurst:.4f}<0.45 → mean-reverting regime; "
+            f"kurtosis={kurt:.2f}→SL={sl_mult}×ATR; "
+            f"active_hours={active_hours}."
+        )
+        code = (
+            "def generate_signals_agent(df):\n"
+            "    df = df.copy()\n"
+            f"    time_ok = (df[\"hour\"] >= {h_start}) & (df[\"hour\"] <= {h_end})\n"
+            f"    # Mean reversion: Hurst={hurst:.3f}<0.45\n"
+            "    # Bollinger Bands (20-period, 2σ)\n"
+            "    mid = df[\"Close\"].rolling(20).mean()\n"
+            "    std = df[\"Close\"].rolling(20).std()\n"
+            "    bb_upper = mid + 2.0 * std\n"
+            "    bb_lower = mid - 2.0 * std\n"
+            "    # RSI extremes for entry confirmation\n"
+            "    rsi_oversold   = df[\"RSI14\"] < 30\n"
+            "    rsi_overbought = df[\"RSI14\"] > 70\n"
+            "    bb_long  = df[\"Close\"] < bb_lower\n"
+            "    bb_short = df[\"Close\"] > bb_upper\n"
+            "    atr_ok = df[\"ATR_pct\"] > 0.002\n"
+            f"{garch_block}\n"
+            "    df[\"signal\"] = 0\n"
+            "    longs  = bb_long  & rsi_oversold   & atr_ok & garch_ok & time_ok\n"
+            "    shorts = bb_short & rsi_overbought & atr_ok & garch_ok & time_ok\n"
+            "    df.loc[longs,  \"signal\"] =  1\n"
+            "    df.loc[shorts, \"signal\"] = -1\n"
+            f"    df[\"SL_dist\"] = df[\"ATR14\"] * {sl_mult}\n"
+            f"    df[\"TP_dist\"] = df[\"ATR14\"] * {tp_mult}\n"
+            "    return df\n"
+        )
+
+    else:
+        strategy_type = "breakout"
+        strategy_name = f"Stat-Derived ATR Breakout — {asset}"
+        rationale = (
+            f"Hurst={hurst:.4f}≈0.5 → quasi-random-walk / breakout regime; "
+            f"kurtosis={kurt:.2f}→SL={sl_mult}×ATR; "
+            f"active_hours={active_hours}."
+        )
+        code = (
+            "def generate_signals_agent(df):\n"
+            "    df = df.copy()\n"
+            f"    time_ok = (df[\"hour\"] >= {h_start}) & (df[\"hour\"] <= {h_end})\n"
+            f"    # ATR breakout: Hurst={hurst:.3f}≈0.5 → breakout\n"
+            "    bo_long  = df[\"Close\"] > df[\"RollHigh6\"]\n"
+            "    bo_short = df[\"Close\"] < df[\"RollLow6\"]\n"
+            "    rsi_long  = df[\"RSI14\"] < 65\n"
+            "    rsi_short = df[\"RSI14\"] > 35\n"
+            "    atr_ok = df[\"ATR_pct\"] > 0.003\n"
+            f"{garch_block}\n"
+            "    df[\"signal\"] = 0\n"
+            "    df.loc[bo_long  & rsi_long  & atr_ok & garch_ok & time_ok, \"signal\"] =  1\n"
+            "    df.loc[bo_short & rsi_short & atr_ok & garch_ok & time_ok, \"signal\"] = -1\n"
+            f"    df[\"SL_dist\"] = df[\"ATR14\"] * {sl_mult}\n"
+            f"    df[\"TP_dist\"] = df[\"ATR14\"] * {tp_mult}\n"
+            "    return df\n"
+        )
+
+    _validate_code(code)
+
+    config = _validate_config({
+        "asset":          asset,
+        "strategy_type":  strategy_type,
+        "strategy_name":  strategy_name,
+        "sl_mult":        sl_mult,
+        "tp_mult":        tp_mult,
+        "active_hours":   active_hours,
+        "commission":     0.0004,
+        "slippage":       0.0001,
+        "risk_per_trade": 0.01,
+        "rationale":      rationale,
+    }, source="stats_derived")
+
+    report = (
+        f"# Strategy Report: {strategy_name}\n"
+        f"*Source: stats_derived (Hurst={hurst:.4f}, regime={regime})*\n\n"
+        f"**Type**: {strategy_type}\n"
+        f"**SL**: {sl_mult}×ATR | **TP**: {tp_mult}×ATR | "
+        f"**R:R**: {tp_mult/sl_mult:.1f}:1 | "
+        f"**Active hours**: {active_hours} UTC\n\n"
+        f"**Rationale**: {rationale}\n\n"
+        f"---\n\n```python\n{code}\n```"
+    )
+
+    print(
+        f"  [agent] Stats-derived strategy: {strategy_name}\n"
+        f"          Regime: {regime} | SL={sl_mult}×ATR | TP={tp_mult}×ATR | "
+        f"hours={active_hours}"
+    )
+    return config, code, report
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def run_agent(
@@ -797,10 +994,14 @@ def run_agent(
     ort = (openrouter_key or "").strip() or os.environ.get("OPENROUTER_API_KEY", "").strip()
 
     if not ant and not ort:
-        print("  [agent] No API key — using V5 defaults.")
-        cfg = V5_DEFAULT_CONFIG.copy()
-        cfg["asset"] = asset
-        return cfg, DEFAULT_CODE, DEFAULT_REPORT
+        print("  [agent] No API key — generating strategy from statistical analysis...")
+        try:
+            return _generate_strategy_from_stats(asset)
+        except Exception as exc:
+            print(f"  [agent] Stats-derived generation failed ({exc}) — using V5 defaults.")
+            cfg = V5_DEFAULT_CONFIG.copy()
+            cfg["asset"] = asset
+            return cfg, DEFAULT_CODE, DEFAULT_REPORT
 
     print(f"  [agent] Building analysis context for {asset}...")
     ctx = _build_context(asset)
