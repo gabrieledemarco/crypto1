@@ -455,16 +455,19 @@ def run_vibe_agent(
     openrouter_model: str = "",
     vibe_api_url: str = "",
     vibe_service_token: str = "",
+    prompt_override: str = "",
 ) -> tuple:
     """
     Genera (config, code, report, engine_used).
 
-    engine_used: "vibe-trading (Railway)" | "vibe-trading (CLI)"
+    engine_used: "vibe-trading (Railway)" | "vibe-trading (CLI)" | "stats-derived"
 
     Priority:
       1. Railway API  — if vibe_api_url is set (Streamlit Cloud / production)
       2. Local CLI    — if vibe-trading-ai is installed
+      3. Stats-based  — deterministic fallback using analysis_report.json
 
+    prompt_override: if set, uses this prompt instead of _build_vibe_prompt(asset).
     Raises RuntimeError or ValueError on failure (no fallback).
     """
     if not vibe_api_url:
@@ -472,7 +475,7 @@ def run_vibe_agent(
     if not vibe_service_token:
         vibe_service_token = os.environ.get("VIBE_SERVICE_TOKEN", "")
 
-    prompt = _build_vibe_prompt(asset)
+    prompt = prompt_override if prompt_override else _build_vibe_prompt(asset)
 
     # ── Mode 1: Railway remote API ────────────────────────────────────────────
     if vibe_api_url:
