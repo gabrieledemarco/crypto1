@@ -150,7 +150,8 @@ def fold_direction_stats(trades_df: pd.DataFrame, wfo_df: pd.DataFrame) -> pd.Da
         except Exception:
             continue
 
-        mask = (entry_ts >= t_start) & (entry_ts < t_end)
+        # Use <= t_end so trades entered on the last bar of the window are included
+        mask = (entry_ts >= t_start) & (entry_ts <= t_end)
         oos  = trades_df[mask]
 
         fold_num   = fold.get("fold", "?")
@@ -160,6 +161,9 @@ def fold_direction_stats(trades_df: pd.DataFrame, wfo_df: pd.DataFrame) -> pd.Da
         for direction in ["LONG", "SHORT", "ALL"]:
             sub = oos if direction == "ALL" else oos[oos["direction"] == direction]
             n = len(sub)
+            # Skip direction rows with no trades so the table stays readable
+            if n == 0:
+                continue
             wins   = sub[sub["win"]]
             losses = sub[~sub["win"]]
             gp = wins["pnl"].sum()        if not wins.empty   else 0.0
@@ -170,10 +174,10 @@ def fold_direction_stats(trades_df: pd.DataFrame, wfo_df: pd.DataFrame) -> pd.Da
                 "OOS Sharpe":  round(float(oos_sharpe), 3) if oos_sharpe is not None else None,
                 "Direzione":   direction,
                 "N trade":     n,
-                "Win rate %":  round(sub["win"].mean() * 100, 1) if n > 0 else 0.0,
-                "PF":          round(gp / gl, 3)                  if n > 0 else 0.0,
+                "Win rate %":  round(sub["win"].mean() * 100, 1),
+                "PF":          round(gp / gl, 3),
                 "P&L totale":  round(sub["pnl"].sum(), 2),
-                "SL hit %":    round((sub["exit_reason"] == "SL").mean() * 100, 1) if n > 0 else 0.0,
+                "SL hit %":    round((sub["exit_reason"] == "SL").mean() * 100, 1),
             })
     return pd.DataFrame(rows)
 

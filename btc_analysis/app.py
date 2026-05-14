@@ -1271,6 +1271,7 @@ with tab3:
         cols_show = ["fold", "train_start", "train_end",
                      "test_start", "test_end",
                      "best_sl", "best_tp",
+                     "oos_trades", "oos_n_trades",
                      "is_sharpe", "oos_sharpe", "oos_cagr", "wfe"]
         cols_show = [c for c in cols_show if c in wfo.columns]
         st.dataframe(
