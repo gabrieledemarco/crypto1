@@ -43,8 +43,8 @@ IMPORTANT: Do NOT download data. Do NOT import libraries. ONLY write the functio
 ══ STATISTICAL ANALYSIS ══
 {context}
 
-ATR: median {atr.get('median_atr_pct', 0.003)*100:.3f}%
-2×ATR stop-loss: {atr.get('sl2x_pct', 0.006)*100:.3f}%
+ATR: median {atr.get('median_atr_pct', 0.3):.3f}%
+2×ATR stop-loss: {atr.get('sl2x_pct', 0.6):.3f}%
 
 ══ FUNCTION CONTRACT ══
 Input df has pre-computed columns:

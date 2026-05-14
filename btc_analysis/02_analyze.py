@@ -33,7 +33,7 @@ def _hurst(prices: np.ndarray) -> float:
     valid = [l for l in lags if l < len(lp) - 1]
     if len(valid) < 3:
         return 0.5
-    rs = [np.std(np.diff(lp, lag)) for lag in valid]
+    rs = [np.std(lp[lag:] - lp[:-lag]) for lag in valid]
     return float(np.polyfit(np.log(valid), np.log(rs), 1)[0])
 
 
