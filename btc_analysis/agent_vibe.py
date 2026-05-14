@@ -166,9 +166,9 @@ def _make_vibe_env(
         env["ANTHROPIC_API_KEY"]    = anthropic_key
         env["LANGCHAIN_MODEL_NAME"] = "claude-opus-4-7"
     elif openrouter_key:
-        env["LANGCHAIN_PROVIDER"]   = "openai"
-        env["OPENAI_API_KEY"]       = openrouter_key
-        env["OPENAI_BASE_URL"]      = "https://openrouter.ai/api/v1"
+        env["LANGCHAIN_PROVIDER"]   = "openrouter"
+        env["OPENROUTER_API_KEY"]   = openrouter_key
+        env["OPENROUTER_BASE_URL"]  = "https://openrouter.ai/api/v1"
         env["LANGCHAIN_MODEL_NAME"] = openrouter_model or "anthropic/claude-opus-4-7"
 
     import tempfile as _tf
@@ -497,6 +497,33 @@ def run_vibe_agent(
         )
 
     env, vibe_home = _make_vibe_env(anthropic_key, openrouter_key, openrouter_model)
+
+    # Write .env to vibe_home CWD — load_dotenv() checks CWD before site-packages
+    _or = openrouter_key or os.environ.get("OPENROUTER_API_KEY", "")
+    _ant = anthropic_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    _mod = openrouter_model or os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-4-7")
+    if _or:
+        _env_lines = [
+            "LANGCHAIN_PROVIDER=openrouter",
+            f"LANGCHAIN_MODEL_NAME={_mod}",
+            f"OPENROUTER_API_KEY={_or}",
+            "OPENROUTER_BASE_URL=https://openrouter.ai/api/v1",
+        ]
+    elif _ant:
+        _env_lines = [
+            "LANGCHAIN_PROVIDER=anthropic",
+            "LANGCHAIN_MODEL_NAME=claude-opus-4-7",
+            f"ANTHROPIC_API_KEY={_ant}",
+        ]
+    else:
+        _env_lines = []
+    if _env_lines:
+        try:
+            with open(os.path.join(vibe_home, ".env"), "w") as _f:
+                _f.write("\n".join(_env_lines) + "\n")
+        except Exception as _we:
+            print(f"  [vibe] WARNING: cannot write vibe_home/.env: {_we}")
+
     prompt_file = None
     try:
         with tempfile.NamedTemporaryFile(
