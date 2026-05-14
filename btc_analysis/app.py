@@ -489,6 +489,57 @@ with st.sidebar:
                 st.error(f"Monte Carlo fallito:\n```\n{_me.stderr.decode()[:400]}\n```")
 
     st.divider()
+
+    # ── Step 5: Migliora strategia ────────────────────────────────────────────
+    if st.button("🧠 5. Migliora Strategia", use_container_width=True,
+                 help="Analizza trade IS/OOS, identifica debolezze e chiama Vibe-Trading "
+                      "per generare una strategia migliorata con rendimento OOS positivo."):
+        _trades_path = os.path.join(OUTPUT, "trades.csv")
+        if not os.path.exists(_trades_path):
+            st.warning("Esegui prima **📈 3. Backtest** per generare i dati dei trade.")
+        else:
+            import importlib as _il2
+            import trade_analysis as _ta; _il2.reload(_ta)
+            import agent_vibe as _av2;    _il2.reload(_av2)
+            import agent_strategy as _ag2; _il2.reload(_ag2)
+
+            with st.status("🧠 Analisi debolezze + generazione strategia migliorata…",
+                           expanded=True) as _imp_status:
+                try:
+                    st.write("📊 Analisi trade LONG/SHORT per fold IS/OOS…")
+                    _imp_prompt = _ta.build_improvement_prompt(asset)
+                    st.write(f"✅ Prompt costruito ({len(_imp_prompt)} chars)")
+
+                    st.write("🤖 Chiamo Vibe-Trading per la strategia migliorata…")
+                    _cfg_imp, _code_imp, _report_imp, _engine_imp = _av2.run_vibe_agent(
+                        asset=asset,
+                        anthropic_key=_ant_key,
+                        openrouter_key=_or_key,
+                        openrouter_model=_or_model,
+                        vibe_api_url=_vibe_url,
+                        vibe_service_token=_vibe_token,
+                        prompt_override=_imp_prompt,
+                    )
+                    _ag2.save_outputs(_cfg_imp, _code_imp, _report_imp)
+                    st.write(f"✅ Strategia migliorata: **{_engine_imp}**")
+                    st.write(
+                        f"`{_cfg_imp.get('strategy_name','?')}` — "
+                        f"SL {_cfg_imp.get('sl_mult')}×ATR | "
+                        f"TP {_cfg_imp.get('tp_mult')}×ATR | "
+                        f"ore {_cfg_imp.get('active_hours')}"
+                    )
+                    st.write("📈 Rieseguo il backtest con la nuova strategia…")
+                    _run_script("04_backtest.py", extra_env=_env)
+                    st.cache_data.clear()
+                    _imp_status.update(
+                        label="✅ Strategia migliorata e backtestata — vedi tab 🔍 Analisi Trade",
+                        state="complete", expanded=False,
+                    )
+                except Exception as _ie:
+                    _imp_status.update(label="❌ Miglioramento fallito", state="error")
+                    st.error(f"Errore: {_ie}")
+
+    st.divider()
     st.subheader("ℹ️ Info")
     _info_name = "ATR Breakout + GARCH Filter (default)"
     _info_type = "breakout"
@@ -671,13 +722,14 @@ except Exception:
 
 st.divider()
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📊 Prezzi & Rendimenti",
     "📈 Strategia V5",
     "🔄 Walk-Forward",
     "🎲 Monte Carlo",
     "🌐 Multi-Asset",
     "🤖 Agent Strategy",
+    "🔍 Analisi Trade",
 ])
 
 
@@ -1532,6 +1584,301 @@ with tab6:
 
         except Exception as _e:
             st.error(f"Errore lettura output agent: {_e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TAB 7 — Analisi Trade
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab7:
+    import json as _t7json
+    import importlib as _t7il
+
+    st.header("🔍 Analisi Trade — LONG vs SHORT per fold IS/OOS")
+    st.markdown(
+        "Analisi dettagliata dei trade eseguiti: performance LONG vs SHORT, "
+        "per ora UTC, per regime GARCH e per fold walk-forward (IS vs OOS). "
+        "Identifica le debolezze della strategia attuale e usa il bottone "
+        "**🧠 5. Migliora Strategia** nella sidebar per generare una versione migliorata."
+    )
+
+    _trades_csv = os.path.join(OUTPUT, "trades.csv")
+    _wfo_csv    = os.path.join(OUTPUT, "wfo_IS8m_OOS2m.csv")
+
+    if not os.path.exists(_trades_csv):
+        st.info(
+            "Nessun dato di trade disponibile. "
+            "Esegui **📈 3. Backtest + Walk-Forward** dalla sidebar."
+        )
+    else:
+        try:
+            import trade_analysis as _ta7; _t7il.reload(_ta7)
+
+            _t7_trades = _ta7.load_trades(asset)
+            _t7_wfo    = _ta7.load_wfo("IS8m_OOS2m")
+
+            if _t7_trades.empty:
+                st.warning("Il file trades.csv è vuoto.")
+            else:
+                # ── KPI row ───────────────────────────────────────────────────
+                _dir_df  = _ta7.direction_stats(_t7_trades)
+                _all_row = _dir_df[_dir_df["Direzione"] == "ALL"]
+                _lng_row = _dir_df[_dir_df["Direzione"] == "LONG"]
+                _sht_row = _dir_df[_dir_df["Direzione"] == "SHORT"]
+
+                def _v(row_df, col):
+                    return row_df.iloc[0][col] if not row_df.empty else "—"
+
+                _k1, _k2, _k3, _k4, _k5, _k6 = st.columns(6)
+                _k1.metric("Trade totali",  _v(_all_row, "N trade"))
+                _k2.metric("Win rate ALL",  f"{_v(_all_row, 'Win rate %')}%")
+                _k3.metric("Profit Factor", _v(_all_row, "Profit Factor"))
+                _k4.metric("Win% LONG",     f"{_v(_lng_row, 'Win rate %')}%",
+                           delta=f"PF {_v(_lng_row,'Profit Factor')}")
+                _k5.metric("Win% SHORT",    f"{_v(_sht_row, 'Win rate %')}%",
+                           delta=f"PF {_v(_sht_row,'Profit Factor')}")
+                _k6.metric("SL hit%",       f"{_v(_all_row, 'SL hit %')}%")
+
+                st.divider()
+
+                # ── Debolezze identificate ────────────────────────────────────
+                _issues = _ta7.identify_weaknesses(_t7_trades, _t7_wfo)
+                _issue_color = "🔴" if len(_issues) > 1 else "🟢"
+                with st.expander(f"{_issue_color} Debolezze identificate ({len(_issues)})", expanded=True):
+                    for _iss in _issues:
+                        st.markdown(f"- {_iss.strip()}")
+
+                st.divider()
+
+                # ── Direction comparison ──────────────────────────────────────
+                st.subheader("📊 LONG vs SHORT — confronto completo")
+                _t7c1, _t7c2 = st.columns([1, 1])
+                with _t7c1:
+                    st.dataframe(_dir_df.set_index("Direzione"), use_container_width=True)
+
+                with _t7c2:
+                    # Bar chart: Win rate + PF by direction
+                    _dir_plot = _dir_df[_dir_df["Direzione"] != "ALL"]
+                    _fig_dir = go.Figure()
+                    _fig_dir.add_bar(
+                        x=_dir_plot["Direzione"], y=_dir_plot["Win rate %"],
+                        name="Win rate %", marker_color=["#26a69a", "#ef5350"],
+                        yaxis="y",
+                    )
+                    _fig_dir.add_bar(
+                        x=_dir_plot["Direzione"], y=_dir_plot["Profit Factor"],
+                        name="Profit Factor", marker_color=["#80cbc4", "#ef9a9a"],
+                        yaxis="y2",
+                    )
+                    _fig_dir.update_layout(
+                        template="plotly_dark", height=280, barmode="group",
+                        margin=dict(l=0, r=0, t=30, b=0),
+                        yaxis=dict(title="Win rate %"),
+                        yaxis2=dict(title="Profit Factor", overlaying="y", side="right"),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                    )
+                    st.plotly_chart(_fig_dir, use_container_width=True)
+
+                # P&L distribution LONG vs SHORT
+                _fig_pnl = go.Figure()
+                for _dir, _col in [("LONG", "#26a69a"), ("SHORT", "#ef5350")]:
+                    _sub = _t7_trades[_t7_trades["direction"] == _dir]["pnl_pct"] * 100
+                    _fig_pnl.add_trace(go.Histogram(
+                        x=_sub, name=_dir, marker_color=_col,
+                        opacity=0.7, nbinsx=40,
+                    ))
+                _fig_pnl.update_layout(
+                    barmode="overlay", template="plotly_dark", height=260,
+                    margin=dict(l=0, r=0, t=30, b=0),
+                    title="Distribuzione P&L % per direzione",
+                    xaxis_title="P&L %", yaxis_title="N trade",
+                )
+                st.plotly_chart(_fig_pnl, use_container_width=True)
+
+                st.divider()
+
+                # ── Fold IS/OOS ───────────────────────────────────────────────
+                st.subheader("🔄 Trade per fold OOS — LONG vs SHORT")
+                _fold_df = _ta7.fold_direction_stats(_t7_trades, _t7_wfo)
+
+                if not _fold_df.empty:
+                    # Summary table (only ALL direction per fold)
+                    _fold_all = _fold_df[_fold_df["Direzione"] == "ALL"].copy()
+                    st.markdown("**Riepilogo fold OOS (tutte le direzioni)**")
+                    st.dataframe(
+                        _fold_all.drop(columns=["Direzione"]).set_index("Fold"),
+                        use_container_width=True,
+                    )
+
+                    # Grouped bar: LONG vs SHORT win rate per fold
+                    _fold_dir = _fold_df[_fold_df["Direzione"] != "ALL"]
+                    if not _fold_dir.empty:
+                        _fig_fold = go.Figure()
+                        for _fd, _fc in [("LONG", "#26a69a"), ("SHORT", "#ef5350")]:
+                            _sub_fd = _fold_dir[_fold_dir["Direzione"] == _fd]
+                            _fig_fold.add_bar(
+                                x=_sub_fd["Fold"].astype(str) + " " + _sub_fd["Periodo OOS"].astype(str),
+                                y=_sub_fd["Win rate %"],
+                                name=f"{_fd} Win%", marker_color=_fc,
+                            )
+                        _fig_fold.update_layout(
+                            barmode="group", template="plotly_dark", height=320,
+                            margin=dict(l=0, r=0, t=40, b=80),
+                            title="Win rate % LONG vs SHORT per fold OOS",
+                            xaxis_tickangle=-35,
+                        )
+                        st.plotly_chart(_fig_fold, use_container_width=True)
+
+                    # OOS Sharpe per fold
+                    if not _fold_all.empty and "OOS Sharpe" in _fold_all.columns:
+                        _fig_sharpe = go.Figure()
+                        _sharpe_colors = [
+                            "#26a69a" if v >= 0 else "#ef5350"
+                            for v in _fold_all["OOS Sharpe"].fillna(0)
+                        ]
+                        _fig_sharpe.add_bar(
+                            x=_fold_all["Fold"].astype(str) + " " + _fold_all["Periodo OOS"].astype(str),
+                            y=_fold_all["OOS Sharpe"],
+                            marker_color=_sharpe_colors, name="OOS Sharpe",
+                        )
+                        _fig_sharpe.add_hline(y=0, line_dash="dash",
+                                              line_color="white", opacity=0.5)
+                        _fig_sharpe.add_hline(y=0.5, line_dash="dot",
+                                              line_color="#ffeb3b", opacity=0.7,
+                                              annotation_text="Target 0.5")
+                        _fig_sharpe.update_layout(
+                            template="plotly_dark", height=280,
+                            margin=dict(l=0, r=0, t=40, b=80),
+                            title="OOS Sharpe per fold",
+                            xaxis_tickangle=-35,
+                        )
+                        st.plotly_chart(_fig_sharpe, use_container_width=True)
+
+                    with st.expander("📋 Dettaglio fold × direzione"):
+                        st.dataframe(_fold_df, use_container_width=True)
+
+                st.divider()
+
+                # ── Hour heatmap ──────────────────────────────────────────────
+                st.subheader("⏰ Performance per ora UTC")
+                _hour_df = _ta7.hourly_stats(_t7_trades)
+
+                if not _hour_df.empty:
+                    _t7h1, _t7h2 = st.columns(2)
+                    with _t7h1:
+                        # Heatmap: hour × direction → Win%
+                        _hmap_wr = _hour_df.pivot(
+                            index="Ora UTC", columns="Direzione", values="Win%"
+                        ).reindex(range(24)).fillna(0)
+                        _fig_hmap = go.Figure(go.Heatmap(
+                            z=_hmap_wr.values,
+                            x=_hmap_wr.columns.tolist(),
+                            y=[f"{h:02d}:00" for h in _hmap_wr.index],
+                            colorscale="RdYlGn", zmin=0, zmax=100,
+                            text=_hmap_wr.values.round(0),
+                            texttemplate="%{text}%",
+                        ))
+                        _fig_hmap.update_layout(
+                            template="plotly_dark", height=500,
+                            margin=dict(l=40, r=0, t=40, b=0),
+                            title="Win rate % per ora UTC",
+                        )
+                        st.plotly_chart(_fig_hmap, use_container_width=True)
+
+                    with _t7h2:
+                        # Bar: avg P&L per hour
+                        _fig_hour_pnl = go.Figure()
+                        for _hd, _hc in [("LONG", "#26a69a"), ("SHORT", "#ef5350")]:
+                            _sub_h = _hour_df[_hour_df["Direzione"] == _hd]
+                            _fig_hour_pnl.add_bar(
+                                x=_sub_h["Ora UTC"].apply(lambda h: f"{h:02d}:00"),
+                                y=_sub_h["P&L medio"],
+                                name=_hd, marker_color=_hc,
+                            )
+                        _fig_hour_pnl.add_hline(y=0, line_dash="dash",
+                                                line_color="white", opacity=0.4)
+                        _fig_hour_pnl.update_layout(
+                            barmode="group", template="plotly_dark", height=500,
+                            margin=dict(l=0, r=0, t=40, b=60),
+                            title="P&L medio per ora UTC",
+                            xaxis_tickangle=-45,
+                        )
+                        st.plotly_chart(_fig_hour_pnl, use_container_width=True)
+
+                st.divider()
+
+                # ── Regime GARCH ──────────────────────────────────────────────
+                _reg_df = _ta7.regime_stats(_t7_trades)
+                if not _reg_df.empty:
+                    st.subheader("📉 Performance per regime GARCH")
+                    _t7r1, _t7r2 = st.columns([1, 2])
+                    with _t7r1:
+                        st.dataframe(_reg_df.set_index("Regime GARCH"),
+                                     use_container_width=True)
+                    with _t7r2:
+                        _fig_reg = go.Figure()
+                        _reg_colors = {"LOW": "#78909c", "MED": "#ffb300", "HIGH": "#ef5350"}
+                        _fig_reg.add_bar(
+                            x=_reg_df["Regime GARCH"],
+                            y=_reg_df["Win rate %"],
+                            marker_color=[_reg_colors.get(r, "#aaa") for r in _reg_df["Regime GARCH"]],
+                            name="Win rate %",
+                        )
+                        _fig_reg.add_bar(
+                            x=_reg_df["Regime GARCH"],
+                            y=_reg_df["PF"],
+                            name="Profit Factor",
+                            yaxis="y2",
+                            opacity=0.7,
+                        )
+                        _fig_reg.update_layout(
+                            barmode="group", template="plotly_dark", height=280,
+                            margin=dict(l=0, r=0, t=30, b=0),
+                            yaxis2=dict(overlaying="y", side="right", title="PF"),
+                        )
+                        st.plotly_chart(_fig_reg, use_container_width=True)
+
+                st.divider()
+
+                # ── Streak analysis ───────────────────────────────────────────
+                _streaks = _ta7.streak_stats(_t7_trades)
+                if _streaks:
+                    st.subheader("🎯 Streak analysis")
+                    _s1, _s2, _s3, _s4 = st.columns(4)
+                    _s1.metric("Max winning streak",  _streaks.get("max_win_streak",  "—"))
+                    _s2.metric("Max losing streak",   _streaks.get("max_loss_streak", "—"))
+                    _s3.metric("# serie vincenti",    _streaks.get("n_win_streaks",   "—"))
+                    _s4.metric("# serie perdenti",    _streaks.get("n_loss_streaks",  "—"))
+
+                    # Equity step chart colored by win/loss
+                    _t7_trades_s = _t7_trades.sort_values("entry_time").reset_index(drop=True)
+                    _cum_pnl = _t7_trades_s["pnl"].cumsum()
+                    _fig_eq = go.Figure()
+                    _fig_eq.add_trace(go.Scatter(
+                        x=_t7_trades_s["entry_time"],
+                        y=_cum_pnl,
+                        mode="lines",
+                        line=dict(color="#26a69a", width=2),
+                        name="P&L cumulato",
+                    ))
+                    # Color wins/losses
+                    for _idx, row in _t7_trades_s.iterrows():
+                        _fig_eq.add_vrect(
+                            x0=row["entry_time"], x1=row["exit_time"],
+                            fillcolor="#26a69a" if row["win"] else "#ef5350",
+                            opacity=0.07, layer="below", line_width=0,
+                        )
+                    _fig_eq.update_layout(
+                        template="plotly_dark", height=280,
+                        margin=dict(l=0, r=0, t=30, b=0),
+                        title="P&L cumulato (verde=win, rosso=loss)",
+                    )
+                    st.plotly_chart(_fig_eq, use_container_width=True)
+
+        except Exception as _t7e:
+            st.error(f"Errore analisi trade: {_t7e}")
+            import traceback
+            st.code(traceback.format_exc())
 
 
 # ── Footer ────────────────────────────────────────────────────────────────────
