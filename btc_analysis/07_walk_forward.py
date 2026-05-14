@@ -188,8 +188,10 @@ def print_wfo(w: dict):
     print(f"  {'─'*68}")
     for _, r in folds.iterrows():
         ok = "✓" if r["oos_sharpe"] > 0 else "✗"
-        print(f"  {int(r['fold']):>4}  {r['period']:<26}  "
-              f"{r['best_sl']:>4.1f} {r['best_tp']:>4.1f}  "
+        sl_tp = (f"{r['best_sl']:>4.1f} {r['best_tp']:>4.1f}"
+                 if "best_sl" in r.index else "  —   —")
+        print(f"  {int(r['fold']):>4}  {r.get('period','?'):<26}  "
+              f"{sl_tp}  "
               f"{r['is_sharpe']:>7.2f} {r['oos_sharpe']:>8.2f} "
               f"{r['oos_cagr']:>9.1f}%  {ok}")
 
@@ -305,12 +307,16 @@ def plot_multi_window(wfos: list):
 
     # ── 7. Param stability ────────────────────────────────────────────────────
     ax7 = fig.add_subplot(gs[4, 0])
-    ax7.plot(folds["fold"], folds["best_sl"], "o-", color="#E74C3C", label="SL ×ATR")
-    ax7.plot(folds["fold"], folds["best_tp"], "s-", color="#3498DB", label="TP ×ATR")
+    if "best_sl" in folds.columns and "best_tp" in folds.columns:
+        ax7.plot(folds["fold"], folds["best_sl"], "o-", color="#E74C3C", label="SL ×ATR")
+        ax7.plot(folds["fold"], folds["best_tp"], "s-", color="#3498DB", label="TP ×ATR")
+        ax7.legend()
+        ax7.set_ylabel("Moltiplicatore ATR")
+    else:
+        ax7.text(0.5, 0.5, "Params fissi (no grid search)", ha="center", va="center",
+                 transform=ax7.transAxes, fontsize=11, color="gray")
     ax7.set_title("Stabilità Parametri per Fold", fontsize=12, fontweight="bold")
     ax7.set_xlabel("Fold")
-    ax7.set_ylabel("Moltiplicatore ATR")
-    ax7.legend()
     ax7.set_xticks(folds["fold"])
 
     # ── 8. Riepilogo statistico WFE vs n_fold ────────────────────────────────

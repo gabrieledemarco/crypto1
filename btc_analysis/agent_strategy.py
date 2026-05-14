@@ -816,7 +816,7 @@ def _generate_strategy_from_stats(asset: str = "BTC-USD") -> tuple:
     active_hours = _best_active_hours(best_hours)
     h_start, h_end = active_hours
 
-    # SL calibration
+    # SL calibration based on kurtosis (fat-tail risk)
     if kurt > 7:
         sl_mult = 2.5
     elif kurt > 4:
@@ -824,8 +824,8 @@ def _generate_strategy_from_stats(asset: str = "BTC-USD") -> tuple:
     else:
         sl_mult = 1.5
 
-    # TP: maintain ≥ 2.6:1 R:R after 0.08% round-trip commission
-    tp_mult = round(sl_mult * 2.6, 1)
+    # TP: maintain ≥ 2.8:1 R:R after 0.08% round-trip commission
+    tp_mult = round(sl_mult * 2.8, 1)
 
     use_garch = garch_pers > 0.85
 
@@ -838,40 +838,56 @@ def _generate_strategy_from_stats(asset: str = "BTC-USD") -> tuple:
         "    garch_ok = True"
     )
 
+    # Build two-window time filter from best hours
+    # Split best_hours into morning (0-12) and afternoon (12-23) clusters
+    _bh = sorted(int(h) for h in best_hours) if best_hours else list(range(6, 18))
+    _morning = [h for h in _bh if h < 13]
+    _afternoon = [h for h in _bh if h >= 13]
+    if _morning and _afternoon:
+        m_start, m_end = _morning[0], _morning[-1]
+        a_start, a_end = _afternoon[0], _afternoon[-1]
+        time_filter = (
+            f"    time_ok = ((df[\"hour\"] >= {m_start}) & (df[\"hour\"] <= {m_end})) "
+            f"| ((df[\"hour\"] >= {a_start}) & (df[\"hour\"] <= {a_end}))"
+        )
+        active_hours = [m_start, a_end]
+    elif _morning:
+        m_start, m_end = max(0, _morning[0] - 1), min(23, _morning[-1] + 1)
+        time_filter = f"    time_ok = (df[\"hour\"] >= {m_start}) & (df[\"hour\"] <= {m_end})"
+        active_hours = [m_start, m_end]
+    else:
+        time_filter = f"    time_ok = (df[\"hour\"] >= {h_start}) & (df[\"hour\"] <= {h_end})"
+
     if hurst > 0.55:
         strategy_type = "trend_following"
         strategy_name = f"Stat-Derived Trend Following — {asset}"
         rationale = (
             f"Hurst={hurst:.4f}>0.55 → momentum/trending regime; "
             f"ACF(1)={acf1:.4f} ({'momentum' if acf1>0 else 'mean-reversion'}); "
-            f"kurtosis={kurt:.2f}→SL={sl_mult}×ATR; "
-            f"active_hours={active_hours} from best UTC hours {best_hours[:4]}."
+            f"kurtosis={kurt:.2f}→SL={sl_mult}×ATR; TP={tp_mult}×ATR→R:R={tp_mult/sl_mult:.1f}:1; "
+            f"two windows: morning {_morning[:3]} + afternoon {_afternoon[:3]} UTC."
         )
         code = (
             "def generate_signals_agent(df):\n"
             "    df = df.copy()\n"
-            f"    # Active window: UTC {h_start}-{h_end} (best hours {best_hours[:4]})\n"
-            f"    time_ok = (df[\"hour\"] >= {h_start}) & (df[\"hour\"] <= {h_end})\n"
-            f"    # Trend filter: EMA50/EMA200 (Hurst={hurst:.3f} → trend following)\n"
-            "    trend_long  = df[\"EMA50\"] > df[\"EMA200\"]\n"
-            "    trend_short = df[\"EMA50\"] < df[\"EMA200\"]\n"
+            f"    # Two trading windows (best UTC hours: {best_hours[:6]})\n"
+            f"{time_filter}\n"
+            f"    # Trend filter: require clear EMA gap (Hurst={hurst:.3f} → trend following)\n"
+            "    trend_long  = df[\"EMA50\"] > df[\"EMA200\"] * 1.001\n"
+            "    trend_short = df[\"EMA50\"] < df[\"EMA200\"] * 0.999\n"
             "    # Entry: price breaks 6-bar rolling high/low\n"
             "    bo_long  = df[\"Close\"] > df[\"RollHigh6\"]\n"
             "    bo_short = df[\"Close\"] < df[\"RollLow6\"]\n"
-            "    # Momentum confirmation: short EMA slope\n"
-            "    ema20 = df[\"Close\"].ewm(span=20, adjust=False).mean()\n"
-            "    mom_long  = ema20 > ema20.shift(3)\n"
-            "    mom_short = ema20 < ema20.shift(3)\n"
             "    # RSI: avoid overbought/oversold extremes\n"
-            "    rsi_long  = df[\"RSI14\"] < 68\n"
-            "    rsi_short = df[\"RSI14\"] > 32\n"
+            "    rsi_long  = df[\"RSI14\"] < 70\n"
+            "    rsi_short = df[\"RSI14\"] > 30\n"
             "    # Volatility filter: require active market\n"
-            "    atr_ok = df[\"ATR_pct\"] > 0.0025\n"
+            "    atr_ok = df[\"ATR_pct\"] > 0.002\n"
             f"    # GARCH regime filter (persistence={garch_pers:.4f} → clusters)\n"
             f"{garch_block}\n"
             "    df[\"signal\"] = 0\n"
-            "    longs  = bo_long  & trend_long  & mom_long  & rsi_long  & atr_ok & garch_ok & time_ok\n"
-            "    shorts = bo_short & trend_short & mom_short & rsi_short & atr_ok & garch_ok & time_ok\n"
+            "    longs  = bo_long  & trend_long  & rsi_long  & atr_ok & garch_ok & time_ok\n"
+            "    shorts = bo_short & trend_short & rsi_short & atr_ok & garch_ok & time_ok\n"
             "    df.loc[longs,  \"signal\"] =  1\n"
             "    df.loc[shorts, \"signal\"] = -1\n"
             f"    # SL={sl_mult}×ATR (kurtosis={kurt:.2f}→fat tails), TP={tp_mult}×ATR→R:R={tp_mult/sl_mult:.1f}:1\n"
