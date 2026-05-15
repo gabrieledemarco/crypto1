@@ -484,6 +484,83 @@ with st.sidebar:
                         _nl_status.update(label="❌ Generazione fallita", state="error")
                         st.error(f"Errore: {_nl_e}")
 
+    # ── Step 1.6: Standard strategy templates ────────────────────────────────
+    with st.expander("🎯 Scegli una strategia standard da ottimizzare (opzionale)", expanded=False):
+        st.caption(
+            "Seleziona un modello classico. Vibe-Trading ottimizzerà tutti i parametri "
+            "per massimizzare le performance su questo asset garantendo robustezza OOS."
+        )
+        import importlib as _il1b
+        import agent_vibe as _av1b; _il1b.reload(_av1b)
+
+        _std_options = {
+            k: f"{v['icon']}  {v['name']}"
+            for k, v in _av1b.STANDARD_STRATEGIES.items()
+        }
+        _sel_strat = st.selectbox(
+            "Strategia",
+            options=list(_std_options.keys()),
+            format_func=lambda k: _std_options[k],
+            label_visibility="collapsed",
+            key="std_strat_sel",
+        )
+        if _sel_strat:
+            st.info(_av1b.STANDARD_STRATEGIES[_sel_strat]["description"])
+
+        _std_btn = st.button(
+            "🎯 Ottimizza Strategia Standard",
+            use_container_width=True,
+            help="Vibe-Trading implementa e ottimizza la strategia selezionata per questo asset.",
+        )
+
+        if _std_btn and _sel_strat:
+            if not _ant_key and not _or_key:
+                st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
+            elif _ensure_download():
+                import importlib as _il1c
+                import agent_vibe as _av1c;     _il1c.reload(_av1c)
+                import agent_strategy as _ag1c; _il1c.reload(_ag1c)
+
+                _strat_label = _av1c.STANDARD_STRATEGIES[_sel_strat]["name"]
+                with st.status(f"🎯 Ottimizzazione {_strat_label}…", expanded=True) as _std_status:
+                    try:
+                        st.write(f"📐 Costruisco prompt per **{_strat_label}**…")
+                        _std_prompt = _av1c.build_standard_strategy_prompt(_sel_strat, asset)
+                        st.write(f"✅ Prompt pronto ({len(_std_prompt)} chars) — invio a Vibe-Trading…")
+
+                        _cfg_std, _code_std, _report_std, _engine_std = _av1c.run_vibe_agent(
+                            asset=asset,
+                            anthropic_key=_ant_key,
+                            openrouter_key=_or_key,
+                            openrouter_model=_or_model,
+                            vibe_api_url=_vibe_url,
+                            vibe_service_token=_vibe_token,
+                            prompt_override=_std_prompt,
+                        )
+                        _ag1c.save_outputs(_cfg_std, _code_std, _report_std)
+                        st.write(f"✅ Strategia generata via **{_engine_std}**")
+                        st.write(
+                            f"`{_cfg_std.get('strategy_name','?')}` "
+                            f"({_cfg_std.get('strategy_type','?')}) | "
+                            f"SL {_cfg_std.get('sl_mult')}×ATR | "
+                            f"TP {_cfg_std.get('tp_mult')}×ATR"
+                        )
+                        if _cfg_std.get("rationale"):
+                            st.info(_cfg_std["rationale"])
+
+                        st.write("📈 Eseguo backtest…")
+                        _run_script("04_backtest.py", extra_env=_env)
+                        st.cache_data.clear()
+
+                        _std_status.update(
+                            label=f"✅ {_strat_label} ottimizzata",
+                            state="complete", expanded=False,
+                        )
+                        st.success("Strategia ottimizzata e testata. Consulta i grafici nella pagina principale.")
+                    except Exception as _std_e:
+                        _std_status.update(label="❌ Ottimizzazione fallita", state="error")
+                        st.error(f"Errore: {_std_e}")
+
     # ── Step 2 ────────────────────────────────────────────────────────────────
     if st.button("🤖 2. Elabora Strategia", use_container_width=True,
                  help="Genera generate_signals_agent() via Vibe-Trading (Railway/CLI). "
