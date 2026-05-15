@@ -1265,7 +1265,7 @@ with tab2:
         # ── Grid search heatmap ───────────────────────────────────────────────
         st.subheader("Grid search — Sharpe ratio (SL mult × TP mult)")
         pivot = optim.pivot_table(index="sl_mult", columns="tp_mult",
-                                  values="sharpe", aggfunc="mean")
+                                  values="sharpe_ratio", aggfunc="mean")
         fig_ht = px.imshow(
             pivot, color_continuous_scale="RdYlGn",
             labels=dict(x="TP mult", y="SL mult", color="Sharpe"),
@@ -1492,16 +1492,16 @@ with tab4:
         with col_r:
             fig_st = go.Figure(go.Bar(
                 x=stress["scenario"],
-                y=stress["cagr"],
-                marker_color=[C_UP if v >= 0 else C_DOWN for v in stress["cagr"]],
-                text=[f"{v:.1f}%" for v in stress["cagr"]],
+                y=stress["total_return_pct"],
+                marker_color=[C_UP if v >= 0 else C_DOWN for v in stress["total_return_pct"]],
+                text=[f"{v:.1f}%" for v in stress["total_return_pct"]],
                 textposition="outside",
             ))
             fig_st.add_hline(y=0, line_dash="dash", line_color="gray")
             fig_st.update_layout(
                 height=320, template="plotly_dark",
-                title="Stress test — CAGR per scenario",
-                yaxis_title="CAGR %",
+                title="Stress test — Return totale per scenario",
+                yaxis_title="Return totale %",
                 margin=dict(l=0, r=0, t=40, b=0),
                 xaxis_tickangle=-25,
             )
