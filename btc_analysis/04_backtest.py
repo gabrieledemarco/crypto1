@@ -30,12 +30,22 @@ from strategy_core import (
     ticker_to_fname, OUTPUT_DIR,
 )
 
-STRATEGY_ASSET  = os.environ.get("STRATEGY_ASSET", "BTC-USD")
-INITIAL_CAPITAL = 10_000
-RISK            = 0.01
-COMMISSION      = 0.0004
-SLIPPAGE        = 0.0001
-HOURS_MONTH     = 24 * 30
+STRATEGY_ASSET   = os.environ.get("STRATEGY_ASSET", "BTC-USD")
+DIRECTION_FILTER = os.environ.get("DIRECTION_FILTER", "ALL")  # "ALL" | "LONG" | "SHORT"
+INITIAL_CAPITAL  = 10_000
+RISK             = 0.01
+COMMISSION       = 0.0004
+SLIPPAGE         = 0.0001
+HOURS_MONTH      = 24 * 30
+
+
+def _apply_direction_filter(df: pd.DataFrame) -> pd.DataFrame:
+    """Zero out signals for directions excluded by DIRECTION_FILTER."""
+    if DIRECTION_FILTER == "LONG":
+        df = df.copy(); df.loc[df["signal"] == -1, "signal"] = 0
+    elif DIRECTION_FILTER == "SHORT":
+        df = df.copy(); df.loc[df["signal"] ==  1, "signal"] = 0
+    return df
 
 
 # ── Load agent config at module level ─────────────────────────────────────────
@@ -63,6 +73,7 @@ def run_versions(df_ind: pd.DataFrame) -> dict:
         df_s = generate_signals_v2(df_ind, atr_mult_sl=BEST_SL, atr_mult_tp=BEST_TP,
                                     active_hours=BEST_HOURS,
                                     use_garch_filter=cfg["use_garch_filter"])
+        df_s = _apply_direction_filter(df_s)
         res = backtest_v2(df_s, INITIAL_CAPITAL, RISK,
                           commission=cfg["commission"], slippage=cfg["slippage"])
         results[name] = {"result": res, "metrics": compute_metrics(res, INITIAL_CAPITAL)}
@@ -70,7 +81,7 @@ def run_versions(df_ind: pd.DataFrame) -> dict:
     print("  V_Agent (strategia AI)...")
     try:
         agent_fn = load_agent_strategy()
-        df_a     = agent_fn(df_ind)
+        df_a     = _apply_direction_filter(agent_fn(df_ind))
         res_a    = backtest_v2(df_a, INITIAL_CAPITAL, _A_RISK,
                                 commission=_A_COMM, slippage=_A_SLIP)
         results["V_Agent"] = {"result": res_a, "metrics": compute_metrics(res_a, INITIAL_CAPITAL)}
@@ -105,11 +116,11 @@ def run_wfo(df_ind: pd.DataFrame) -> pd.DataFrame:
             is_data  = df_ind.iloc[i : i + is_len]
             oos_data = df_ind.iloc[i + is_len : i + is_len + oos_len]
 
-            df_is  = agent_fn(is_data)
+            df_is  = _apply_direction_filter(agent_fn(is_data))
             res_is = backtest_v2(df_is,  INITIAL_CAPITAL, RISK, comm, slip)
             m_is   = compute_metrics(res_is, INITIAL_CAPITAL)
 
-            df_os  = agent_fn(oos_data)
+            df_os  = _apply_direction_filter(agent_fn(oos_data))
             res_os = backtest_v2(df_os, INITIAL_CAPITAL, RISK, comm, slip)
             m_os   = compute_metrics(res_os, INITIAL_CAPITAL)
 
@@ -146,8 +157,9 @@ def run_optimization(df_ind: pd.DataFrame) -> pd.DataFrame:
             if tp <= sl:
                 continue
             for h in HOUR_WINDOWS:
-                df_s = generate_signals_v2(df_ind, atr_mult_sl=sl, atr_mult_tp=tp,
-                                            active_hours=h, use_garch_filter=True)
+                df_s = _apply_direction_filter(
+                    generate_signals_v2(df_ind, atr_mult_sl=sl, atr_mult_tp=tp,
+                                        active_hours=h, use_garch_filter=True))
                 res  = backtest_v2(df_s, INITIAL_CAPITAL, RISK, comm, slip)
                 m    = compute_metrics(res, INITIAL_CAPITAL)
                 rows.append({
