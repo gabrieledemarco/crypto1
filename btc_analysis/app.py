@@ -497,82 +497,139 @@ with st.sidebar:
                         _nl_status.update(label="❌ Generazione fallita", state="error")
                         st.error(f"Errore: {_nl_e}")
 
-    # ── Step 1.6: Standard strategy templates ────────────────────────────────
-    with st.expander("🎯 Scegli una strategia standard da ottimizzare (opzionale)", expanded=False):
-        st.caption(
-            "Seleziona un modello classico. Vibe-Trading ottimizzerà tutti i parametri "
-            "per massimizzare le performance su questo asset garantendo robustezza OOS."
-        )
+    # ── Step 1.6: Standard + custom strategy templates ───────────────────────
+    with st.expander("🎯 Scegli una strategia da ottimizzare (opzionale)", expanded=False):
         import importlib as _il1b
         import agent_vibe as _av1b; _il1b.reload(_av1b)
 
-        _std_options = {
-            k: f"{v['icon']}  {v['name']}"
-            for k, v in _av1b.STANDARD_STRATEGIES.items()
-        }
+        _all_strat_opts = _av1b.get_all_strategies_options()
+        _n_custom = sum(1 for v in _all_strat_opts.values() if v["is_custom"])
+        _caption_parts = ["Seleziona un modello classico da ottimizzare con Vibe-Trading."]
+        if _n_custom:
+            _caption_parts.append(f"Hai **{_n_custom}** strategi{'a' if _n_custom == 1 else 'e'} nel catalogo personale — vengono applicate direttamente senza rigenerare il codice.")
+        st.caption(" ".join(_caption_parts))
+
         _sel_strat = st.selectbox(
             "Strategia",
-            options=list(_std_options.keys()),
-            format_func=lambda k: _std_options[k],
+            options=list(_all_strat_opts.keys()),
+            format_func=lambda k: (
+                f"⭐ {_all_strat_opts[k]['icon']}  {_all_strat_opts[k]['name']}  [personale]"
+                if _all_strat_opts[k]["is_custom"]
+                else f"{_all_strat_opts[k]['icon']}  {_all_strat_opts[k]['name']}"
+            ),
             label_visibility="collapsed",
             key="std_strat_sel",
         )
         if _sel_strat:
-            st.info(_av1b.STANDARD_STRATEGIES[_sel_strat]["description"])
+            _sel_data = _all_strat_opts[_sel_strat]
+            if _sel_data["is_custom"]:
+                st.info(
+                    f"**Strategia personale** — asset: `{_sel_data.get('asset','?')}` · "
+                    f"salvata il {_sel_data.get('added_at','')[:10]}  \n"
+                    f"{_sel_data.get('description','')}"
+                )
+            else:
+                st.info(_sel_data["description"])
 
-        _std_btn = st.button(
-            "🎯 Ottimizza Strategia Standard",
-            use_container_width=True,
-            help="Vibe-Trading implementa e ottimizza la strategia selezionata per questo asset.",
-        )
+        _is_custom_sel = _sel_strat and _all_strat_opts[_sel_strat]["is_custom"]
 
-        if _std_btn and _sel_strat:
-            if not _ant_key and not _or_key:
-                st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
-            elif _ensure_download():
-                import importlib as _il1c
-                import agent_vibe as _av1c;     _il1c.reload(_av1c)
-                import agent_strategy as _ag1c; _il1c.reload(_ag1c)
+        if _is_custom_sel:
+            # Custom strategy: apply saved config+code directly
+            if st.button(
+                "✅ Applica strategia personale",
+                use_container_width=True,
+                help="Carica la configurazione e il codice salvati nel catalogo, poi esegui il backtest.",
+            ):
+                if _ensure_download():
+                    import importlib as _il1d
+                    import agent_strategy as _ag1d; _il1d.reload(_ag1d)
+                    import agent_vibe as _av1d;     _il1d.reload(_av1d)
 
-                _strat_label = _av1c.STANDARD_STRATEGIES[_sel_strat]["name"]
-                with st.status(f"🎯 Ottimizzazione {_strat_label}…", expanded=True) as _std_status:
-                    try:
-                        st.write(f"📐 Costruisco prompt per **{_strat_label}**…")
-                        _std_prompt = _av1c.build_standard_strategy_prompt(_sel_strat, asset)
-                        st.write(f"✅ Prompt pronto ({len(_std_prompt)} chars) — invio a Vibe-Trading…")
+                    _cust_data = _av1d.get_all_strategies_options()[_sel_strat]
+                    _cust_cfg  = _cust_data.get("config", {})
+                    _cust_code = _cust_data.get("code", "")
+                    _cust_name = _cust_data.get("name", "?")
 
-                        _cfg_std, _code_std, _report_std, _engine_std = _av1c.run_vibe_agent(
-                            asset=asset,
-                            anthropic_key=_ant_key,
-                            openrouter_key=_or_key,
-                            openrouter_model=_or_model,
-                            vibe_api_url=_vibe_url,
-                            vibe_service_token=_vibe_token,
-                            prompt_override=_std_prompt,
-                        )
-                        _ag1c.save_outputs(_cfg_std, _code_std, _report_std)
-                        st.write(f"✅ Strategia generata via **{_engine_std}**")
-                        st.write(
-                            f"`{_cfg_std.get('strategy_name','?')}` "
-                            f"({_cfg_std.get('strategy_type','?')}) | "
-                            f"SL {_cfg_std.get('sl_mult')}×ATR | "
-                            f"TP {_cfg_std.get('tp_mult')}×ATR"
-                        )
-                        if _cfg_std.get("rationale"):
-                            st.info(_cfg_std["rationale"])
+                    with st.status(f"✅ Applicazione {_cust_name}…", expanded=True) as _cust_status:
+                        try:
+                            st.write(f"📋 Carico configurazione **{_cust_name}**…")
+                            _cust_report = (
+                                f"# Strategy Report — {asset}\n"
+                                f"*Fonte: catalogo personale*\n\n"
+                                f"**{_cust_cfg.get('strategy_name', _cust_name)}** "
+                                f"({_cust_cfg.get('strategy_type', '—')})\n"
+                                f"SL {_cust_cfg.get('sl_mult')}×ATR | TP {_cust_cfg.get('tp_mult')}×ATR | "
+                                f"active_hours {_cust_cfg.get('active_hours')}\n\n"
+                                f"---\n\n```python\n{_cust_code}\n```"
+                            )
+                            _ag1d.save_outputs(_cust_cfg, _cust_code, _cust_report)
+                            st.write("✅ Config e codice caricati.")
+                            st.write("📈 Eseguo backtest…")
+                            _run_script("04_backtest.py", extra_env=_env)
+                            st.cache_data.clear()
+                            _cust_status.update(
+                                label=f"✅ {_cust_name} applicata",
+                                state="complete", expanded=False,
+                            )
+                            st.success("Strategia applicata e testata. Consulta i grafici nella pagina principale.")
+                        except Exception as _cust_e:
+                            _cust_status.update(label="❌ Applicazione fallita", state="error")
+                            st.error(f"Errore: {_cust_e}")
+        else:
+            # Standard strategy: generate+optimise via Vibe-Trading
+            _std_btn = st.button(
+                "🎯 Ottimizza Strategia Standard",
+                use_container_width=True,
+                help="Vibe-Trading implementa e ottimizza la strategia selezionata per questo asset.",
+            )
 
-                        st.write("📈 Eseguo backtest…")
-                        _run_script("04_backtest.py", extra_env=_env)
-                        st.cache_data.clear()
+            if _std_btn and _sel_strat:
+                if not _ant_key and not _or_key:
+                    st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
+                elif _ensure_download():
+                    import importlib as _il1c
+                    import agent_vibe as _av1c;     _il1c.reload(_av1c)
+                    import agent_strategy as _ag1c; _il1c.reload(_ag1c)
 
-                        _std_status.update(
-                            label=f"✅ {_strat_label} ottimizzata",
-                            state="complete", expanded=False,
-                        )
-                        st.success("Strategia ottimizzata e testata. Consulta i grafici nella pagina principale.")
-                    except Exception as _std_e:
-                        _std_status.update(label="❌ Ottimizzazione fallita", state="error")
-                        st.error(f"Errore: {_std_e}")
+                    _strat_label = _av1c.STANDARD_STRATEGIES[_sel_strat]["name"]
+                    with st.status(f"🎯 Ottimizzazione {_strat_label}…", expanded=True) as _std_status:
+                        try:
+                            st.write(f"📐 Costruisco prompt per **{_strat_label}**…")
+                            _std_prompt = _av1c.build_standard_strategy_prompt(_sel_strat, asset)
+                            st.write(f"✅ Prompt pronto ({len(_std_prompt)} chars) — invio a Vibe-Trading…")
+
+                            _cfg_std, _code_std, _report_std, _engine_std = _av1c.run_vibe_agent(
+                                asset=asset,
+                                anthropic_key=_ant_key,
+                                openrouter_key=_or_key,
+                                openrouter_model=_or_model,
+                                vibe_api_url=_vibe_url,
+                                vibe_service_token=_vibe_token,
+                                prompt_override=_std_prompt,
+                            )
+                            _ag1c.save_outputs(_cfg_std, _code_std, _report_std)
+                            st.write(f"✅ Strategia generata via **{_engine_std}**")
+                            st.write(
+                                f"`{_cfg_std.get('strategy_name','?')}` "
+                                f"({_cfg_std.get('strategy_type','?')}) | "
+                                f"SL {_cfg_std.get('sl_mult')}×ATR | "
+                                f"TP {_cfg_std.get('tp_mult')}×ATR"
+                            )
+                            if _cfg_std.get("rationale"):
+                                st.info(_cfg_std["rationale"])
+
+                            st.write("📈 Eseguo backtest…")
+                            _run_script("04_backtest.py", extra_env=_env)
+                            st.cache_data.clear()
+
+                            _std_status.update(
+                                label=f"✅ {_strat_label} ottimizzata",
+                                state="complete", expanded=False,
+                            )
+                            st.success("Strategia ottimizzata e testata. Consulta i grafici nella pagina principale.")
+                        except Exception as _std_e:
+                            _std_status.update(label="❌ Ottimizzazione fallita", state="error")
+                            st.error(f"Errore: {_std_e}")
 
     # ── Step 2 ────────────────────────────────────────────────────────────────
     if st.button("🤖 2. Elabora Strategia", use_container_width=True,
@@ -1748,6 +1805,83 @@ with tab6:
             # ── Raw JSON ─────────────────────────────────────────────────────
             with st.expander("⚙️ Raw JSON config"):
                 st.json(_cfg)
+
+            st.divider()
+
+            # ── Add to custom catalogue ───────────────────────────────────────
+            st.subheader("💾 Aggiungi al catalogo strategie")
+            st.caption(
+                "Salva questa strategia nel catalogo personale per poterla riapplicare "
+                "in futuro senza doverla rigenerare con Vibe-Trading."
+            )
+            import importlib as _t6il
+            import agent_vibe as _t6av; _t6il.reload(_t6av)
+
+            with st.form("t6_add_catalogue"):
+                _cat_name = st.text_input(
+                    "Nome strategia",
+                    value=_cfg.get("strategy_name", ""),
+                    max_chars=80,
+                )
+                _cat_col1, _cat_col2 = st.columns([1, 5])
+                _cat_icon = _cat_col1.text_input("Icona", value="⭐", max_chars=2)
+                _cat_col2.text_input(
+                    "Tipo", value=_cfg.get("strategy_type", ""), disabled=True
+                )
+                _cat_desc = st.text_area(
+                    "Descrizione (mostrata nel catalogo)",
+                    value=_cfg.get("rationale", ""),
+                    height=80,
+                )
+                _cat_submit = st.form_submit_button(
+                    "💾 Salva nel catalogo", use_container_width=True, type="primary"
+                )
+                if _cat_submit:
+                    if not _cat_name.strip():
+                        st.error("Il nome è obbligatorio.")
+                    else:
+                        _cat_code_content = (
+                            open(_code_path, encoding="utf-8").read()
+                            if os.path.exists(_code_path) else ""
+                        )
+                        _cat_slug = (
+                            _cat_name.strip().lower()
+                            .replace(" ", "_")
+                            .replace("-", "_")
+                            .replace("/", "_")
+                        )
+                        _cat_slug = "".join(c for c in _cat_slug if c.isalnum() or c == "_")
+                        _cat_entry = {
+                            "key":         _cat_slug,
+                            "name":        _cat_name.strip(),
+                            "icon":        _cat_icon.strip() or "⭐",
+                            "description": _cat_desc.strip(),
+                            "added_at":    __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+                            "asset":       _cfg.get("asset", asset),
+                            "config":      dict(_cfg),
+                            "code":        _cat_code_content,
+                        }
+                        _t6av.add_to_catalogue(_cat_entry)
+                        st.success(
+                            f"✅ **{_cat_name.strip()}** salvata nel catalogo! "
+                            "Troverai questa strategia nel selettore 'Scegli una strategia' nella sidebar."
+                        )
+
+            # ── Catalogue management ──────────────────────────────────────────
+            _t6_custom = _t6av.load_custom_strategies()
+            if _t6_custom:
+                with st.expander(f"📋 Catalogo personale ({len(_t6_custom)} strategie)", expanded=True):
+                    for _t6_entry in _t6_custom:
+                        _t6c1, _t6c2 = st.columns([6, 1])
+                        _t6c1.markdown(
+                            f"**{_t6_entry.get('icon','⭐')} {_t6_entry.get('name','?')}**  "
+                            f"`{_t6_entry.get('asset','?')}` · "
+                            f"{_t6_entry.get('added_at','')[:10]}  \n"
+                            f"{_t6_entry.get('description','')[:120]}"
+                        )
+                        if _t6c2.button("🗑️", key=f"del_{_t6_entry.get('key')}", help="Rimuovi dal catalogo"):
+                            _t6av.delete_from_catalogue(_t6_entry.get("key"))
+                            st.rerun()
 
         except Exception as _e:
             st.error(f"Errore lettura output agent: {_e}")

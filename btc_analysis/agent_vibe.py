@@ -16,6 +16,7 @@ Ritorno: tuple (config, code, report, engine_used)
 """
 
 import os, sys, json, subprocess, tempfile
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -28,6 +29,63 @@ from agent_strategy import (
 from strategy_core import OUTPUT_DIR
 
 VIBE_TIMEOUT = 600   # 10 min
+
+CATALOGUE_FILE = os.path.join(OUTPUT_DIR, "custom_strategies_catalogue.json")
+CUSTOM_KEY_PREFIX = "custom__"
+
+
+def load_custom_strategies() -> list[dict]:
+    """Return list of user-saved strategy entries from the catalogue JSON."""
+    if not os.path.exists(CATALOGUE_FILE):
+        return []
+    try:
+        with open(CATALOGUE_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def add_to_catalogue(entry: dict) -> None:
+    """Append a strategy entry to the catalogue, replacing any existing same key."""
+    entries = load_custom_strategies()
+    entries = [e for e in entries if e.get("key") != entry.get("key")]
+    entries.append(entry)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    with open(CATALOGUE_FILE, "w", encoding="utf-8") as f:
+        json.dump(entries, f, indent=2, ensure_ascii=False)
+
+
+def delete_from_catalogue(key: str) -> None:
+    """Remove a strategy entry by key from the catalogue."""
+    entries = [e for e in load_custom_strategies() if e.get("key") != key]
+    with open(CATALOGUE_FILE, "w", encoding="utf-8") as f:
+        json.dump(entries, f, indent=2, ensure_ascii=False)
+
+
+def get_all_strategies_options() -> dict:
+    """Return a combined options dict for selectbox: standard + custom.
+
+    Keys are prefixed with CUSTOM_KEY_PREFIX for custom entries so callers
+    can distinguish them without extra data structures.
+    """
+    opts = {}
+    for k, v in STANDARD_STRATEGIES.items():
+        opts[k] = {"icon": v["icon"], "name": v["name"],
+                   "description": v["description"], "is_custom": False}
+    for entry in load_custom_strategies():
+        ck = CUSTOM_KEY_PREFIX + entry.get("key", "")
+        opts[ck] = {
+            "icon":        entry.get("icon", "⭐"),
+            "name":        entry.get("name", "Custom"),
+            "description": entry.get("description", ""),
+            "is_custom":   True,
+            "asset":       entry.get("asset", ""),
+            "config":      entry.get("config", {}),
+            "code":        entry.get("code", ""),
+            "added_at":    entry.get("added_at", ""),
+        }
+    return opts
 
 
 # ── Prompt builder ────────────────────────────────────────────────────────────
