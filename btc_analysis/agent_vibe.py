@@ -99,6 +99,121 @@ def generate_signals_agent(df):
 """
 
 
+# ── Standard strategy catalogue ──────────────────────────────────────────────
+
+STANDARD_STRATEGIES: dict[str, dict] = {
+    "moving_average_crossover": {
+        "name": "Moving Average Crossover",
+        "icon": "📈",
+        "description": (
+            "Trend-following strategy based on EMA crossovers (Golden Cross / Death Cross). "
+            "Go LONG when the fast EMA crosses above the slow EMA and price is above both; "
+            "SHORT when the fast EMA crosses below the slow EMA and price is below both. "
+            "Add a minimum percentage gap between the two EMAs to filter false crossovers "
+            "in choppy markets. Optimise the fast and slow periods and the gap threshold "
+            "using the statistical context provided."
+        ),
+    },
+    "volatility_breakout": {
+        "name": "Volatility Breakout (ATR)",
+        "icon": "💥",
+        "description": (
+            "Breakout strategy using Average True Range as a volatility trigger. "
+            "Enter LONG when price closes above the N-bar rolling high by at least M×ATR; "
+            "SHORT when price closes below the N-bar rolling low by at least M×ATR. "
+            "Captures explosive directional moves when volatility expands. "
+            "Filter signals by GARCH regime — suppress entries in LOW volatility. "
+            "Optimise the breakout lookback N, the ATR multiplier M, and active hours."
+        ),
+    },
+    "momentum": {
+        "name": "Momentum (Rate of Change)",
+        "icon": "🚀",
+        "description": (
+            "Momentum strategy based on rolling price rate of change. "
+            "Go LONG when the N-bar return is strongly positive (top decile), "
+            "SHORT when it is strongly negative (bottom decile). "
+            "Filter with RSI to avoid entering already-overbought longs or oversold shorts. "
+            "Optimise the momentum window N, the entry threshold, and RSI limits "
+            "to exploit the asset's autocorrelation structure (Hurst exponent)."
+        ),
+    },
+    "linear_regression_trend": {
+        "name": "Linear Regression Trend",
+        "icon": "📐",
+        "description": (
+            "Trend-following strategy using the slope of a rolling linear regression of Close. "
+            "Compute the OLS slope and R² over the last N bars. "
+            "Go LONG when slope is significantly positive AND R² > 0.6 (clean trend). "
+            "SHORT when slope is significantly negative AND R² > 0.6. "
+            "The R² filter avoids noisy, sideways markets. "
+            "Calibrate N, the slope threshold, and active hours to maximise Sharpe."
+        ),
+    },
+    "mean_reversion_rsi": {
+        "name": "Mean Reversion (RSI)",
+        "icon": "🔄",
+        "description": (
+            "Counter-trend mean reversion strategy using RSI extremes with confirmation. "
+            "Go LONG when RSI falls below the oversold threshold AND then crosses back "
+            "above it (pullback confirmed). SHORT when RSI rises above the overbought "
+            "threshold AND then crosses back below it. "
+            "Use tight SL (1.5–2×ATR) and modest TP (2–3×ATR) since mean-reversion moves "
+            "are smaller. Optimise RSI period, thresholds, and active hours."
+        ),
+    },
+    "bollinger_bands": {
+        "name": "Bollinger Bands Mean Reversion",
+        "icon": "📊",
+        "description": (
+            "Mean reversion strategy using Bollinger Bands (rolling mean ± N×std). "
+            "Go LONG when price closes below the lower band (oversold extreme); "
+            "SHORT when price closes above the upper band (overbought extreme). "
+            "Exit (TP signal) when price reverts to the middle band. "
+            "Add an ATR filter to skip entries when volatility is abnormally high "
+            "(bands too wide). Optimise window, standard-deviation multiplier, and hours."
+        ),
+    },
+    "arima_momentum": {
+        "name": "ARIMA-Inspired AR Forecast",
+        "icon": "📉",
+        "description": (
+            "Forecast-based strategy inspired by ARIMA autoregressive models. "
+            "Approximate an AR(p) model: compute the weighted sum of the last p returns "
+            "using ACF-derived weights (higher weight for lags with significant autocorrelation). "
+            "Go LONG when the AR forecast is positive above a noise threshold; "
+            "SHORT when negative below the threshold. "
+            "Filter with ATR regime and best UTC hours. "
+            "Calibrate AR order p and the signal threshold using the asset's ACF structure."
+        ),
+    },
+}
+
+
+def build_standard_strategy_prompt(strategy_key: str, asset: str) -> str:
+    """Build an optimised vibe-trading prompt for a standard strategy template.
+
+    Injects the strategy template description + statistical context so the LLM
+    can implement AND optimise the strategy for this specific asset.
+    """
+    s = STANDARD_STRATEGIES.get(strategy_key)
+    if s is None:
+        raise ValueError(f"Unknown strategy key: {strategy_key!r}. "
+                         f"Valid keys: {list(STANDARD_STRATEGIES)}")
+    full_description = (
+        f"Standard strategy template: **{s['name']}**\n\n"
+        f"{s['description']}\n\n"
+        "ROBUSTNESS REQUIREMENTS (mandatory):\n"
+        "- Keep parameter count low — prefer 1-2 key indicators over complex combos.\n"
+        "- Ensure the strategy generates at least 30 trades/year (needed for WFO).\n"
+        "- Restrict active hours to the statistically best UTC windows from the analysis.\n"
+        "- Use GARCH regime to suppress signals in LOW volatility environments.\n"
+        "- Target out-of-sample stability: parameters must be calibrated to the "
+        "asset's statistics, not just in-sample fitted."
+    )
+    return build_user_description_prompt(full_description, asset)
+
+
 # ── Natural-language prompt builder ──────────────────────────────────────────
 
 def build_user_description_prompt(description: str, asset: str) -> str:
