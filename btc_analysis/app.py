@@ -887,7 +887,7 @@ except Exception:
 
 st.divider()
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📊 Prezzi & Rendimenti",
     "📈 Strategia V5",
     "🔄 Walk-Forward",
@@ -895,6 +895,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🌐 Multi-Asset",
     "🤖 Agent Strategy",
     "🔍 Analisi Trade",
+    "⚙️ Parametri Strategia",
 ])
 
 
@@ -2043,6 +2044,208 @@ with tab7:
 
         except Exception as _t7e:
             st.error(f"Errore analisi trade: {_t7e}")
+            import traceback
+            st.code(traceback.format_exc())
+
+
+with tab8:
+    import json as _t8json
+
+    st.header("⚙️ Parametri Strategia")
+    st.markdown(
+        "Modifica i parametri della strategia corrente e ricalcola backtest, "
+        "walk-forward e Monte Carlo per vedere come variano le performance."
+    )
+
+    _cfg_path = os.path.join(OUTPUT, "agent_strategy_config.json")
+
+    if not os.path.exists(_cfg_path):
+        st.info("Nessuna strategia configurata. Genera prima una strategia dalla tab **🤖 Agent Strategy**.")
+    else:
+        try:
+            with open(_cfg_path) as _f8:
+                _t8_cfg = _t8json.load(_f8)
+
+            # ── Strategy info ─────────────────────────────────────────────────
+            _t8_name = _t8_cfg.get("strategy_name", "Strategia corrente")
+            _t8_type = _t8_cfg.get("strategy_type", "—")
+            _t8_rationale = _t8_cfg.get("rationale", "")
+
+            st.subheader(f"📋 {_t8_name}")
+            _t8i1, _t8i2 = st.columns([1, 3])
+            _t8i1.markdown(f"**Tipo:** `{_t8_type}`")
+            _t8i1.markdown(f"**Asset:** `{_t8_cfg.get('asset', asset)}`")
+            _t8i1.markdown(f"**Fonte:** `{_t8_cfg.get('source', '—')}`")
+            if _t8_rationale:
+                _t8i2.info(_t8_rationale)
+
+            st.divider()
+
+            # ── Baseline metrics ──────────────────────────────────────────────
+            _t8_cmp_path = os.path.join(OUTPUT, "enhanced_strategy_comparison.csv")
+            _t8_baseline = None
+            if os.path.exists(_t8_cmp_path):
+                _t8_cmp = pd.read_csv(_t8_cmp_path)
+                _t8_vagent = _t8_cmp[_t8_cmp["version"] == "V_Agent"]
+                if not _t8_vagent.empty:
+                    _t8_baseline = _t8_vagent.iloc[0]
+
+            if _t8_baseline is not None:
+                st.subheader("📊 Performance corrente (baseline)")
+                _b1, _b2, _b3, _b4, _b5 = st.columns(5)
+                _b1.metric("CAGR %",         f"{_t8_baseline.get('cagr_pct', 0):.1f}%")
+                _b2.metric("Sharpe",          f"{_t8_baseline.get('sharpe_ratio', 0):.2f}")
+                _b3.metric("Max DD %",        f"{_t8_baseline.get('max_drawdown_pct', 0):.1f}%")
+                _b4.metric("Win rate %",      f"{_t8_baseline.get('win_rate_pct', 0):.1f}%")
+                _b5.metric("N trade",         int(_t8_baseline.get('n_trades', 0)))
+                st.divider()
+
+            # ── Parameter editor ──────────────────────────────────────────────
+            st.subheader("🔧 Modifica Parametri")
+
+            _t8c1, _t8c2 = st.columns(2)
+
+            with _t8c1:
+                st.markdown("**Stop-Loss & Take-Profit (× ATR)**")
+                _t8_sl = st.number_input(
+                    "SL moltiplicatore ATR",
+                    min_value=0.5, max_value=10.0,
+                    value=float(_t8_cfg.get("sl_mult", 2.5)),
+                    step=0.5,
+                    key="t8_sl_mult",
+                    help="Distanza dello stop-loss dall'entry in multipli dell'ATR",
+                )
+                _t8_tp = st.number_input(
+                    "TP moltiplicatore ATR",
+                    min_value=0.5, max_value=20.0,
+                    value=float(_t8_cfg.get("tp_mult", 7.0)),
+                    step=0.5,
+                    key="t8_tp_mult",
+                    help="Distanza del take-profit dall'entry in multipli dell'ATR",
+                )
+
+                _t8_rr = _t8_tp / _t8_sl if _t8_sl > 0 else 0
+                _orig_rr = _t8_cfg.get("tp_mult", 7.0) / max(_t8_cfg.get("sl_mult", 2.5), 0.01)
+                _rr_delta = f"{_t8_rr - _orig_rr:+.2f}" if abs(_t8_rr - _orig_rr) > 0.01 else None
+                st.metric("R:R ratio (TP/SL)", f"{_t8_rr:.2f}", delta=_rr_delta)
+
+                st.markdown("**Ore attive UTC**")
+                _t8_active = _t8_cfg.get("active_hours", [6, 17])
+                _t8c1a, _t8c1b = st.columns(2)
+                _t8_h_start = _t8c1a.number_input(
+                    "Ora inizio", min_value=0, max_value=23,
+                    value=int(_t8_active[0]) if len(_t8_active) > 0 else 6,
+                    step=1, key="t8_h_start",
+                    help="Prima ora UTC in cui i segnali sono attivi",
+                )
+                _t8_h_end = _t8c1b.number_input(
+                    "Ora fine", min_value=0, max_value=23,
+                    value=int(_t8_active[1]) if len(_t8_active) > 1 else 17,
+                    step=1, key="t8_h_end",
+                    help="Ultima ora UTC in cui i segnali sono attivi",
+                )
+                if _t8_h_end <= _t8_h_start:
+                    st.warning("⚠️ L'ora di fine deve essere maggiore dell'ora di inizio.")
+
+            with _t8c2:
+                st.markdown("**Gestione del rischio**")
+                _t8_risk = st.number_input(
+                    "Rischio per trade (%)",
+                    min_value=0.1, max_value=5.0,
+                    value=float(_t8_cfg.get("risk_per_trade", 0.01)) * 100,
+                    step=0.1, format="%.1f",
+                    key="t8_risk",
+                    help="Percentuale del capitale rischiata per ogni trade",
+                ) / 100
+
+                st.markdown("**Costi di transazione**")
+                _t8_comm = st.number_input(
+                    "Commissione (%)",
+                    min_value=0.0, max_value=1.0,
+                    value=float(_t8_cfg.get("commission", 0.0004)) * 100,
+                    step=0.01, format="%.3f",
+                    key="t8_commission",
+                    help="Commissione applicata per ogni trade (entry + exit)",
+                ) / 100
+                _t8_slip = st.number_input(
+                    "Slippage (%)",
+                    min_value=0.0, max_value=1.0,
+                    value=float(_t8_cfg.get("slippage", 0.0001)) * 100,
+                    step=0.005, format="%.4f",
+                    key="t8_slippage",
+                    help="Slippage stimato per ogni trade",
+                ) / 100
+
+                st.markdown("**Riepilogo modifiche**")
+                _t8_changes = []
+                if abs(_t8_sl - _t8_cfg.get("sl_mult", 2.5)) > 0.01:
+                    _t8_changes.append(f"SL: {_t8_cfg['sl_mult']} → **{_t8_sl}**")
+                if abs(_t8_tp - _t8_cfg.get("tp_mult", 7.0)) > 0.01:
+                    _t8_changes.append(f"TP: {_t8_cfg['tp_mult']} → **{_t8_tp}**")
+                if _t8_h_start != int(_t8_active[0] if len(_t8_active) > 0 else 6):
+                    _t8_changes.append(f"Ora inizio: {_t8_active[0]} → **{_t8_h_start}**")
+                if _t8_h_end != int(_t8_active[1] if len(_t8_active) > 1 else 17):
+                    _t8_changes.append(f"Ora fine: {_t8_active[1]} → **{_t8_h_end}**")
+                if abs(_t8_risk - _t8_cfg.get("risk_per_trade", 0.01)) > 0.0001:
+                    _t8_changes.append(f"Rischio: {_t8_cfg.get('risk_per_trade',0.01)*100:.1f}% → **{_t8_risk*100:.1f}%**")
+                if abs(_t8_comm - _t8_cfg.get("commission", 0.0004)) > 0.000001:
+                    _t8_changes.append(f"Comm: {_t8_cfg.get('commission',0.0004)*100:.3f}% → **{_t8_comm*100:.3f}%**")
+                if abs(_t8_slip - _t8_cfg.get("slippage", 0.0001)) > 0.000001:
+                    _t8_changes.append(f"Slip: {_t8_cfg.get('slippage',0.0001)*100:.4f}% → **{_t8_slip*100:.4f}%**")
+
+                if _t8_changes:
+                    for _ch in _t8_changes:
+                        st.markdown(f"- {_ch}")
+                else:
+                    st.caption("Nessuna modifica rispetto alla configurazione corrente.")
+
+            st.divider()
+
+            # ── Recalculate button ────────────────────────────────────────────
+            _t8_btn_disabled = (_t8_h_end <= _t8_h_start)
+            if st.button(
+                "▶ Ricalcola Analisi",
+                use_container_width=True,
+                type="primary",
+                disabled=_t8_btn_disabled,
+                key="t8_recalc",
+            ):
+                # Save updated config
+                _t8_new_cfg = dict(_t8_cfg)
+                _t8_new_cfg["sl_mult"]        = _t8_sl
+                _t8_new_cfg["tp_mult"]        = _t8_tp
+                _t8_new_cfg["active_hours"]   = [_t8_h_start, _t8_h_end]
+                _t8_new_cfg["risk_per_trade"] = _t8_risk
+                _t8_new_cfg["commission"]     = _t8_comm
+                _t8_new_cfg["slippage"]       = _t8_slip
+
+                with open(_cfg_path, "w") as _f8w:
+                    _t8json.dump(_t8_new_cfg, _f8w, indent=2)
+
+                with st.status(
+                    f"▶ Ricalcolo Analisi — {asset} | SL={_t8_sl} TP={_t8_tp} "
+                    f"ore={_t8_h_start}-{_t8_h_end}",
+                    expanded=True,
+                ) as _t8_status:
+                    try:
+                        st.write(f"📈 Backtest + Walk-Forward ({asset}, {_direction_filter})…")
+                        _run_script("04_backtest.py", extra_env=_env)
+                        st.cache_data.clear()
+                        st.write("✅ Backtest + WFO completati.")
+                        st.write("🎲 Monte Carlo (bootstrap + stress)…")
+                        _run_script("05_montecarlo.py", extra_env=_env)
+                        st.cache_data.clear()
+                        _t8_status.update(label="✅ Ricalcolo completato", state="complete", expanded=False)
+                        st.success(
+                            "Analisi aggiornata con i nuovi parametri. "
+                            "Consulta le tab 📈 Strategia V5, 🔄 Walk-Forward e 🎲 Monte Carlo per i risultati."
+                        )
+                    except subprocess.CalledProcessError as _t8e:
+                        _t8_status.update(label="❌ Ricalcolo fallito", state="error")
+                        st.error(f"Errore:\n```\n{_t8e.stderr.decode()[:400]}\n```")
+
+        except Exception as _t8ex:
+            st.error(f"Errore caricamento parametri: {_t8ex}")
             import traceback
             st.code(traceback.format_exc())
 
