@@ -368,7 +368,24 @@ with st.sidebar:
     st.subheader("🤖 Agent AI")
     st.caption(f"Config attuale: `{_cur_src}` | asset: `{_cur_asset}`")
 
-    _env = {"STRATEGY_ASSET": asset, "HOURLY_DAYS": str(_tf_actual)}
+    # ── Direction filter (persistent — applied to every backtest run) ────────────
+    _direction_filter = st.radio(
+        "📊 Direzione segnali",
+        options=["ALL", "LONG", "SHORT"],
+        format_func=lambda d: {
+            "ALL":   "🔀 Tutti (LONG + SHORT)",
+            "LONG":  "🟢 Solo LONG",
+            "SHORT": "🔴 Solo SHORT",
+        }[d],
+        horizontal=True,
+        key="direction_filter",
+    )
+
+    _env = {
+        "STRATEGY_ASSET":   asset,
+        "HOURLY_DAYS":      str(_tf_actual),
+        "DIRECTION_FILTER": _direction_filter,
+    }
 
     def _do_download_module(tickers_list, skip_existing=False):
         """Load 01_data_download.py as module, inject timeframe, run download."""
@@ -474,12 +491,8 @@ with st.sidebar:
                         if _cfg_nl.get("rationale"):
                             st.info(_cfg_nl["rationale"])
 
-                        st.write("📈 Eseguo backtest della nuova strategia…")
-                        _run_script("04_backtest.py", extra_env=_env)
-                        st.cache_data.clear()
-
-                        _nl_status.update(label="✅ Strategia da descrizione pronta", state="complete", expanded=False)
-                        st.success("Strategia generata e testata. Consulta i grafici nella pagina principale.")
+                        _nl_status.update(label="✅ Strategia salvata", state="complete", expanded=False)
+                        st.success("✅ Strategia salvata. Premi **▶ 3. Analisi Completa** per eseguire backtest + WFO + Monte Carlo.")
                     except Exception as _nl_e:
                         _nl_status.update(label="❌ Generazione fallita", state="error")
                         st.error(f"Errore: {_nl_e}")
@@ -605,43 +618,48 @@ with st.sidebar:
                         label=f"✅ Strategia generata — {_engine_r}",
                         state="complete", expanded=False,
                     )
-                    st.success("Esegui ora **📈 3. Backtest**.")
+                    st.success("✅ Strategia salvata. Premi **▶ 3. Analisi Completa** per eseguire backtest + WFO + Monte Carlo.")
                 except Exception as _ae:
                     _status.update(label="❌ Generazione fallita", state="error")
                     st.error(f"Errore: {_ae}")
 
-    # ── Step 3 ────────────────────────────────────────────────────────────────
-    if st.button("📈 3. Backtest + Walk-Forward", use_container_width=True,
-                 help="V1/V2/V4/V_Agent + WFO rolling window + grid search SL/TP"):
+    # ── Step 3: Analisi Completa (Backtest + WFO + Monte Carlo) ──────────────────
+    if st.button("▶ 3. Analisi Completa", use_container_width=True,
+                 help="Backtest V1/V2/V4/V_Agent + Walk-Forward (4 finestre) + Monte Carlo. "
+                      "Applica il filtro direzione selezionato sopra."):
         if _ensure_download():
-            with st.spinner(f"📈 Backtest + WFO {asset}…"):
+            with st.status(
+                f"▶ Analisi Completa — {asset} | {_direction_filter}",
+                expanded=True,
+            ) as _run_status:
                 try:
+                    st.write(f"📈 Backtest + Walk-Forward ({asset}, {_direction_filter})…")
                     _run_script("04_backtest.py", extra_env=_env)
                     st.cache_data.clear()
-                    st.success("✅ Backtest completato. Esegui ora **🎲 4. Monte Carlo**.")
-                except subprocess.CalledProcessError as _be:
-                    st.error(f"Backtest fallito:\n```\n{_be.stderr.decode()[:400]}\n```")
+                    st.write("✅ Backtest + WFO completati.")
 
-    # ── Step 4 ────────────────────────────────────────────────────────────────
-    if st.button("🎲 4. Monte Carlo", use_container_width=True,
-                 help="Bootstrap 10.000 sim + 4 stress scenarios da trades.csv"):
-        with st.spinner(f"🎲 Monte Carlo {asset}…"):
-            try:
-                _run_script("05_montecarlo.py", extra_env=_env)
-                st.cache_data.clear()
-                st.success("✅ Monte Carlo completato.")
-            except subprocess.CalledProcessError as _me:
-                st.error(f"Monte Carlo fallito:\n```\n{_me.stderr.decode()[:400]}\n```")
+                    st.write("🎲 Monte Carlo (bootstrap + stress)…")
+                    _run_script("05_montecarlo.py", extra_env=_env)
+                    st.cache_data.clear()
+                    st.write("✅ Monte Carlo completato.")
+
+                    _run_status.update(
+                        label="✅ Analisi Completa terminata — vedi le tab per i risultati",
+                        state="complete", expanded=False,
+                    )
+                except subprocess.CalledProcessError as _re:
+                    _run_status.update(label="❌ Analisi fallita", state="error")
+                    st.error(f"Errore:\n```\n{_re.stderr.decode()[:400]}\n```")
 
     st.divider()
 
-    # ── Step 5: Migliora strategia ────────────────────────────────────────────
-    if st.button("🧠 5. Migliora Strategia", use_container_width=True,
+    # ── Step 4: Migliora strategia ────────────────────────────────────────────
+    if st.button("🧠 4. Migliora Strategia", use_container_width=True,
                  help="Analizza trade IS/OOS, identifica debolezze e chiama Vibe-Trading "
                       "per generare una strategia migliorata con rendimento OOS positivo."):
         _trades_path = os.path.join(OUTPUT, "trades.csv")
         if not os.path.exists(_trades_path):
-            st.warning("Esegui prima **📈 3. Backtest** per generare i dati dei trade.")
+            st.warning("Esegui prima **▶ 3. Analisi Completa** per generare i dati dei trade.")
         else:
             import importlib as _il2
             import trade_analysis as _ta; _il2.reload(_ta)
@@ -673,11 +691,13 @@ with st.sidebar:
                         f"TP {_cfg_imp.get('tp_mult')}×ATR | "
                         f"ore {_cfg_imp.get('active_hours')}"
                     )
-                    st.write("📈 Rieseguo il backtest con la nuova strategia…")
+                    st.write(f"▶ Analisi Completa con nuova strategia ({_direction_filter})…")
                     _run_script("04_backtest.py", extra_env=_env)
                     st.cache_data.clear()
+                    _run_script("05_montecarlo.py", extra_env=_env)
+                    st.cache_data.clear()
                     _imp_status.update(
-                        label="✅ Strategia migliorata e backtestata — vedi tab 🔍 Analisi Trade",
+                        label="✅ Strategia migliorata — backtest + MC completati",
                         state="complete", expanded=False,
                     )
                 except Exception as _ie:
