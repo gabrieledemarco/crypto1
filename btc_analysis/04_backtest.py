@@ -38,6 +38,11 @@ COMMISSION       = 0.0004
 SLIPPAGE         = 0.0001
 HOURS_MONTH      = 24 * 30
 
+_WFO_IS_RAW  = os.environ.get("WFO_IS_MONTHS",  "")
+_WFO_OOS_RAW = os.environ.get("WFO_OOS_MONTHS", "")
+WFO_IS_MONTHS  = int(_WFO_IS_RAW)  if _WFO_IS_RAW.isdigit()  else 0
+WFO_OOS_MONTHS = int(_WFO_OOS_RAW) if _WFO_OOS_RAW.isdigit() else 0
+
 
 def _apply_direction_filter(df: pd.DataFrame) -> pd.DataFrame:
     """Zero out signals for directions excluded by DIRECTION_FILTER."""
@@ -98,12 +103,22 @@ def run_wfo(df_ind: pd.DataFrame) -> pd.DataFrame:
     comm     = _ACFG.get("commission", COMMISSION)
     slip     = _ACFG.get("slippage",   SLIPPAGE)
 
-    window_configs = [
-        {"label": "IS=4m OOS=1m", "train": 4 * HOURS_MONTH, "test": 1 * HOURS_MONTH},
-        {"label": "IS=6m OOS=2m", "train": 6 * HOURS_MONTH, "test": 2 * HOURS_MONTH},
-        {"label": "IS=8m OOS=2m", "train": 8 * HOURS_MONTH, "test": 2 * HOURS_MONTH},
-        {"label": "IS=8m OOS=3m", "train": 8 * HOURS_MONTH, "test": 3 * HOURS_MONTH},
-    ]
+    if WFO_IS_MONTHS > 0 and WFO_OOS_MONTHS > 0 and WFO_OOS_MONTHS < WFO_IS_MONTHS:
+        window_configs = [
+            {
+                "label": f"IS={WFO_IS_MONTHS}m OOS={WFO_OOS_MONTHS}m",
+                "train": WFO_IS_MONTHS  * HOURS_MONTH,
+                "test":  WFO_OOS_MONTHS * HOURS_MONTH,
+            }
+        ]
+        print(f"  WFO finestre custom: IS={WFO_IS_MONTHS}m OOS={WFO_OOS_MONTHS}m")
+    else:
+        window_configs = [
+            {"label": "IS=4m OOS=1m", "train": 4 * HOURS_MONTH, "test": 1 * HOURS_MONTH},
+            {"label": "IS=6m OOS=2m", "train": 6 * HOURS_MONTH, "test": 2 * HOURS_MONTH},
+            {"label": "IS=8m OOS=2m", "train": 8 * HOURS_MONTH, "test": 2 * HOURS_MONTH},
+            {"label": "IS=8m OOS=3m", "train": 8 * HOURS_MONTH, "test": 3 * HOURS_MONTH},
+        ]
 
     rows = []
     for cfg in window_configs:
@@ -285,6 +300,10 @@ if __name__ == "__main__":
         is_avg  = wfo["is_sharpe"].mean()
         wfe     = oos_avg / is_avg if is_avg != 0 else 0
         print(f"  IS Sharpe medio: {is_avg:.3f}  |  OOS Sharpe medio: {oos_avg:.3f}  |  WFE: {wfe:.3f}")
+        _configs_run = wfo["window_config"].unique().tolist() if "window_config" in wfo.columns else []
+        with open(os.path.join(OUTPUT_DIR, "wfo_meta.json"), "w") as _wf:
+            json.dump({"is_months": WFO_IS_MONTHS, "oos_months": WFO_OOS_MONTHS,
+                       "configs": _configs_run}, _wf)
 
     # Grid search
     print("\nGrid search SL/TP...")
