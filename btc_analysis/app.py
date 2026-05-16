@@ -381,10 +381,28 @@ with st.sidebar:
         key="direction_filter",
     )
 
+    # ── WFO window sizes ──────────────────────────────────────────────────────
+    st.markdown("**⏱️ Finestre Walk-Forward**")
+    _wfo_cols = st.columns(2)
+    _wfo_is  = _wfo_cols[0].number_input(
+        "IS (mesi)", min_value=2, max_value=24, value=8, step=1,
+        key="wfo_is_months",
+        help="Lunghezza finestra In-Sample in mesi",
+    )
+    _wfo_oos = _wfo_cols[1].number_input(
+        "OOS (mesi)", min_value=1, max_value=12, value=2, step=1,
+        key="wfo_oos_months",
+        help="Lunghezza finestra Out-of-Sample in mesi",
+    )
+    if _wfo_oos >= _wfo_is:
+        st.warning("⚠️ OOS deve essere inferiore a IS.")
+
     _env = {
         "STRATEGY_ASSET":   asset,
         "HOURLY_DAYS":      str(_tf_actual),
         "DIRECTION_FILTER": _direction_filter,
+        "WFO_IS_MONTHS":    str(_wfo_is),
+        "WFO_OOS_MONTHS":   str(_wfo_oos),
     }
 
     def _do_download_module(tickers_list, skip_existing=False):
@@ -1353,7 +1371,42 @@ with tab3:
     elif _strat_asset3 != "BTC-USD":
         st.success(f"Walk-Forward calcolata su **{_strat_name3}** ({_strat_asset3}).")
     try:
-        wfo = load_wfo()
+        import json as _t3json
+
+        # ── Show active WFO config ────────────────────────────────────────────
+        _wfo_meta_path = os.path.join(OUTPUT, "wfo_meta.json")
+        _wfo_meta = {}
+        if os.path.exists(_wfo_meta_path):
+            try:
+                with open(_wfo_meta_path) as _wf:
+                    _wfo_meta = _t3json.load(_wf)
+            except Exception:
+                pass
+        _wfo_configs_run = _wfo_meta.get("configs", [])
+        _wfo_is_used  = _wfo_meta.get("is_months", 0)
+        _wfo_oos_used = _wfo_meta.get("oos_months", 0)
+        if _wfo_is_used and _wfo_oos_used:
+            st.caption(f"Finestre utilizzate: **IS={_wfo_is_used}m | OOS={_wfo_oos_used}m** "
+                       f"· Per modificarle usa i controlli nella sidebar e riesegui **▶ 3. Analisi Completa**.")
+
+        wfo_all = load_wfo()
+
+        # ── Window config selector (when multiple configs in CSV) ─────────────
+        if "window_config" in wfo_all.columns:
+            _avail_configs = wfo_all["window_config"].unique().tolist()
+            if len(_avail_configs) > 1:
+                _sel_wfo_cfg = st.selectbox(
+                    "Configurazione finestre",
+                    options=_avail_configs,
+                    index=len(_avail_configs) - 1,  # default: last (IS=8m OOS=2m)
+                    key="wfo_cfg_sel",
+                )
+                wfo = wfo_all[wfo_all["window_config"] == _sel_wfo_cfg].copy()
+                st.caption(f"Mostrando: **{_sel_wfo_cfg}** ({len(wfo)} fold)")
+            else:
+                wfo = wfo_all.copy()
+        else:
+            wfo = wfo_all.copy()
 
         # WFE = OOS_Sharpe / IS_Sharpe per fold
         wfo["wfe"] = wfo["oos_sharpe"] / wfo["is_sharpe"].replace(0, np.nan)
