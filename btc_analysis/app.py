@@ -429,10 +429,31 @@ with st.sidebar:
         _wfo_env["WFO_IS_BARS"]  = str(_wfo_is_b)
         _wfo_env["WFO_OOS_BARS"] = str(_wfo_oos_b)
 
+    # ── Monte Carlo ───────────────────────────────────────────────────────────
+    st.markdown("**🎲 Monte Carlo**")
+    _mc_n_sims = st.select_slider(
+        "Simulazioni bootstrap",
+        options=[1_000, 2_000, 5_000, 10_000, 20_000, 50_000],
+        value=5_000,
+        key="mc_n_sims",
+        help="Numero di simulazioni bootstrap. Valori alti aumentano la precisione ma rallentano l'esecuzione.",
+        format_func=lambda v: f"{v:,}",
+    )
+    _mc_sim_mult = st.select_slider(
+        "Periodo di simulazione",
+        options=[0.25, 0.5, 1.0, 2.0, 5.0, 10.0],
+        value=1.0,
+        key="mc_sim_mult",
+        help="Moltiplicatore del numero di trade per percorso. 1× = stesso periodo del backtest; 2× = doppio; 0.5× = metà.",
+        format_func=lambda v: f"{int(v * 100)}% dei trade" if v < 1.0 else ("= backtest" if v == 1.0 else f"{v:.0f}× trade"),
+    )
+
     _env = {
-        "STRATEGY_ASSET":   asset,
-        "HOURLY_DAYS":      str(_tf_actual),
-        "DIRECTION_FILTER": _direction_filter,
+        "STRATEGY_ASSET":    asset,
+        "HOURLY_DAYS":       str(_tf_actual),
+        "DIRECTION_FILTER":  _direction_filter,
+        "MC_N_SIMS":         str(_mc_n_sims),
+        "MC_SIM_MULTIPLIER": str(_mc_sim_mult),
         **_wfo_env,
     }
 
