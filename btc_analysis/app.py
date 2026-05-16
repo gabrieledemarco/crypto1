@@ -383,26 +383,57 @@ with st.sidebar:
 
     # ── WFO window sizes ──────────────────────────────────────────────────────
     st.markdown("**⏱️ Finestre Walk-Forward**")
-    _wfo_cols = st.columns(2)
-    _wfo_is  = _wfo_cols[0].number_input(
-        "IS (mesi)", min_value=2, max_value=24, value=8, step=1,
-        key="wfo_is_months",
-        help="Lunghezza finestra In-Sample in mesi",
+    _wfo_mode = st.radio(
+        "Tipo di finestra",
+        options=["pct", "bars"],
+        format_func=lambda x: "📊 % del dataset" if x == "pct" else "📏 Numero di periodi",
+        horizontal=True,
+        key="wfo_mode",
+        help="pct: percentuale del dataset totale (funziona con qualsiasi timeframe); bars: numero fisso di periodi",
     )
-    _wfo_oos = _wfo_cols[1].number_input(
-        "OOS (mesi)", min_value=1, max_value=12, value=2, step=1,
-        key="wfo_oos_months",
-        help="Lunghezza finestra Out-of-Sample in mesi",
-    )
-    if _wfo_oos >= _wfo_is:
-        st.warning("⚠️ OOS deve essere inferiore a IS.")
+    _wfo_env = {"WFO_MODE": _wfo_mode}
+    if _wfo_mode == "pct":
+        _wfo_is_pct  = st.slider(
+            "IS % (In-Sample)", min_value=10, max_value=80, value=35, step=5,
+            key="wfo_is_pct",
+            help="Percentuale del dataset usata per l'ottimizzazione In-Sample",
+        )
+        _wfo_oos_pct = st.slider(
+            "OOS % (Out-of-Sample)", min_value=5, max_value=40, value=10, step=5,
+            key="wfo_oos_pct",
+            help="Percentuale del dataset usata per la validazione Out-of-Sample",
+        )
+        if _wfo_is_pct + _wfo_oos_pct >= 100:
+            st.warning("⚠️ IS% + OOS% deve essere inferiore a 100%.")
+        else:
+            st.caption(
+                f"Fold stimati: ~{max(1, int((100 - _wfo_is_pct) / _wfo_oos_pct))} "
+                f"· IS={_wfo_is_pct}% OOS={_wfo_oos_pct}%"
+            )
+        _wfo_env["WFO_IS_PCT"]  = str(_wfo_is_pct)
+        _wfo_env["WFO_OOS_PCT"] = str(_wfo_oos_pct)
+    else:
+        _wfo_bar_cols = st.columns(2)
+        _wfo_is_b  = _wfo_bar_cols[0].number_input(
+            "IS (periodi)", min_value=10, max_value=500_000, value=5_000, step=500,
+            key="wfo_is_bars",
+            help="Numero di barre per la finestra In-Sample",
+        )
+        _wfo_oos_b = _wfo_bar_cols[1].number_input(
+            "OOS (periodi)", min_value=5, max_value=100_000, value=1_000, step=200,
+            key="wfo_oos_bars",
+            help="Numero di barre per la finestra Out-of-Sample",
+        )
+        if _wfo_oos_b >= _wfo_is_b:
+            st.warning("⚠️ OOS deve essere inferiore a IS.")
+        _wfo_env["WFO_IS_BARS"]  = str(_wfo_is_b)
+        _wfo_env["WFO_OOS_BARS"] = str(_wfo_oos_b)
 
     _env = {
         "STRATEGY_ASSET":   asset,
         "HOURLY_DAYS":      str(_tf_actual),
         "DIRECTION_FILTER": _direction_filter,
-        "WFO_IS_MONTHS":    str(_wfo_is),
-        "WFO_OOS_MONTHS":   str(_wfo_oos),
+        **_wfo_env,
     }
 
     def _do_download_module(tickers_list, skip_existing=False):
@@ -1375,19 +1406,31 @@ with tab3:
 
         # ── Show active WFO config ────────────────────────────────────────────
         _wfo_meta_path = os.path.join(OUTPUT, "wfo_meta.json")
-        _wfo_meta = {}
+        _wm = {}
         if os.path.exists(_wfo_meta_path):
             try:
                 with open(_wfo_meta_path) as _wf:
-                    _wfo_meta = _t3json.load(_wf)
+                    _wm = _t3json.load(_wf)
             except Exception:
                 pass
-        _wfo_configs_run = _wfo_meta.get("configs", [])
-        _wfo_is_used  = _wfo_meta.get("is_months", 0)
-        _wfo_oos_used = _wfo_meta.get("oos_months", 0)
-        if _wfo_is_used and _wfo_oos_used:
-            st.caption(f"Finestre utilizzate: **IS={_wfo_is_used}m | OOS={_wfo_oos_used}m** "
-                       f"· Per modificarle usa i controlli nella sidebar e riesegui **▶ 3. Analisi Completa**.")
+        _wfo_configs_run = _wm.get("configs", [])
+        _wfo_mode_val = _wm.get("mode", "")
+        _mode_label = "📊 % del dataset" if _wfo_mode_val == "pct" else ("📏 Numero di periodi" if _wfo_mode_val == "bars" else "—")
+        if _wfo_mode_val == "pct":
+            _window_desc = f"IS={_wm.get('is_pct', '?')}% · OOS={_wm.get('oos_pct', '?')}%"
+        elif _wfo_mode_val == "bars":
+            _window_desc = f"IS={_wm.get('is_bars', '?')} barre · OOS={_wm.get('oos_bars', '?')} barre"
+        else:
+            _window_desc = "—"
+        if _wfo_mode_val:
+            _t3k1, _t3k2, _t3k3 = st.columns(3)
+            _t3k1.metric("Modalità finestre", _mode_label)
+            _t3k2.metric("Configurazione", _wm.get("label", "—"))
+            _t3k3.metric("Fold eseguiti", _wm.get("n_folds", "—"))
+            st.caption(
+                f"Dataset: **{_wm.get('n_total', 0):,} periodi** · {_window_desc} "
+                f"· Per modificare usa i controlli nella sidebar e riesegui **▶ 3. Analisi Completa**."
+            )
 
         wfo_all = load_wfo()
 
