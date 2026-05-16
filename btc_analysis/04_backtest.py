@@ -36,7 +36,15 @@ INITIAL_CAPITAL  = 10_000
 RISK             = 0.01
 COMMISSION       = 0.0004
 SLIPPAGE         = 0.0001
-HOURS_MONTH      = 24 * 30
+
+# WFO window specification — timeframe-agnostic
+# mode "pct": windows expressed as % of total dataset length
+# mode "bars": windows expressed as absolute number of bars (periods)
+WFO_MODE     = os.environ.get("WFO_MODE", "pct")   # "pct" | "bars"
+WFO_IS_PCT   = float(os.environ.get("WFO_IS_PCT",   "35.0"))
+WFO_OOS_PCT  = float(os.environ.get("WFO_OOS_PCT",  "10.0"))
+WFO_IS_BARS  = int(os.environ.get("WFO_IS_BARS",    "0"))
+WFO_OOS_BARS = int(os.environ.get("WFO_OOS_BARS",   "0"))
 
 
 def _apply_direction_filter(df: pd.DataFrame) -> pd.DataFrame:
@@ -93,51 +101,68 @@ def run_versions(df_ind: pd.DataFrame) -> dict:
 
 # ── Walk-Forward Optimization ─────────────────────────────────────────────────
 
+def _wfo_window_sizes(n_total: int) -> tuple[int, int, str]:
+    """Compute IS and OOS bar counts from env vars. Returns (is_len, oos_len, label)."""
+    if WFO_MODE == "bars" and WFO_IS_BARS > 0 and WFO_OOS_BARS > 0:
+        is_len  = WFO_IS_BARS
+        oos_len = WFO_OOS_BARS
+        label   = f"IS={WFO_IS_BARS}bar OOS={WFO_OOS_BARS}bar"
+    else:
+        is_pct  = max(5.0,  min(WFO_IS_PCT,  90.0))
+        oos_pct = max(1.0,  min(WFO_OOS_PCT, 50.0))
+        is_len  = max(10, int(n_total * is_pct  / 100.0))
+        oos_len = max(5,  int(n_total * oos_pct / 100.0))
+        label   = f"IS={is_pct:.0f}% OOS={oos_pct:.0f}%"
+    return is_len, oos_len, label
+
+
 def run_wfo(df_ind: pd.DataFrame) -> pd.DataFrame:
     agent_fn = load_agent_strategy()
     comm     = _ACFG.get("commission", COMMISSION)
     slip     = _ACFG.get("slippage",   SLIPPAGE)
 
-    window_configs = [
-        {"label": "IS=4m OOS=1m", "train": 4 * HOURS_MONTH, "test": 1 * HOURS_MONTH},
-        {"label": "IS=6m OOS=2m", "train": 6 * HOURS_MONTH, "test": 2 * HOURS_MONTH},
-        {"label": "IS=8m OOS=2m", "train": 8 * HOURS_MONTH, "test": 2 * HOURS_MONTH},
-        {"label": "IS=8m OOS=3m", "train": 8 * HOURS_MONTH, "test": 3 * HOURS_MONTH},
-    ]
+    n = len(df_ind)
+    is_len, oos_len, label = _wfo_window_sizes(n)
+    print(f"  WFO: {label}  — IS={is_len}bar OOS={oos_len}bar su {n} periodi totali")
 
+    if is_len + oos_len > n:
+        print(f"  [WFO] ERRORE: IS+OOS ({is_len}+{oos_len}={is_len+oos_len}) > dataset ({n}). Skip.")
+        return pd.DataFrame()
+
+    step = oos_len
+    fold = 0
+    i    = 0
     rows = []
-    for cfg in window_configs:
-        is_len  = cfg["train"]
-        oos_len = cfg["test"]
-        step    = oos_len
-        fold    = 0
-        i       = 0
-        while i + is_len + oos_len <= len(df_ind):
-            is_data  = df_ind.iloc[i : i + is_len]
-            oos_data = df_ind.iloc[i + is_len : i + is_len + oos_len]
+    while i + is_len + oos_len <= n:
+        is_data  = df_ind.iloc[i : i + is_len]
+        oos_data = df_ind.iloc[i + is_len : i + is_len + oos_len]
 
-            df_is  = _apply_direction_filter(agent_fn(is_data))
-            res_is = backtest_v2(df_is,  INITIAL_CAPITAL, RISK, comm, slip)
-            m_is   = compute_metrics(res_is, INITIAL_CAPITAL)
+        df_is  = _apply_direction_filter(agent_fn(is_data))
+        res_is = backtest_v2(df_is,  INITIAL_CAPITAL, RISK, comm, slip)
+        m_is   = compute_metrics(res_is, INITIAL_CAPITAL)
 
-            df_os  = _apply_direction_filter(agent_fn(oos_data))
-            res_os = backtest_v2(df_os, INITIAL_CAPITAL, RISK, comm, slip)
-            m_os   = compute_metrics(res_os, INITIAL_CAPITAL)
+        df_os  = _apply_direction_filter(agent_fn(oos_data))
+        res_os = backtest_v2(df_os, INITIAL_CAPITAL, RISK, comm, slip)
+        m_os   = compute_metrics(res_os, INITIAL_CAPITAL)
 
-            rows.append({
-                "window_config":  cfg["label"],
-                "fold":           fold,
-                "is_sharpe":      m_is.get("sharpe_ratio", 0),
-                "oos_sharpe":     m_os.get("sharpe_ratio", 0),
-                "is_cagr":        m_is.get("cagr_pct",     0),
-                "oos_cagr":       m_os.get("cagr_pct",     0),
-                "is_n_trades":    m_is.get("n_trades",      0),
-                "oos_n_trades":   m_os.get("n_trades",      0),
-                "is_max_dd":      m_is.get("max_drawdown_pct", 0),
-                "oos_max_dd":     m_os.get("max_drawdown_pct", 0),
-            })
-            fold += 1
-            i    += step
+        rows.append({
+            "window_config": label,
+            "fold":          fold,
+            "is_bars":       is_len,
+            "oos_bars":      oos_len,
+            "is_pct":        round(is_len / n * 100, 1),
+            "oos_pct":       round(oos_len / n * 100, 1),
+            "is_sharpe":     m_is.get("sharpe_ratio",    0),
+            "oos_sharpe":    m_os.get("sharpe_ratio",    0),
+            "is_cagr":       m_is.get("cagr_pct",        0),
+            "oos_cagr":      m_os.get("cagr_pct",        0),
+            "is_n_trades":   m_is.get("n_trades",         0),
+            "oos_n_trades":  m_os.get("n_trades",         0),
+            "is_max_dd":     m_is.get("max_drawdown_pct", 0),
+            "oos_max_dd":    m_os.get("max_drawdown_pct", 0),
+        })
+        fold += 1
+        i    += step
 
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
@@ -285,6 +310,19 @@ if __name__ == "__main__":
         is_avg  = wfo["is_sharpe"].mean()
         wfe     = oos_avg / is_avg if is_avg != 0 else 0
         print(f"  IS Sharpe medio: {is_avg:.3f}  |  OOS Sharpe medio: {oos_avg:.3f}  |  WFE: {wfe:.3f}")
+        _n_total = len(df_ind)
+        _is_len, _oos_len, _label = _wfo_window_sizes(_n_total)
+        with open(os.path.join(OUTPUT_DIR, "wfo_meta.json"), "w") as _wf:
+            json.dump({
+                "mode":      WFO_MODE,
+                "is_pct":    WFO_IS_PCT,
+                "oos_pct":   WFO_OOS_PCT,
+                "is_bars":   WFO_IS_BARS  if WFO_MODE == "bars" else _is_len,
+                "oos_bars":  WFO_OOS_BARS if WFO_MODE == "bars" else _oos_len,
+                "n_total":   _n_total,
+                "label":     _label,
+                "n_folds":   len(wfo),
+            }, _wf, indent=2)
 
     # Grid search
     print("\nGrid search SL/TP...")

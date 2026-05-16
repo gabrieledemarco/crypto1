@@ -381,10 +381,56 @@ with st.sidebar:
         key="direction_filter",
     )
 
+    # ── WFO window specification ──────────────────────────────────────────────
+    st.markdown("**⏱️ Finestre Walk-Forward**")
+    _wfo_mode = st.radio(
+        "Tipo di finestra",
+        options=["pct", "bars"],
+        format_func=lambda x: "📊 % del dataset" if x == "pct" else "📏 Numero di periodi",
+        horizontal=True,
+        key="wfo_mode",
+        help="'% del dataset' funziona con qualsiasi timeframe. 'Numero di periodi' usa il numero esatto di barre.",
+    )
+
+    _wfo_env = {"WFO_MODE": _wfo_mode}
+    if _wfo_mode == "pct":
+        _wfo_is_pct  = st.slider(
+            "IS % (In-Sample)", 10, 80, 35, 5, key="wfo_is_pct",
+            help="Percentuale del dataset totale usata come finestra di training"
+        )
+        _wfo_oos_pct = st.slider(
+            "OOS % (Out-of-Sample)", 5, 40, 10, 5, key="wfo_oos_pct",
+            help="Percentuale del dataset usata come finestra di test per ogni fold"
+        )
+        if _wfo_is_pct + _wfo_oos_pct >= 100:
+            st.warning("⚠️ IS% + OOS% deve essere inferiore a 100%.")
+        else:
+            _est_folds = max(1, int((100 - _wfo_is_pct) / _wfo_oos_pct))
+            st.caption(f"Fold stimati: ~{_est_folds} · IS={_wfo_is_pct}% OOS={_wfo_oos_pct}%")
+        _wfo_env["WFO_IS_PCT"]  = str(_wfo_is_pct)
+        _wfo_env["WFO_OOS_PCT"] = str(_wfo_oos_pct)
+    else:
+        _wfo_bar_cols = st.columns(2)
+        _wfo_is_b  = _wfo_bar_cols[0].number_input(
+            "IS (periodi)", min_value=10, max_value=500_000,
+            value=5_000, step=500, key="wfo_is_bars",
+            help="Numero di barre (candele) per la finestra In-Sample",
+        )
+        _wfo_oos_b = _wfo_bar_cols[1].number_input(
+            "OOS (periodi)", min_value=5, max_value=100_000,
+            value=1_000, step=200, key="wfo_oos_bars",
+            help="Numero di barre (candele) per la finestra Out-of-Sample",
+        )
+        if _wfo_oos_b >= _wfo_is_b:
+            st.warning("⚠️ OOS deve essere inferiore a IS.")
+        _wfo_env["WFO_IS_BARS"]  = str(_wfo_is_b)
+        _wfo_env["WFO_OOS_BARS"] = str(_wfo_oos_b)
+
     _env = {
         "STRATEGY_ASSET":   asset,
         "HOURLY_DAYS":      str(_tf_actual),
         "DIRECTION_FILTER": _direction_filter,
+        **_wfo_env,
     }
 
     def _do_download_module(tickers_list, skip_existing=False):
@@ -1265,7 +1311,7 @@ with tab2:
         # ── Grid search heatmap ───────────────────────────────────────────────
         st.subheader("Grid search — Sharpe ratio (SL mult × TP mult)")
         pivot = optim.pivot_table(index="sl_mult", columns="tp_mult",
-                                  values="sharpe", aggfunc="mean")
+                                  values="sharpe_ratio", aggfunc="mean")
         fig_ht = px.imshow(
             pivot, color_continuous_scale="RdYlGn",
             labels=dict(x="TP mult", y="SL mult", color="Sharpe"),
@@ -1296,6 +1342,33 @@ with tab3:
     elif _strat_asset3 != "BTC-USD":
         st.success(f"Walk-Forward calcolata su **{_strat_name3}** ({_strat_asset3}).")
     try:
+        import json as _t3json
+
+        # ── WFO meta info ─────────────────────────────────────────────────────
+        _wfo_meta_path = os.path.join(OUTPUT, "wfo_meta.json")
+        _wfo_meta = {}
+        if os.path.exists(_wfo_meta_path):
+            try:
+                with open(_wfo_meta_path) as _wf:
+                    _wfo_meta = _t3json.load(_wf)
+            except Exception:
+                pass
+        if _wfo_meta:
+            _wm = _wfo_meta
+            _mode_label = "% dataset" if _wm.get("mode") == "pct" else "periodi"
+            if _wm.get("mode") == "pct":
+                _window_desc = f"IS={_wm.get('is_pct',0):.0f}% OOS={_wm.get('oos_pct',0):.0f}% del dataset"
+            else:
+                _window_desc = f"IS={_wm.get('is_bars',0):,} OOS={_wm.get('oos_bars',0):,} periodi"
+            _t3k1, _t3k2, _t3k3 = st.columns(3)
+            _t3k1.metric("Modalità finestre", _mode_label)
+            _t3k2.metric("Configurazione", _wm.get("label", "—"))
+            _t3k3.metric("Fold eseguiti", _wm.get("n_folds", "—"))
+            st.caption(
+                f"Dataset: **{_wm.get('n_total',0):,} periodi** · {_window_desc} · "
+                "Per modificare le finestre usa i controlli nella sidebar e riesegui **▶ 3. Analisi Completa**."
+            )
+
         wfo = load_wfo()
 
         # WFE = OOS_Sharpe / IS_Sharpe per fold
