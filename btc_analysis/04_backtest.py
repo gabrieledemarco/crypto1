@@ -46,6 +46,11 @@ WFO_OOS_PCT  = float(os.environ.get("WFO_OOS_PCT",  "10.0"))
 WFO_IS_BARS  = int(os.environ.get("WFO_IS_BARS",    "0"))
 WFO_OOS_BARS = int(os.environ.get("WFO_OOS_BARS",   "0"))
 
+_WFO_IS_RAW  = os.environ.get("WFO_IS_MONTHS",  "")
+_WFO_OOS_RAW = os.environ.get("WFO_OOS_MONTHS", "")
+WFO_IS_MONTHS  = int(_WFO_IS_RAW)  if _WFO_IS_RAW.isdigit()  else 0
+WFO_OOS_MONTHS = int(_WFO_OOS_RAW) if _WFO_OOS_RAW.isdigit() else 0
+
 
 def _apply_direction_filter(df: pd.DataFrame) -> pd.DataFrame:
     """Zero out signals for directions excluded by DIRECTION_FILTER."""
