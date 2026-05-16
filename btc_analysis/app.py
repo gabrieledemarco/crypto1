@@ -780,6 +780,64 @@ with st.sidebar:
 
     st.divider()
 
+    # ── 💾 Salva strategia nel catalogo ──────────────────────────────────────
+    _sb_cfg_path  = os.path.join(OUTPUT, "agent_strategy_config.json")
+    _sb_code_path = os.path.join(OUTPUT, "agent_strategy_code.py")
+    if os.path.exists(_sb_cfg_path):
+        try:
+            with open(_sb_cfg_path) as _sbf:
+                _sb_cfg = _json.load(_sbf)
+            _sb_default_name = _sb_cfg.get("strategy_name", "")
+            with st.expander("💾 Salva strategia nel catalogo", expanded=False):
+                st.caption(
+                    f"**{_sb_default_name}** · "
+                    f"{_sb_cfg.get('strategy_type','—')} · "
+                    f"SL {_sb_cfg.get('sl_mult')}×ATR · "
+                    f"TP {_sb_cfg.get('tp_mult')}×ATR"
+                )
+                _sb_name = st.text_input(
+                    "Nome nel catalogo",
+                    value=_sb_default_name,
+                    max_chars=80,
+                    key="sb_cat_name",
+                )
+                if st.button("💾 Salva nel catalogo", use_container_width=True,
+                             key="sb_cat_save", type="primary"):
+                    if not _sb_name.strip():
+                        st.error("Il nome è obbligatorio.")
+                    else:
+                        import importlib as _sbil
+                        import agent_vibe as _sbav; _sbil.reload(_sbav)
+                        _sb_slug = (
+                            _sb_name.strip().lower()
+                            .replace(" ", "_").replace("-", "_").replace("/", "_")
+                        )
+                        _sb_slug = "".join(c for c in _sb_slug if c.isalnum() or c == "_")
+                        _sb_code_content = (
+                            open(_sb_code_path, encoding="utf-8").read()
+                            if os.path.exists(_sb_code_path) else ""
+                        )
+                        _sbav.add_to_catalogue({
+                            "key":         _sb_slug,
+                            "name":        _sb_name.strip(),
+                            "icon":        "⭐",
+                            "description": (
+                                f"{_sb_cfg.get('strategy_type','—')} · "
+                                f"SL {_sb_cfg.get('sl_mult')}×ATR · "
+                                f"TP {_sb_cfg.get('tp_mult')}×ATR · "
+                                f"ore {_sb_cfg.get('active_hours',[])} UTC"
+                            ),
+                            "added_at":    __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+                            "asset":       _sb_cfg.get("asset", asset),
+                            "config":      dict(_sb_cfg),
+                            "code":        _sb_code_content,
+                        })
+                        st.success(f"✅ **{_sb_name.strip()}** salvata nel catalogo.")
+        except Exception:
+            pass
+
+    st.divider()
+
     # ── Step 4: Migliora strategia ────────────────────────────────────────────
     if st.button("🧠 4. Migliora Strategia", use_container_width=True,
                  help="Analizza trade IS/OOS, identifica debolezze e chiama Vibe-Trading "
