@@ -429,10 +429,22 @@ with st.sidebar:
         _wfo_env["WFO_IS_BARS"]  = str(_wfo_is_b)
         _wfo_env["WFO_OOS_BARS"] = str(_wfo_oos_b)
 
+    # ── Monte Carlo simulations ───────────────────────────────────────────────
+    st.markdown("**🎲 Monte Carlo**")
+    _mc_n_sims = st.select_slider(
+        "Simulazioni bootstrap",
+        options=[1_000, 2_000, 5_000, 10_000, 20_000, 50_000],
+        value=5_000,
+        key="mc_n_sims",
+        help="Numero di simulazioni bootstrap. Valori alti aumentano la precisione ma rallentano l'esecuzione.",
+        format_func=lambda v: f"{v:,}",
+    )
+
     _env = {
         "STRATEGY_ASSET":   asset,
         "HOURLY_DAYS":      str(_tf_actual),
         "DIRECTION_FILTER": _direction_filter,
+        "MC_N_SIMS":        str(_mc_n_sims),
         **_wfo_env,
     }
 

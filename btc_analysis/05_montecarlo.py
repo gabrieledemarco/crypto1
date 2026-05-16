@@ -24,7 +24,7 @@ from strategy_core import OUTPUT_DIR, load_agent_config
 
 STRATEGY_ASSET  = os.environ.get("STRATEGY_ASSET", "BTC-USD")
 INITIAL_CAPITAL = 10_000
-N_SIMS          = 5_000   # simulazioni bootstrap (ridotto per velocità in pipeline)
+N_SIMS          = int(os.environ.get("MC_N_SIMS", "5000"))
 np.random.seed(42)
 
 _ACFG = load_agent_config()
