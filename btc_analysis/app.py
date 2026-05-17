@@ -1657,6 +1657,69 @@ with tab3:
         st.info(f"**WFE medio**: {wfe_mean:.2f}  —  "
                 f"{'✅ modello robusto (WFE > 0.5)' if wfe_mean > 0.5 else '⚠️ rischio overfitting (WFE < 0.5)'}")
 
+        # ── Validazione statistica ────────────────────────────────────────────
+        st.subheader("🧮 Validazione Statistica")
+        _val_path = os.path.join(OUTPUT, "validation_results.json")
+        if os.path.exists(_val_path):
+            try:
+                import json as _val_json
+                with open(_val_path) as _vf:
+                    _val = _val_json.load(_vf)
+
+                _vc1, _vc2, _vc3 = st.columns(3)
+
+                # ── Column 1: Sharpe CI ───────────────────────────────────────
+                with _vc1:
+                    st.markdown("**Sharpe CI (Bootstrap)**")
+                    _sci = _val.get("sharpe_ci", {})
+                    if _sci.get("sharpe_point") is not None:
+                        st.metric("Sharpe (point)", f"{_sci['sharpe_point']:.3f}")
+                        st.metric(
+                            f"CI lower ({_sci.get('ci_pct', 95)}%)",
+                            f"{_sci['ci_lower']:.3f}",
+                        )
+                        st.metric("CI upper", f"{_sci['ci_upper']:.3f}")
+                        st.caption(f"n_bootstrap = {_sci.get('n_bootstrap', '—')}")
+                    else:
+                        st.warning(_sci.get("error", "Dati non disponibili"))
+
+                # ── Column 2: Permutation test ────────────────────────────────
+                with _vc2:
+                    st.markdown("**Permutation Test**")
+                    _pt = _val.get("permutation_test", {})
+                    if _pt.get("observed_sharpe") is not None:
+                        st.metric("Sharpe osservato", f"{_pt['observed_sharpe']:.3f}")
+                        st.metric("p-value", f"{_pt['p_value']:.4f}")
+                        st.metric("Percentile rank", f"{_pt['pct_rank']:.1f}%")
+                        if _pt["p_value"] < 0.05:
+                            st.success("PASS: p < 0.05 — strategia statisticamente significativa")
+                        else:
+                            st.error("FAIL: p ≥ 0.05 — nessuna evidenza di edge")
+                    else:
+                        st.warning(_pt.get("error", "Dati non disponibili"))
+
+                # ── Column 3: Track record + Bonferroni ───────────────────────
+                with _vc3:
+                    st.markdown("**Track Record & Bonferroni**")
+                    _mtr = _val.get("min_track_record", {})
+                    if _mtr:
+                        st.metric("N trade", _mtr.get("n_trades", "—"))
+                        if _mtr.get("ok"):
+                            st.success(f"PASS: {_mtr.get('message', '')}")
+                        else:
+                            st.error(f"FAIL: {_mtr.get('message', '')}")
+                    _bonf = _val.get("bonferroni", {})
+                    if _bonf:
+                        st.metric(
+                            "Bonferroni α corretto",
+                            f"{_bonf.get('corrected_alpha', 0):.6f}",
+                            help=f"α={_bonf.get('raw_alpha', 0.05)} / {_bonf.get('n_combinations', 1)} combinazioni",
+                        )
+            except Exception as _val_exc:
+                st.warning(f"Impossibile caricare i risultati di validazione: {_val_exc}")
+        else:
+            st.info("Esegui **▶ 3. Analisi Completa** per generare i risultati di validazione.")
+
     except Exception as e:
         st.error(f"Errore caricamento dati WFO: {e}")
 
