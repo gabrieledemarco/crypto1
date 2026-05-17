@@ -781,7 +781,8 @@ def _quick_backtest(code_str: str, asset: str) -> dict:
 
 # ── Stats-based strategy generator (no LLM required) ─────────────────────────
 
-def _generate_strategy_from_stats(asset: str = "BTC-USD") -> tuple:
+def _generate_strategy_from_stats(asset: str = "BTC-USD",
+                                  strategy_hint: str = "") -> tuple:
     """Translate statistical properties into a trading strategy without an LLM.
 
     Rules applied:
@@ -858,8 +859,21 @@ def _generate_strategy_from_stats(asset: str = "BTC-USD") -> tuple:
     else:
         time_filter = f"    time_ok = (df[\"hour\"] >= {h_start}) & (df[\"hour\"] <= {h_end})"
 
+    # User hint takes priority over the Hurst-based decision.
+    _hint = strategy_hint.lower()
+    _hint_type = None
+    if any(k in _hint for k in ("mean reversion", "mean_reversion", "zscore",
+                                 "z-score", "z score", "reversion", "mean rev")):
+        _hint_type = "mean_reversion"
+    elif any(k in _hint for k in ("trend following", "trend_following",
+                                   "momentum", "trending", "ema cross")):
+        _hint_type = "trend_following"
+    elif any(k in _hint for k in ("breakout", "break out", "channel break",
+                                   "range", "volatility break")):
+        _hint_type = "breakout"
+
     if hurst > 0.55:
-        strategy_type = "trend_following"
+        strategy_type = _hint_type or "trend_following"
         strategy_name = f"Stat-Derived Trend Following — {asset}"
         rationale = (
             f"Hurst={hurst:.4f}>0.55 → momentum/trending regime; "
@@ -897,7 +911,7 @@ def _generate_strategy_from_stats(asset: str = "BTC-USD") -> tuple:
         )
 
     elif hurst < 0.45:
-        strategy_type = "mean_reversion"
+        strategy_type = _hint_type or "mean_reversion"
         strategy_name = f"Stat-Derived Mean Reversion — {asset}"
         rationale = (
             f"Hurst={hurst:.4f}<0.45 → mean-reverting regime; "
@@ -932,7 +946,7 @@ def _generate_strategy_from_stats(asset: str = "BTC-USD") -> tuple:
         )
 
     else:
-        strategy_type = "breakout"
+        strategy_type = _hint_type or "breakout"
         strategy_name = f"Stat-Derived ATR Breakout — {asset}"
         rationale = (
             f"Hurst={hurst:.4f}≈0.5 → quasi-random-walk / breakout regime; "
@@ -959,6 +973,14 @@ def _generate_strategy_from_stats(asset: str = "BTC-USD") -> tuple:
         )
 
     _validate_code(code)
+
+    # When a hint overrides the Hurst decision, reflect that in the name
+    if _hint_type and _hint_type != (
+        "trend_following" if hurst > 0.55 else
+        "mean_reversion"  if hurst < 0.45 else "breakout"
+    ):
+        strategy_name = f"Stat-Derived {_hint_type.replace('_', ' ').title()} — {asset}"
+        rationale = f"[Hint: '{strategy_hint[:60]}'] " + rationale
 
     config = _validate_config({
         "asset":          asset,

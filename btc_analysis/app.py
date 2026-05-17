@@ -1955,6 +1955,13 @@ with tab6:
                 st.success(f"✅ Strategia generata da **Anthropic** (`{_src}`)")
             elif _src.startswith("openrouter"):
                 st.success(f"✅ Strategia generata da **OpenRouter** (`{_src}`)")
+            elif _src == "stats_derived":
+                st.info(
+                    f"ℹ️ Strategia generata dal **motore statistico** (nessuna API AI disponibile). "
+                    f"Tipo: **{_cfg.get('strategy_type', '—').replace('_', ' ').title()}** — "
+                    "determinato da Hurst, kurtosis e dal tuo prompt. "
+                    "Configura una chiave API nella sidebar per generare strategie AI personalizzate."
+                )
             else:
                 st.warning(
                     f"⚠️ Strategia di **default V5** (`{_src}`). "
