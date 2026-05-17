@@ -302,65 +302,105 @@ with st.sidebar:
     st.subheader("🔑 Chiavi API")
     _sk = _load_api_keys()
 
+    # Keys already set in os.environ (e.g. Railway) are used directly —
+    # their input fields are hidden to avoid redundancy.
+    def _resolve_key(name: str, default: str = "") -> tuple:
+        env_val = os.environ.get(name, "")
+        if env_val:
+            return env_val, True   # (value, from_env)
+        return _sk.get(name, "") or default, False
+
+    _ant_key,    _ant_env = _resolve_key("ANTHROPIC_API_KEY")
+    _or_key,     _or_env  = _resolve_key("OPENROUTER_API_KEY")
+    _or_model,   _orm_env = _resolve_key("OPENROUTER_MODEL", "anthropic/claude-opus-4")
+    _vibe_url,   _vu_env  = _resolve_key("VIBE_TRADING_API_URL")
+    _vibe_token, _vt_env  = _resolve_key("VIBE_SERVICE_TOKEN")
+    _alp_key,    _ak_env  = _resolve_key("ALPACA_API_KEY")
+    _alp_sec,    _as_env  = _resolve_key("ALPACA_SECRET_KEY")
+
+    _from_env_flags = [_ant_env, _or_env, _orm_env, _vu_env, _vt_env, _ak_env, _as_env]
+    if any(_from_env_flags):
+        st.caption("🚂 Le chiavi contrassegnate con ✅ provengono da variabili d'ambiente (Railway).")
+
     st.caption("🤖 Agent AI")
-    _ant_key = st.text_input(
-        "ANTHROPIC_API_KEY",
-        value=_sk.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", ""),
-        type="password", placeholder="sk-ant-…",
-        help="Claude claude-opus-4-7 con adaptive thinking",
-    )
-    _or_key = st.text_input(
-        "OPENROUTER_API_KEY",
-        value=_sk.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY", ""),
-        type="password", placeholder="sk-or-…",
-        help="Alternativa: Claude/GPT-4o/Gemini via OpenRouter",
-    )
-    _or_model = st.text_input(
-        "OPENROUTER_MODEL",
-        value=_sk.get("OPENROUTER_MODEL") or os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-4"),
-        help="Ignorato se si usa Anthropic diretto",
-    )
+    if _ant_env:
+        st.caption("✅ ANTHROPIC_API_KEY — da Railway")
+    else:
+        _ant_key = st.text_input(
+            "ANTHROPIC_API_KEY", value=_ant_key,
+            type="password", placeholder="sk-ant-…",
+            help="Claude claude-opus-4-7 con adaptive thinking",
+        )
+
+    if _or_env:
+        st.caption("✅ OPENROUTER_API_KEY — da Railway")
+    else:
+        _or_key = st.text_input(
+            "OPENROUTER_API_KEY", value=_or_key,
+            type="password", placeholder="sk-or-…",
+            help="Alternativa: Claude/GPT-4o/Gemini via OpenRouter",
+        )
+
+    if _orm_env:
+        st.caption(f"✅ OPENROUTER_MODEL — da Railway (`{_or_model}`)")
+    else:
+        _or_model = st.text_input(
+            "OPENROUTER_MODEL", value=_or_model,
+            help="Ignorato se si usa Anthropic diretto",
+        )
 
     st.caption("🚂 Vibe-Trading (Railway)")
-    _vibe_url = st.text_input(
-        "VIBE_TRADING_API_URL",
-        value=_sk.get("VIBE_TRADING_API_URL") or os.environ.get("VIBE_TRADING_API_URL", ""),
-        placeholder="https://your-service.up.railway.app",
-        help="URL del microservizio Vibe-Trading su Railway. "
-             "Lascia vuoto per usare la CLI locale (o il fallback AI).",
-    )
-    _vibe_token = st.text_input(
-        "VIBE_SERVICE_TOKEN",
-        value=_sk.get("VIBE_SERVICE_TOKEN") or os.environ.get("VIBE_SERVICE_TOKEN", ""),
-        type="password", placeholder="token opzionale",
-        help="SERVICE_TOKEN configurato sul servizio Railway (opzionale).",
-    )
+    if _vu_env:
+        st.caption("✅ VIBE_TRADING_API_URL — da Railway")
+    else:
+        _vibe_url = st.text_input(
+            "VIBE_TRADING_API_URL", value=_vibe_url,
+            placeholder="https://your-service.up.railway.app",
+            help="URL del microservizio Vibe-Trading su Railway. "
+                 "Lascia vuoto per usare la CLI locale (o il fallback AI).",
+        )
+
+    if _vt_env:
+        st.caption("✅ VIBE_SERVICE_TOKEN — da Railway")
+    else:
+        _vibe_token = st.text_input(
+            "VIBE_SERVICE_TOKEN", value=_vibe_token,
+            type="password", placeholder="token opzionale",
+            help="SERVICE_TOKEN configurato sul servizio Railway (opzionale).",
+        )
 
     st.caption("📡 Dati (Alpaca Markets)")
-    _alp_key = st.text_input(
-        "ALPACA_API_KEY",
-        value=_sk.get("ALPACA_API_KEY") or os.environ.get("ALPACA_API_KEY", ""),
-        type="password", placeholder="PK…",
-        help="Fallback se Yahoo Finance non è disponibile",
-    )
-    _alp_sec = st.text_input(
-        "ALPACA_SECRET_KEY",
-        value=_sk.get("ALPACA_SECRET_KEY") or os.environ.get("ALPACA_SECRET_KEY", ""),
-        type="password", placeholder="…",
-    )
+    if _ak_env:
+        st.caption("✅ ALPACA_API_KEY — da Railway")
+    else:
+        _alp_key = st.text_input(
+            "ALPACA_API_KEY", value=_alp_key,
+            type="password", placeholder="PK…",
+            help="Fallback se Yahoo Finance non è disponibile",
+        )
 
-    if st.button("💾 Salva tutte le chiavi", use_container_width=True,
-                 help="Salva in output/api_keys.json (escluso da git)"):
-        _save_api_keys({
-            "ANTHROPIC_API_KEY":    _ant_key,
-            "OPENROUTER_API_KEY":   _or_key,
-            "OPENROUTER_MODEL":     _or_model,
-            "VIBE_TRADING_API_URL": _vibe_url,
-            "VIBE_SERVICE_TOKEN":   _vibe_token,
-            "ALPACA_API_KEY":       _alp_key,
-            "ALPACA_SECRET_KEY":    _alp_sec,
-        })
-        st.success("Chiavi salvate.")
+    if _as_env:
+        st.caption("✅ ALPACA_SECRET_KEY — da Railway")
+    else:
+        _alp_sec = st.text_input(
+            "ALPACA_SECRET_KEY", value=_alp_sec,
+            type="password", placeholder="…",
+        )
+
+    # Save button only when at least one key is entered via the UI (not env)
+    if not all(_from_env_flags):
+        if st.button("💾 Salva tutte le chiavi", use_container_width=True,
+                     help="Salva in output/api_keys.json (escluso da git)"):
+            _to_save = dict(_sk)
+            if not _ant_env: _to_save["ANTHROPIC_API_KEY"]    = _ant_key
+            if not _or_env:  _to_save["OPENROUTER_API_KEY"]   = _or_key
+            if not _orm_env: _to_save["OPENROUTER_MODEL"]     = _or_model
+            if not _vu_env:  _to_save["VIBE_TRADING_API_URL"] = _vibe_url
+            if not _vt_env:  _to_save["VIBE_SERVICE_TOKEN"]   = _vibe_token
+            if not _ak_env:  _to_save["ALPACA_API_KEY"]       = _alp_key
+            if not _as_env:  _to_save["ALPACA_SECRET_KEY"]    = _alp_sec
+            _save_api_keys(_to_save)
+            st.success("Chiavi salvate.")
 
     st.divider()
 
