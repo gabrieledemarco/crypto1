@@ -1469,21 +1469,110 @@ with tab2:
                                   margin=dict(l=0, r=0, t=40, b=0))
             st.plotly_chart(fig_pie, use_container_width=True)
 
+        # ── Metriche di rischio avanzate ──────────────────────────────────────
+        st.subheader("📊 Metriche di rischio avanzate")
+        _mv = cmp.iloc[-1]
+
+        def _metric_kpi(col, label, key, fmt="{:.2f}", suffix=""):
+            val = _mv.get(key, None)
+            if val is not None and not pd.isna(float(val) if val is not None else float("nan")):
+                col.metric(label, f"{fmt.format(float(val))}{suffix}")
+            else:
+                col.metric(label, "—")
+
+        _r1, _r2, _r3, _r4 = st.columns(4)
+        _metric_kpi(_r1, "Sortino",      "sortino_ratio",     "{:.2f}")
+        _metric_kpi(_r2, "Calmar",       "calmar_ratio",      "{:.2f}")
+        _metric_kpi(_r3, "Omega",        "omega_ratio",       "{:.2f}")
+        _metric_kpi(_r4, "Ulcer Index",  "ulcer_index",       "{:.3f}")
+        _r5, _r6, _r7, _r8 = st.columns(4)
+        _metric_kpi(_r5, "VaR 95%",      "var_95_pct",        "{:.2f}", "%")
+        _metric_kpi(_r6, "CVaR 95%",     "cvar_95_pct",       "{:.2f}", "%")
+        _metric_kpi(_r7, "Max DD dur.",  "max_dd_duration_h", "{:.0f}", "h")
+        _metric_kpi(_r8, "Consec. loss", "max_consec_losses", "{:.0f}")
+
+        if "mae_r" in trades.columns and trades["mae_r"].notna().any():
+            _r9, _r10, _r11, _r12 = st.columns(4)
+            _r9.metric("MAE medio (R)",  f"{trades['mae_r'].mean():.2f}R")
+            _r10.metric("MFE medio (R)", f"{trades['mfe_r'].mean():.2f}R")
+            _r11.metric("MAE p95 (R)",   f"{trades['mae_r'].quantile(0.95):.2f}R")
+            _r12.metric("MFE p95 (R)",   f"{trades['mfe_r'].quantile(0.95):.2f}R")
+
+        _hold_h = _mv.get("avg_hold_hours", None)
+        if _hold_h is not None and not pd.isna(float(_hold_h)):
+            st.caption(f"⏱ Holding medio: **{float(_hold_h):.1f}h**")
+
+        # ── Rolling metrics ───────────────────────────────────────────────────
+        st.subheader("📈 Metriche rolling (finestra 90 giorni)")
+        _ret_r  = eq_full.pct_change().dropna()
+        _window = 90 * 24
+        if len(_ret_r) >= _window:
+            _roll_sharpe = (
+                _ret_r.rolling(_window).mean()
+                / _ret_r.rolling(_window).std().replace(0, np.nan)
+                * np.sqrt(24 * 365)
+            )
+            _peak_r = eq_full.cummax()
+            _roll_dd_ser = ((eq_full - _peak_r) / _peak_r * 100).rolling(_window).min()
+            fig_roll = make_subplots(
+                rows=2, cols=1, shared_xaxes=True,
+                row_heights=[0.5, 0.5], vertical_spacing=0.06,
+                subplot_titles=["Rolling Sharpe (90d)", "Rolling Max DD % (90d)"],
+            )
+            fig_roll.add_trace(go.Scatter(
+                x=_roll_sharpe.index, y=_roll_sharpe.values,
+                mode="lines", line=dict(color="#3498DB", width=1.5),
+                name="Rolling Sharpe"), row=1, col=1)
+            fig_roll.add_hline(y=0, line_dash="dash", line_color="gray", row=1, col=1)
+            fig_roll.add_trace(go.Scatter(
+                x=_roll_dd_ser.index, y=_roll_dd_ser.values,
+                mode="lines", line=dict(color=C_DOWN, width=1.5),
+                fill="tozeroy", fillcolor="rgba(239,83,80,0.15)",
+                name="Rolling Max DD"), row=2, col=1)
+            fig_roll.update_layout(height=400, template="plotly_dark",
+                                   margin=dict(l=0, r=0, t=40, b=0))
+            st.plotly_chart(fig_roll, use_container_width=True)
+        else:
+            st.info("Dati insufficienti per il calcolo rolling (min 90 giorni di trade).")
+
+        # ── Underwater equity ─────────────────────────────────────────────────
+        st.subheader("🌊 Underwater equity curve")
+        _dd_uw = drawdown_series(eq_full)
+        fig_uw = go.Figure(go.Scatter(
+            x=_dd_uw.index, y=_dd_uw.values,
+            mode="lines", line=dict(color=C_DOWN, width=1.5),
+            fill="tozeroy", fillcolor="rgba(239,83,80,0.2)",
+            name="Underwater %",
+        ))
+        fig_uw.add_hline(y=0, line_dash="dash", line_color="gray")
+        fig_uw.update_layout(height=250, template="plotly_dark",
+                              title="Underwater equity — perdita dal massimo storico",
+                              yaxis_title="Drawdown %",
+                              margin=dict(l=0, r=0, t=40, b=0))
+        st.plotly_chart(fig_uw, use_container_width=True)
+
         # ── Confronto versioni strategia ──────────────────────────────────────
         st.subheader("Confronto versioni strategia")
-        disp = cmp[["version", "cagr_pct", "sharpe_ratio",
-                     "max_drawdown_pct", "win_rate_pct",
-                     "n_trades", "total_costs_usd"]].copy()
-        disp.columns = ["Versione", "CAGR %", "Sharpe",
-                        "Max DD %", "Win %", "Trade", "Costi USD"]
+        _cmp_cols  = ["version", "cagr_pct", "sharpe_ratio"]
+        _cmp_names = ["Versione", "CAGR %", "Sharpe"]
+        if "sortino_ratio" in cmp.columns:
+            _cmp_cols.append("sortino_ratio")
+            _cmp_names.append("Sortino")
+        _cmp_cols  += ["max_drawdown_pct", "win_rate_pct", "n_trades", "total_costs_usd"]
+        _cmp_names += ["Max DD %", "Win %", "Trade", "Costi USD"]
+        disp = cmp[_cmp_cols].copy()
+        disp.columns = _cmp_names
         disp = disp.set_index("Versione")
+        _grad_pos = [c for c in ["CAGR %", "Sharpe", "Sortino"] if c in disp.columns]
+        _fmt_map  = {"CAGR %": "{:.1f}", "Sharpe": "{:.2f}",
+                     "Max DD %": "{:.1f}", "Win %": "{:.1f}", "Costi USD": "{:.0f}"}
+        if "Sortino" in disp.columns:
+            _fmt_map["Sortino"] = "{:.2f}"
         st.dataframe(
             disp.style
-                .background_gradient(subset=["CAGR %", "Sharpe"], cmap="RdYlGn")
+                .background_gradient(subset=_grad_pos, cmap="RdYlGn")
                 .background_gradient(subset=["Max DD %"], cmap="RdYlGn_r")
-                .format({"CAGR %": "{:.1f}", "Sharpe": "{:.2f}",
-                         "Max DD %": "{:.1f}", "Win %": "{:.1f}",
-                         "Costi USD": "{:.0f}"}),
+                .format(_fmt_map),
             use_container_width=True,
         )
 
@@ -1500,6 +1589,27 @@ with tab2:
         fig_ht.update_layout(height=320, template="plotly_dark",
                               margin=dict(l=0, r=0, t=30, b=0))
         st.plotly_chart(fig_ht, use_container_width=True)
+
+        # ── 3D sensitivity surface ────────────────────────────────────────────
+        if len(pivot) >= 3 and len(pivot.columns) >= 3:
+            st.subheader("🔬 Superficie di sensibilità 3D (SL × TP → Sharpe)")
+            _x3 = [float(c) for c in pivot.columns]
+            _y3 = [float(i) for i in pivot.index]
+            _z3 = pivot.fillna(0).values.tolist()
+            fig_3d = go.Figure(go.Surface(
+                x=_x3, y=_y3, z=_z3,
+                colorscale="RdYlGn",
+                showscale=True,
+                contours=dict(z=dict(show=True, usecolormap=True, project_z=True)),
+            ))
+            fig_3d.update_layout(
+                height=480, template="plotly_dark",
+                scene=dict(xaxis_title="TP mult",
+                           yaxis_title="SL mult",
+                           zaxis_title="Sharpe"),
+                margin=dict(l=0, r=0, t=30, b=0),
+            )
+            st.plotly_chart(fig_3d, use_container_width=True)
 
     except Exception as e:
         st.error(f"Errore caricamento dati strategia: {e}")
