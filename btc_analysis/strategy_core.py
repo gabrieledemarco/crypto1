@@ -221,9 +221,10 @@ def backtest_v2(df: pd.DataFrame,
     trades = []
 
     in_trade = False
-    entry_price = direction = sl = tp = qty = 0.0
+    entry_price = direction = sl = tp = qty = sl_d_entry = 0.0
     entry_cost = 0.0
     entry_time = None
+    mae_extreme = mfe_extreme = 0.0  # track worst/best intrabar price during hold
 
     prices = df["Close"].values
     signals = df["signal"].values
@@ -239,6 +240,14 @@ def backtest_v2(df: pd.DataFrame,
 
     for i in range(len(df)):
         if in_trade:
+            # Update MAE/MFE extremes for this bar
+            if direction == 1:   # LONG: adverse = low, favorable = high
+                mae_extreme = min(mae_extreme, lows[i])
+                mfe_extreme = max(mfe_extreme, highs[i])
+            else:                # SHORT: adverse = high, favorable = low
+                mae_extreme = max(mae_extreme, highs[i])
+                mfe_extreme = min(mfe_extreme, lows[i])
+
             exit_price = exit_reason = None
 
             if direction == 1:
@@ -257,6 +266,13 @@ def backtest_v2(df: pd.DataFrame,
                 exit_cost = exit_price * qty * cost_rate
                 pnl = gross_pnl - exit_cost
                 capital += pnl
+                # MAE/MFE as multiples of initial SL distance (R-multiples)
+                if direction == 1:
+                    mae_r = (entry_price - mae_extreme) / sl_d_entry if sl_d_entry > 0 else 0
+                    mfe_r = (mfe_extreme - entry_price) / sl_d_entry if sl_d_entry > 0 else 0
+                else:
+                    mae_r = (mae_extreme - entry_price) / sl_d_entry if sl_d_entry > 0 else 0
+                    mfe_r = (entry_price - mfe_extreme) / sl_d_entry if sl_d_entry > 0 else 0
                 trades.append({
                     "entry_time": entry_time,
                     "exit_time": times[i],
@@ -269,6 +285,8 @@ def backtest_v2(df: pd.DataFrame,
                     "pnl": pnl,
                     "pnl_pct": pnl / (entry_price * qty) * 100 if qty > 0 else 0,
                     "exit_reason": exit_reason,
+                    "mae_r": round(mae_r, 4),
+                    "mfe_r": round(mfe_r, 4),
                 })
                 in_trade = False
 
@@ -294,6 +312,9 @@ def backtest_v2(df: pd.DataFrame,
                 in_trade = True
                 entry_price = ep
                 entry_time = times[i]
+                sl_d_entry = sl_d
+                mae_extreme = ep   # reset: start tracking from entry price
+                mfe_extreme = ep
 
         equity.append(capital)
 
@@ -332,27 +353,106 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
     sharpe = ret_s.mean() / ret_s.std() * np.sqrt(24 * 365) \
              if ret_s.std() > 0 else 0
 
+    # Sortino Ratio — penalises only downside volatility
+    down_ret = ret_s[ret_s < 0]
+    sortino = ret_s.mean() / down_ret.std() * np.sqrt(24 * 365) \
+              if len(down_ret) > 1 and down_ret.std() > 0 else 0
+
     roll_max = equity.cummax()
     dd = (equity - roll_max) / roll_max * 100
     max_dd = dd.min()
     calmar = cagr / abs(max_dd) if max_dd != 0 else np.inf
 
+    # Ulcer Index — root-mean-square of drawdown depth (captures duration too)
+    ulcer_index = float(np.sqrt((dd ** 2).mean()))
+
+    # VaR and CVaR on trade-level P&L (as % of initial capital)
+    tr_ret = trades["pnl"] / initial_capital * 100
+    var_95 = float(np.percentile(tr_ret, 5))
+    var_99 = float(np.percentile(tr_ret, 1))
+    tail_95 = tr_ret[tr_ret <= var_95]
+    cvar_95 = float(tail_95.mean()) if len(tail_95) > 0 else var_95
+
+    # Omega Ratio — gains above 0 / losses below 0
+    gains = tr_ret[tr_ret > 0].sum()
+    losses_abs = abs(tr_ret[tr_ret <= 0].sum())
+    omega = gains / losses_abs if losses_abs > 0 else np.inf
+
+    # Drawdown duration: longest consecutive bars below running max
+    in_dd_flag = dd < -0.01
+    max_dd_duration = 0
+    cur_dur = 0
+    dd_durations = []
+    for v in in_dd_flag:
+        if v:
+            cur_dur += 1
+        else:
+            if cur_dur > 0:
+                dd_durations.append(cur_dur)
+            max_dd_duration = max(max_dd_duration, cur_dur)
+            cur_dur = 0
+    if cur_dur > 0:
+        dd_durations.append(cur_dur)
+        max_dd_duration = max(max_dd_duration, cur_dur)
+
+    # Average holding time in hours
+    avg_hold_h = 0.0
+    if "entry_time" in trades.columns and "exit_time" in trades.columns:
+        try:
+            avg_hold_h = float(
+                (pd.to_datetime(trades["exit_time"]) - pd.to_datetime(trades["entry_time"]))
+                .dt.total_seconds().mean() / 3600
+            )
+        except Exception:
+            pass
+
+    # Consecutive loss streak
+    pnl_arr = trades["pnl"].values
+    max_consec_loss = cur_loss = 0
+    for p in pnl_arr:
+        if p <= 0:
+            cur_loss += 1
+            max_consec_loss = max(max_consec_loss, cur_loss)
+        else:
+            cur_loss = 0
+
+    # MAE/MFE statistics (if tracked)
+    mae_mean = mfe_mean = mae_p95 = mfe_p95 = 0.0
+    if "mae_r" in trades.columns and "mfe_r" in trades.columns:
+        mae_mean = float(trades["mae_r"].mean())
+        mfe_mean = float(trades["mfe_r"].mean())
+        mae_p95  = float(np.percentile(trades["mae_r"], 95))
+        mfe_p95  = float(np.percentile(trades["mfe_r"], 95))
+
     total_costs = trades["costs"].sum() if "costs" in trades.columns else 0
 
     return {
-        "total_return_pct": total_return,
-        "cagr_pct": cagr,
-        "sharpe_ratio": sharpe,
-        "max_drawdown_pct": max_dd,
-        "calmar_ratio": calmar,
-        "n_trades": n,
-        "win_rate_pct": win_rate,
-        "profit_factor": pf,
-        "avg_win_usd": avg_win,
-        "avg_loss_usd": avg_loss,
-        "sl_hits": len(trades[trades["exit_reason"] == "SL"]),
-        "tp_hits": len(trades[trades["exit_reason"] == "TP"]),
-        "total_costs_usd": total_costs,
+        "total_return_pct":  total_return,
+        "cagr_pct":          cagr,
+        "sharpe_ratio":      sharpe,
+        "sortino_ratio":     sortino,
+        "calmar_ratio":      calmar,
+        "omega_ratio":       float(omega) if np.isfinite(omega) else 999.0,
+        "ulcer_index":       ulcer_index,
+        "max_drawdown_pct":  max_dd,
+        "max_dd_duration_h": max_dd_duration,
+        "var_95_pct":        var_95,
+        "var_99_pct":        var_99,
+        "cvar_95_pct":       cvar_95,
+        "n_trades":          n,
+        "win_rate_pct":      win_rate,
+        "profit_factor":     pf,
+        "avg_win_usd":       avg_win,
+        "avg_loss_usd":      avg_loss,
+        "avg_hold_hours":    avg_hold_h,
+        "max_consec_losses": max_consec_loss,
+        "mae_mean_r":        mae_mean,
+        "mfe_mean_r":        mfe_mean,
+        "mae_p95_r":         mae_p95,
+        "mfe_p95_r":         mfe_p95,
+        "sl_hits":           len(trades[trades["exit_reason"] == "SL"]),
+        "tp_hits":           len(trades[trades["exit_reason"] == "TP"]),
+        "total_costs_usd":   total_costs,
     }
 
 
