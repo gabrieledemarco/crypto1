@@ -342,4 +342,9 @@ if __name__ == "__main__":
     with open(os.path.join(OUTPUT_DIR, "strategy_meta.json"), "w") as f:
         json.dump({"asset": STRATEGY_ASSET}, f)
 
+    # Run validation
+    import subprocess as _sp
+    _sp.run(["python3", os.path.join(os.path.dirname(OUTPUT_DIR), "06_validation.py")],
+            check=False, env={**os.environ, "STRATEGY_ASSET": STRATEGY_ASSET})
+
     print("\nBacktest completato.")
