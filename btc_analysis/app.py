@@ -1760,6 +1760,97 @@ with tab2:
         else:
             st.info("Dati exit_time non disponibili per il calendario mensile.")
 
+        # ── Benchmark vs Buy-and-Hold ─────────────────────────────────────────
+        st.subheader("\U0001f4d0 Strategia vs Buy-and-Hold BTC")
+        try:
+            if eq_full is None or eq_full.empty:
+                raise ValueError("equity curve vuota")
+
+            # 1. Load BTC OHLCV
+            ohlcv = pd.read_csv(
+                f"{OUTPUT}/btc_ohlcv.csv",
+                parse_dates=["time"],
+            ).set_index("time")
+
+            # 2. Build B&H equity normalised to 10 000
+            bh_close = ohlcv["close"].reindex(eq_full.index, method="ffill")
+            bh_equity = 10_000 * bh_close / bh_close.iloc[0]
+
+            # 3. Overlay chart — strategy vs B&H
+            fig_bh = go.Figure()
+            fig_bh.add_trace(go.Scatter(
+                x=eq_full.index, y=eq_full,
+                name="Strategia", line=dict(color=C_UP, width=2),
+            ))
+            fig_bh.add_trace(go.Scatter(
+                x=bh_equity.index, y=bh_equity,
+                name="BTC Buy-and-Hold", line=dict(color="#FFA726", width=2, dash="dot"),
+            ))
+            fig_bh.add_hline(y=10_000, line_dash="dash",
+                             line_color="white", opacity=0.4,
+                             annotation_text="Start 10 000 USD")
+            fig_bh.update_layout(
+                template="plotly_dark",
+                height=340,
+                margin=dict(l=0, r=0, t=30, b=0),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                yaxis_title="Equity (USD)",
+            )
+            st.plotly_chart(fig_bh, use_container_width=True)
+
+            # 4. Returns correlation (monthly)
+            strat_ret = eq_full.resample("ME").last().pct_change().dropna()
+            bh_ret    = bh_equity.resample("ME").last().pct_change().dropna()
+            common_idx = strat_ret.index.intersection(bh_ret.index)
+            if len(common_idx) < 2:
+                raise ValueError("Dati mensili insufficienti per la correlazione")
+            strat_ret_c = strat_ret.loc[common_idx]
+            bh_ret_c    = bh_ret.loc[common_idx]
+            corr = float(np.corrcoef(strat_ret_c.values, bh_ret_c.values)[0, 1])
+            st.metric("Correlazione mensile BTC B&H", f"{corr:.2f}")
+
+            # 5. Scatter plot — monthly returns with regression line
+            coeffs = np.polyfit(bh_ret_c.values, strat_ret_c.values, 1)
+            beta, alpha = coeffs[0], coeffs[1]
+            x_line = np.linspace(bh_ret_c.min(), bh_ret_c.max(), 50)
+            y_line = beta * x_line + alpha
+
+            fig_sc = go.Figure()
+            fig_sc.add_trace(go.Scatter(
+                x=bh_ret_c.values * 100,
+                y=strat_ret_c.values * 100,
+                mode="markers",
+                marker=dict(color=C_UP, size=8, opacity=0.8),
+                name="Rendimenti mensili",
+                text=[str(d.date()) for d in common_idx],
+                hovertemplate="%{text}<br>BTC: %{x:.1f}%<br>Strat: %{y:.1f}%",
+            ))
+            fig_sc.add_trace(go.Scatter(
+                x=x_line * 100,
+                y=y_line * 100,
+                mode="lines",
+                line=dict(color=C_DOWN, width=2, dash="dash"),
+                name="Regressione",
+            ))
+            fig_sc.add_annotation(
+                xref="paper", yref="paper", x=0.02, y=0.96,
+                text=f"\u03c1 = {corr:.2f}   \u03b2 = {beta:.2f}   \u03b1 = {alpha*100:.2f}%/mese",
+                showarrow=False,
+                font=dict(size=13, color="white"),
+                align="left",
+            )
+            fig_sc.update_layout(
+                template="plotly_dark",
+                height=360,
+                margin=dict(l=0, r=0, t=30, b=0),
+                xaxis_title="BTC B&H rendimento mensile (%)",
+                yaxis_title="Strategia rendimento mensile (%)",
+            )
+            st.plotly_chart(fig_sc, use_container_width=True)
+
+        except Exception:
+            st.info("Dati benchmark non disponibili.")
+
     except Exception as e:
         st.error(f"Errore caricamento dati strategia: {e}")
 
