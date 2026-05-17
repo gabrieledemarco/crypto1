@@ -1914,10 +1914,54 @@ with tab6:
                 st.markdown(open(_rpt_path, encoding="utf-8").read())
                 st.divider()
 
-            # ── Strategy code ─────────────────────────────────────────────────
+            # ── Strategy code — editable ──────────────────────────────────────
             if os.path.exists(_code_path):
-                with st.expander("📝 Codice strategia (`generate_signals_agent`)"):
-                    st.code(open(_code_path, encoding="utf-8").read(), language="python")
+                with st.expander("📝 Codice strategia (modificabile)", expanded=False):
+                    _current_code = open(_code_path, encoding="utf-8").read()
+                    _edited_code = st.text_area(
+                        "Modifica il codice della funzione `generate_signals_agent`",
+                        value=_current_code,
+                        height=400,
+                        key="t6_code_editor",
+                        help="Modifica il codice direttamente. Premi 'Valida e Salva' per applicare le modifiche.",
+                        label_visibility="collapsed",
+                    )
+                    _ce_col1, _ce_col2 = st.columns(2)
+                    _ce_save = _ce_col1.button(
+                        "💾 Valida e Salva",
+                        key="t6_code_save",
+                        use_container_width=True,
+                        type="primary",
+                    )
+                    _ce_run = _ce_col2.button(
+                        "▶ Salva e Riesegui Backtest",
+                        key="t6_code_run",
+                        use_container_width=True,
+                    )
+                    if _ce_save or _ce_run:
+                        _ce_errors = []
+                        if "def generate_signals_agent" not in _edited_code:
+                            _ce_errors.append("La funzione `generate_signals_agent` non è definita.")
+                        if 'df["signal"]' not in _edited_code and "df['signal']" not in _edited_code:
+                            _ce_errors.append("La colonna `df[\"signal\"]` non è assegnata.")
+                        if "return df" not in _edited_code:
+                            _ce_errors.append("`return df` mancante.")
+                        try:
+                            compile(_edited_code, "<strategy>", "exec")
+                        except SyntaxError as _se:
+                            _ce_errors.append(f"Errore di sintassi: {_se}")
+                        if _ce_errors:
+                            for _err in _ce_errors:
+                                st.error(_err)
+                        else:
+                            with open(_code_path, "w", encoding="utf-8") as _wf:
+                                _wf.write(_edited_code)
+                            st.success("✅ Codice salvato in `agent_strategy_code.py`.")
+                            if _ce_run:
+                                with st.spinner("▶ Rieseguo backtest con il codice modificato…"):
+                                    _run_script("04_backtest.py", extra_env=_env)
+                                    st.cache_data.clear()
+                                st.success("✅ Backtest completato — aggiorna le tab per vedere i risultati.")
 
             # ── Raw JSON ─────────────────────────────────────────────────────
             with st.expander("⚙️ Raw JSON config"):
