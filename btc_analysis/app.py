@@ -1611,6 +1611,155 @@ with tab2:
             )
             st.plotly_chart(fig_3d, use_container_width=True)
 
+        # ── Return Attribution by Direction & Hour ────────────────────────────
+        st.subheader("📊 Attribution — P&L per direzione e ora")
+
+        _attr_col_l, _attr_col_r = st.columns(2)
+
+        with _attr_col_l:
+            if "direction" in trades_view.columns and len(trades_view) > 0:
+                _dir_grp = (
+                    trades_view.groupby("direction")["pnl"]
+                    .agg(
+                        total_pnl="sum",
+                        count="count",
+                        avg_pnl="mean",
+                    )
+                    .reset_index()
+                )
+                _dir_grp["win_rate"] = (
+                    trades_view[trades_view["pnl"] > 0]
+                    .groupby("direction")["pnl"]
+                    .count()
+                    .reindex(_dir_grp["direction"])
+                    .values
+                    / _dir_grp["count"].values
+                    * 100
+                )
+                _dir_colors = [
+                    C_UP if d == "long" else C_DOWN
+                    for d in _dir_grp["direction"]
+                ]
+                fig_dir = go.Figure()
+                fig_dir.add_trace(go.Bar(
+                    x=_dir_grp["direction"],
+                    y=_dir_grp["total_pnl"],
+                    name="P&L totale",
+                    marker_color=_dir_colors,
+                    text=_dir_grp["total_pnl"].round(0).astype(int),
+                    textposition="outside",
+                    hovertemplate=(
+                        "<b>%{x}</b><br>"
+                        "P&L totale: %{y:.2f} USDT<br>"
+                        "Trade: %{customdata[0]}<br>"
+                        "Avg P&L: %{customdata[1]:.2f} USDT<br>"
+                        "Win rate: %{customdata[2]:.1f}%"
+                    ),
+                    customdata=_dir_grp[["count", "avg_pnl", "win_rate"]].values,
+                ))
+                fig_dir.update_layout(
+                    height=320,
+                    template="plotly_dark",
+                    title=f"P&L totale per direzione{_t2_note}",
+                    margin=dict(l=0, r=0, t=40, b=0),
+                    yaxis_title="P&L (USDT)",
+                )
+                st.plotly_chart(fig_dir, use_container_width=True)
+            else:
+                st.info("Colonna 'direction' non disponibile o nessun trade nel periodo.")
+
+        with _attr_col_r:
+            if "entry_time" in trades_view.columns and len(trades_view) > 0:
+                _tv = trades_view.copy()
+                _tv["hour"] = _tv["entry_time"].dt.hour
+                _hour_grp = (
+                    _tv.groupby("hour")["pnl"]
+                    .agg(total_pnl="sum", count="count")
+                    .reindex(range(24), fill_value=0)
+                    .reset_index()
+                )
+                _hour_grp.columns = ["hour", "total_pnl", "count"]
+                _hour_colors = [
+                    C_UP if v >= 0 else C_DOWN
+                    for v in _hour_grp["total_pnl"]
+                ]
+                fig_hour = go.Figure()
+                fig_hour.add_trace(go.Bar(
+                    x=_hour_grp["hour"],
+                    y=_hour_grp["total_pnl"],
+                    name="P&L per ora",
+                    marker_color=_hour_colors,
+                    hovertemplate=(
+                        "<b>Ora %{x}:00</b><br>"
+                        "P&L totale: %{y:.2f} USDT<br>"
+                        "Trade: %{customdata}"
+                    ),
+                    customdata=_hour_grp["count"].values,
+                ))
+                fig_hour.update_layout(
+                    height=320,
+                    template="plotly_dark",
+                    title=f"P&L per ora del giorno{_t2_note}",
+                    margin=dict(l=0, r=0, t=40, b=0),
+                    xaxis=dict(
+                        tickmode="linear",
+                        tick0=0,
+                        dtick=2,
+                        title="Ora (UTC)",
+                    ),
+                    yaxis_title="P&L (USDT)",
+                )
+                st.plotly_chart(fig_hour, use_container_width=True)
+            else:
+                st.info("Dati entry_time non disponibili.")
+
+        # ── Monthly Calendar Heatmap ──────────────────────────────────────────
+        st.subheader("📅 Heatmap mensile — P&L")
+
+        if "exit_time" in trades.columns and len(trades) > 0:
+            _trades_cal = trades.copy()
+            _trades_cal["exit_time"] = pd.to_datetime(_trades_cal["exit_time"])
+            _monthly = (
+                _trades_cal.groupby(pd.Grouper(key="exit_time", freq="ME"))["pnl"]
+                .sum()
+                .reset_index()
+            )
+            _monthly["year"]  = _monthly["exit_time"].dt.year
+            _monthly["month"] = _monthly["exit_time"].dt.month
+
+            _month_names = [
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            ]
+            _monthly["month_name"] = _monthly["month"].apply(
+                lambda m: _month_names[m - 1]
+            )
+
+            _pivot = _monthly.pivot_table(
+                index="year",
+                columns="month_name",
+                values="pnl",
+                aggfunc="sum",
+            ).reindex(columns=_month_names)
+
+            _n_years = len(_pivot)
+            fig_cal = px.imshow(
+                _pivot,
+                color_continuous_scale="RdYlGn",
+                color_continuous_midpoint=0,
+                text_auto=".0f",
+                labels=dict(x="Mese", y="Anno", color="P&L (USDT)"),
+                aspect="auto",
+            )
+            fig_cal.update_layout(
+                height=200 + 50 * _n_years,
+                template="plotly_dark",
+                margin=dict(l=0, r=0, t=30, b=0),
+            )
+            st.plotly_chart(fig_cal, use_container_width=True)
+        else:
+            st.info("Dati exit_time non disponibili per il calendario mensile.")
+
     except Exception as e:
         st.error(f"Errore caricamento dati strategia: {e}")
 
