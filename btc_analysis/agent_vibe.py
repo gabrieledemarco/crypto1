@@ -400,6 +400,22 @@ def _call_railway_api(
 
 # ── Mode 2: Local CLI ─────────────────────────────────────────────────────────
 
+def _extract_strategy_hint(prompt: str) -> str:
+    """Return a normalized strategy-type hint extracted from a natural-language prompt."""
+    p = prompt.lower()
+    if any(k in p for k in ("mean reversion", "mean_reversion", "zscore",
+                              "z-score", "z score", "reversion", "mean rev",
+                              "bollinger", "oscillator", "overb", "overs")):
+        return "mean reversion"
+    if any(k in p for k in ("trend follow", "trend_follow", "momentum",
+                              "trending", "ema cross", "moving average")):
+        return "trend following"
+    if any(k in p for k in ("breakout", "break out", "channel break",
+                              "range", "volatility break", "atr break")):
+        return "breakout"
+    return ""
+
+
 def _is_vibe_installed() -> bool:
     try:
         r = subprocess.run(
@@ -750,9 +766,12 @@ def run_vibe_agent(
 
     # ── Mode 2: Local CLI ─────────────────────────────────────────────────────
     if not _is_vibe_installed():
+        _hint = _extract_strategy_hint(prompt_override)
+        if _hint:
+            print(f"  [vibe] Hint rilevato dal prompt: '{_hint}'")
         print("  [vibe] vibe-trading CLI non disponibile — generazione stats-based...")
         from agent_strategy import _generate_strategy_from_stats, _quick_backtest
-        cfg, code, report = _generate_strategy_from_stats(asset)
+        cfg, code, report = _generate_strategy_from_stats(asset, strategy_hint=_hint)
         metrics = _quick_backtest(code, asset)
         if metrics:
             n  = metrics.get("n_trades", 0)
