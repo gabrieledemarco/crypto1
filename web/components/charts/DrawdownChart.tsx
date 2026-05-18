@@ -68,6 +68,7 @@ export function DrawdownChart({
       }))
     );
 
+    chart.timeScale().fitContent();
     seriesRef.current = area;
     chartRef.current = chart;
     return () => {

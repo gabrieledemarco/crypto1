@@ -82,6 +82,7 @@ export function EquityChart({
       value: ((_e.v / baseVal) - 1) * 100, // percent return
     }));
     mainSeries.setData(data);
+    chart.timeScale().fitContent();
 
     // Benchmark (dashed)
     benchRef.current = null;
