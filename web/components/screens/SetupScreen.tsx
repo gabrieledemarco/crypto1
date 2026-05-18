@@ -70,11 +70,18 @@ export function SetupScreen() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ params }),
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        throw new Error(err.detail ?? `HTTP ${res.status}`);
+      }
       const data = await res.json();
       setRunId(data.id);
-    } catch {
+    } catch (e: unknown) {
       setRunning(false);
-      setToast("API not available — using fixture data");
+      const msg = e instanceof Error ? e.message : "unknown error";
+      setToast(msg.includes("fetch") || msg.includes("Failed")
+        ? "API not reachable — check NEXT_PUBLIC_API_URL"
+        : `Run failed: ${msg}`);
     }
   };
 
