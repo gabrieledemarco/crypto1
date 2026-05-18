@@ -332,9 +332,11 @@ if __name__ == "__main__":
         print("Running Sharpe bootstrap CI...")
         sharpe_ci = sharpe_ci_bootstrap(equity_series)
         results["sharpe_ci"] = sharpe_ci
-        print(f"  Sharpe point: {sharpe_ci.get('sharpe_point', 'N/A'):.3f}  "
-              f"95% CI [{sharpe_ci.get('ci_lower', 'N/A'):.3f}, "
-              f"{sharpe_ci.get('ci_upper', 'N/A'):.3f}]")
+        _sp  = sharpe_ci.get('sharpe_point')
+        _cil = sharpe_ci.get('ci_lower')
+        _ciu = sharpe_ci.get('ci_upper')
+        _fmt = lambda v: f"{v:.3f}" if v is not None else "N/A"
+        print(f"  Sharpe point: {_fmt(_sp)}  95% CI [{_fmt(_cil)}, {_fmt(_ciu)}]")
     else:
         results["sharpe_ci"] = {"error": "No equity series available"}
         print("Skipping Sharpe CI — no equity data")
@@ -346,10 +348,14 @@ if __name__ == "__main__":
         print(f"  autocorr_block_size → {_block_size}")
         perm = permutation_test(trades_df, block_size=_block_size)
         results["permutation_test"] = perm
-        print(f"  Observed Sharpe: {perm.get('observed_sharpe', 'N/A'):.3f}  "
-              f"p-value: {perm.get('p_value', 'N/A'):.4f}  "
-              f"pct_rank: {perm.get('pct_rank', 'N/A'):.1f}%  "
-              f"block_size: {perm.get('block_size', 'N/A')}")
+        _os = perm.get('observed_sharpe')
+        _pv = perm.get('p_value')
+        _pr = perm.get('pct_rank')
+        _f3 = lambda v: f"{v:.3f}" if v is not None else "N/A"
+        _f4 = lambda v: f"{v:.4f}" if v is not None else "N/A"
+        _f1 = lambda v: f"{v:.1f}" if v is not None else "N/A"
+        print(f"  Observed Sharpe: {_f3(_os)}  p-value: {_f4(_pv)}  "
+              f"pct_rank: {_f1(_pr)}%  block_size: {perm.get('block_size', 'N/A')}")
     else:
         results["permutation_test"] = {"error": "No trades data available"}
         print("Skipping permutation test — no trades data")
