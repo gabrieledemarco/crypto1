@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { fixtures } from "@/lib/fixtures";
 import { useAssets, useAssetBars, useAssetStats } from "@/hooks/useAssets";
 import { Sparkline } from "@/components/charts/Sparkline";
@@ -14,10 +14,28 @@ const KIND_COLORS: Record<string, string> = {
 
 const PERIODS = ["1y", "2y", "5y"] as const;
 
-const FETCHABLE_TICKERS = [
-  "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD",
-  "ADA-USD", "AVAX-USD", "DOT-USD", "MATIC-USD", "LINK-USD",
-  "ARB-USD", "OP-USD", "ATOM-USD", "NEAR-USD", "APT-USD",
+const ALL_TICKERS = [
+  // Crypto — large cap
+  "BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "XRP-USD",
+  "ADA-USD", "AVAX-USD", "DOGE-USD", "TRX-USD", "DOT-USD",
+  "MATIC-USD", "LINK-USD", "SHIB-USD", "LTC-USD", "BCH-USD",
+  "UNI-USD", "ATOM-USD", "XLM-USD", "ALGO-USD", "VET-USD",
+  "HBAR-USD", "ICP-USD", "NEAR-USD", "FIL-USD", "AAVE-USD",
+  "GRT-USD", "MKR-USD", "COMP-USD", "SNX-USD", "CRV-USD",
+  "ARB-USD", "OP-USD", "APT-USD", "SUI-USD", "INJ-USD",
+  "IMX-USD", "LDO-USD", "RPL-USD", "RNDR-USD", "FTM-USD",
+  "SAND-USD", "MANA-USD", "AXS-USD", "ENJ-USD", "CHZ-USD",
+  "STX-USD", "TIA-USD", "SEI-USD", "WLD-USD", "JTO-USD",
+  "DYDX-USD", "GMX-USD", "RUNE-USD", "ROSE-USD", "ONE-USD",
+  "EGLD-USD", "THETA-USD", "ZEC-USD", "DASH-USD", "ETC-USD",
+  "XMR-USD", "EOS-USD", "NEO-USD", "IOTA-USD", "WAVES-USD",
+  // US Equities
+  "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA",
+  "BRK-B", "JPM", "V", "MA", "NFLX", "DIS", "PYPL",
+  "AMD", "INTC", "QCOM", "AVGO", "CRM", "ORCL", "COIN",
+  "MSTR", "RIOT", "MARA", "CLSK", "HUT",
+  // ETF
+  "SPY", "QQQ", "GLD", "SLV", "USO", "VTI", "IWM", "TLT",
 ];
 
 export function AssetsScreen() {
@@ -25,10 +43,31 @@ export function AssetsScreen() {
     fixtures.assets[0].ticker
   );
   const [showFetch, setShowFetch] = useState(false);
-  const [fetchTicker, setFetchTicker] = useState(FETCHABLE_TICKERS[0]);
+  const [fetchTicker, setFetchTicker] = useState<string>("");
+  const [searchVal, setSearchVal] = useState("");
+  const [dropOpen, setDropOpen] = useState(false);
   const [fetchPeriod, setFetchPeriod] = useState<string>("2y");
   const [fetching, setFetching] = useState(false);
   const [fetchMsg, setFetchMsg] = useState<string | null>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setDropOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const suggestions = searchVal.length > 0
+    ? ALL_TICKERS.filter(t =>
+        t.toLowerCase().includes(searchVal.toLowerCase())
+      ).slice(0, 10)
+    : ALL_TICKERS.slice(0, 10);
 
   // API data (falls back to fixtures)
   const { data: apiAssets } = useAssets();
@@ -78,22 +117,31 @@ export function AssetsScreen() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ticker: fetchTicker.trim().toUpperCase(),
+          ticker: fetchTicker,
           source: "yfinance",
           period: fetchPeriod,
         }),
       });
       if (res.ok) {
-        setFetchMsg(`✓ ${fetchTicker} fetched (${fetchPeriod})`);
+        setFetchMsg(`✓ ${fetchTicker} scaricato (${fetchPeriod})`);
         setShowFetch(false);
+        setFetchTicker("");
+        setSearchVal("");
       } else {
-        setFetchMsg("Fetch failed — check ticker");
+        const err = await res.json().catch(() => ({}));
+        setFetchMsg(`Errore: ${err.detail ?? res.status}`);
       }
     } catch {
-      setFetchMsg("API unavailable");
+      setFetchMsg("API non raggiungibile");
     } finally {
       setFetching(false);
     }
+  };
+
+  const selectTicker = (t: string) => {
+    setFetchTicker(t);
+    setSearchVal(t);
+    setDropOpen(false);
   };
 
   return (
@@ -146,24 +194,60 @@ export function AssetsScreen() {
             {!showFetch ? (
               <button
                 className={styles.btnFetch}
-                onClick={() => setShowFetch(true)}
+                onClick={() => {
+                  setShowFetch(true);
+                  setTimeout(() => inputRef.current?.focus(), 50);
+                }}
               >
                 + FETCH
               </button>
             ) : (
               <div className={styles.fetchForm}>
-                <div className={styles.label}>TICKER</div>
-                <div className={styles.tickerPills}>
-                  {FETCHABLE_TICKERS.map((t) => (
-                    <button
-                      key={t}
-                      className={`${styles.pill} ${fetchTicker === t ? styles.pillActive : ""}`}
-                      onClick={() => setFetchTicker(t)}
-                    >
-                      {t.replace("-USD", "")}
-                    </button>
-                  ))}
+                <div className={styles.label}>CERCA TICKER</div>
+
+                {/* Autocomplete */}
+                <div className={styles.searchWrap} ref={searchRef}>
+                  <input
+                    ref={inputRef}
+                    className={styles.searchInput}
+                    placeholder="es. BTC, ETH, AAPL…"
+                    value={searchVal}
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(e) => {
+                      const v = e.target.value.toUpperCase();
+                      setSearchVal(v);
+                      setFetchTicker("");
+                      setDropOpen(true);
+                    }}
+                    onFocus={() => setDropOpen(true)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") setDropOpen(false);
+                      if (e.key === "Enter" && suggestions.length > 0) {
+                        selectTicker(suggestions[0]);
+                      }
+                    }}
+                  />
+                  {dropOpen && suggestions.length > 0 && (
+                    <div className={styles.dropdown}>
+                      {suggestions.map((t) => (
+                        <button
+                          key={t}
+                          className={`${styles.dropItem} ${fetchTicker === t ? styles.dropItemActive : ""}`}
+                          onMouseDown={(e) => {
+                            e.preventDefault(); // avoid blur before click
+                            selectTicker(t);
+                          }}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
+
+                {/* Period pills */}
+                <div className={styles.label}>PERIODO</div>
                 <div className={styles.periodPills}>
                   {PERIODS.map((p) => (
                     <button
@@ -175,17 +259,23 @@ export function AssetsScreen() {
                     </button>
                   ))}
                 </div>
+
                 <div className={styles.fetchActions}>
                   <button
                     className={styles.btnFetch}
                     onClick={handleFetch}
-                    disabled={fetching}
+                    disabled={fetching || !fetchTicker}
                   >
-                    {fetching ? "FETCHING…" : "FETCH"}
+                    {fetching ? "SCARICANDO…" : `FETCH${fetchTicker ? ` ${fetchTicker}` : ""}`}
                   </button>
                   <button
                     className={styles.btnCancel}
-                    onClick={() => { setShowFetch(false); setFetchMsg(null); }}
+                    onClick={() => {
+                      setShowFetch(false);
+                      setFetchMsg(null);
+                      setFetchTicker("");
+                      setSearchVal("");
+                    }}
                   >
                     CANCEL
                   </button>
@@ -213,7 +303,7 @@ export function AssetsScreen() {
               data={closePrices}
               width={480}
               height={240}
-              color="var(--amber)"
+              color="#ffb53b"
             />
           </div>
           <div className={styles.chartFooter}>
@@ -232,13 +322,13 @@ export function AssetsScreen() {
             <span className={styles.chartLabel}>
               HIGH{" "}
               <span className={styles.chartVal} style={{ color: "var(--green)" }}>
-                {Math.max(...closePrices).toLocaleString()}
+                {closePrices.length > 0 ? Math.max(...closePrices).toLocaleString() : "—"}
               </span>
             </span>
             <span className={styles.chartLabel}>
               LOW{" "}
               <span className={styles.chartVal} style={{ color: "var(--coral)" }}>
-                {Math.min(...closePrices).toLocaleString()}
+                {closePrices.length > 0 ? Math.min(...closePrices).toLocaleString() : "—"}
               </span>
             </span>
           </div>
