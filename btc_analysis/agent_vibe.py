@@ -840,7 +840,23 @@ def run_vibe_agent(
                 print(f"  [vibe] Candidato {_idx} fallito: {_ce}")
 
         if _best is None:
-            raise RuntimeError("Tutti i candidati Railway sono falliti.")
+            # Railway unreachable — fall back to stats-based
+            print("  [vibe] Railway non raggiungibile — fallback stats-based…")
+            from agent_strategy import _generate_strategy_from_stats
+            _hint = _extract_strategy_hint(prompt_override)
+            cfg, code, report = _generate_strategy_from_stats(asset, strategy_hint=_hint)
+            _m_fb = _quick_backtest(code, asset) or {}
+            if _m_fb:
+                report += (
+                    f"\n\n## Backtest (in-sample)\n"
+                    f"| Metric | Value |\n|---|---|\n"
+                    f"| N trades | {_m_fb.get('n_trades', 0)} |\n"
+                    f"| Sharpe   | {_m_fb.get('sharpe', -999):.3f} |\n"
+                    f"| CAGR     | {_m_fb.get('cagr', -999):.1f}% |\n"
+                    f"| Profit Factor | {_m_fb.get('profit_factor', 0):.3f} |\n"
+                )
+            print(f"  [vibe] ✅ Strategia stats-based (fallback): {cfg.get('strategy_name')}")
+            return cfg, code, report, "stats-derived (Railway fallback)"
 
         _score_best, cfg, code, report = _best
         print(f"  [vibe] ✅ Miglior candidato selezionato (Score={_score_best:.3f}): {cfg.get('strategy_name')}")
@@ -977,7 +993,25 @@ def run_vibe_agent(
                     pass
 
     if _cli_best is None:
-        raise RuntimeError("Tutti i candidati CLI sono falliti.")
+        # CLI installed but non-functional (missing LLM dependency, etc.)
+        # Fall back to stats-based to always return a strategy.
+        print("  [vibe] CLI non funzionante — fallback stats-based…")
+        from agent_strategy import _generate_strategy_from_stats
+        _hint = _extract_strategy_hint(prompt_override)
+        cfg, code, report = _generate_strategy_from_stats(asset, strategy_hint=_hint)
+        _m_fb = _quick_backtest(code, asset) or {}
+        if _m_fb:
+            report += (
+                f"\n\n## Backtest (in-sample)\n"
+                f"| Metric | Value |\n|---|---|\n"
+                f"| N trades | {_m_fb.get('n_trades', 0)} |\n"
+                f"| Win Rate | {_m_fb.get('win_rate', 0):.1f}% |\n"
+                f"| Sharpe   | {_m_fb.get('sharpe', -999):.3f} |\n"
+                f"| CAGR     | {_m_fb.get('cagr', -999):.1f}% |\n"
+                f"| Profit Factor | {_m_fb.get('profit_factor', 0):.3f} |\n"
+            )
+        print(f"  [vibe] ✅ Strategia stats-based (fallback): {cfg.get('strategy_name')}")
+        return cfg, code, report, "stats-derived (CLI fallback)"
 
     _score_cli, cfg, code, report = _cli_best
     print(f"  [vibe] ✅ Miglior candidato selezionato (Score={_score_cli:.3f}): {cfg.get('strategy_name')}")
