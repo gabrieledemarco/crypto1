@@ -1,0 +1,146 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 6px;
+  height: 100%;
+  align-content: start;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border-l);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  min-height: 28px;
+  flex-shrink: 0;
+}
+
+.panelTitle {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.panelSub {
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.panelBody {
+  padding: 8px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.dimMono {
+  font-size: 10px;
+  color: var(--dim);
+  font-family: var(--font-mono);
+}
+
+.metricGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metricPair {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.metricLabel {
+  font-size: 10px;
+  color: var(--faint);
+  letter-spacing: 0.04em;
+}
+
+.metricVals {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.metricIS {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.metricOOS {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.table {
+  display: flex;
+  flex-direction: column;
+}
+
+.thead {
+  display: grid;
+  padding: 3px 4px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--dim);
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.trow {
+  display: grid;
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  gap: 4px;
+  align-items: center;
+}
+
+.trow:hover {
+  background: var(--panel-3);
+}
+
+.dim {
+  color: var(--dim);
+}
+
+.heatLegend {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.btn {
+  background: transparent;
+  border: 1px solid var(--border-l);
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.btn:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.empty {
+  padding: 24px;
+  color: var(--dim);
+  font-family: var(--font-mono);
+}
