@@ -37,6 +37,11 @@ RISK             = 0.01
 COMMISSION       = 0.0004
 SLIPPAGE         = 0.0001
 
+# Position sizing / leverage
+LEVERAGE         = float(os.environ.get("LEVERAGE",          "1.0"))
+SIZING_MODE      = os.environ.get("SIZING_MODE",             "pct_risk")  # pct_risk | pct_capital | fixed_usd
+FIXED_AMOUNT_USD = float(os.environ.get("FIXED_AMOUNT_USD",  "1000.0"))
+
 # WFO window specification — timeframe-agnostic
 # mode "pct":  IS/OOS as % of total dataset length (works on any timeframe)
 # mode "bars": IS/OOS as absolute number of bars/periods
@@ -91,7 +96,9 @@ def run_versions(df_ind: pd.DataFrame) -> dict:
         agent_fn = load_agent_strategy()
         df_a     = _apply_direction_filter(agent_fn(df_ind))
         res_a    = backtest_v2(df_a, INITIAL_CAPITAL, _A_RISK,
-                                commission=_A_COMM, slippage=_A_SLIP)
+                                commission=_A_COMM, slippage=_A_SLIP,
+                                leverage=LEVERAGE, sizing_mode=SIZING_MODE,
+                                fixed_amount_usd=FIXED_AMOUNT_USD)
         results["V_Agent"] = {"result": res_a, "metrics": compute_metrics(res_a, INITIAL_CAPITAL)}
     except Exception as exc:
         print(f"  [V_Agent] errore: {exc}")
@@ -148,11 +155,15 @@ def run_wfo(df_ind: pd.DataFrame) -> pd.DataFrame:
         oos_data = df_ind.iloc[i + is_len : i + is_len + oos_len]
 
         df_is  = _apply_direction_filter(agent_fn(is_data))
-        res_is = backtest_v2(df_is,  INITIAL_CAPITAL, RISK, comm, slip)
+        res_is = backtest_v2(df_is, INITIAL_CAPITAL, RISK, comm, slip,
+                             leverage=LEVERAGE, sizing_mode=SIZING_MODE,
+                             fixed_amount_usd=FIXED_AMOUNT_USD)
         m_is   = compute_metrics(res_is, INITIAL_CAPITAL)
 
         df_os  = _apply_direction_filter(agent_fn(oos_data))
-        res_os = backtest_v2(df_os, INITIAL_CAPITAL, RISK, comm, slip)
+        res_os = backtest_v2(df_os, INITIAL_CAPITAL, RISK, comm, slip,
+                             leverage=LEVERAGE, sizing_mode=SIZING_MODE,
+                             fixed_amount_usd=FIXED_AMOUNT_USD)
         m_os   = compute_metrics(res_os, INITIAL_CAPITAL)
 
         rows.append({
@@ -195,7 +206,9 @@ def run_optimization(df_ind: pd.DataFrame) -> pd.DataFrame:
                 df_s = _apply_direction_filter(
                     generate_signals_v2(df_ind, atr_mult_sl=sl, atr_mult_tp=tp,
                                         active_hours=h, use_garch_filter=True))
-                res  = backtest_v2(df_s, INITIAL_CAPITAL, RISK, comm, slip)
+                res  = backtest_v2(df_s, INITIAL_CAPITAL, RISK, comm, slip,
+                                   leverage=LEVERAGE, sizing_mode=SIZING_MODE,
+                                   fixed_amount_usd=FIXED_AMOUNT_USD)
                 m    = compute_metrics(res, INITIAL_CAPITAL)
                 rows.append({
                     "sl_mult":          sl,
@@ -245,7 +258,9 @@ def run_optimization(df_ind: pd.DataFrame) -> pd.DataFrame:
                     df_oos = _apply_direction_filter(
                         generate_signals_v2(oos_data, atr_mult_sl=_sl, atr_mult_tp=_tp,
                                             active_hours=(_h0, _h1), use_garch_filter=True))
-                    res_oos = backtest_v2(df_oos, INITIAL_CAPITAL, RISK, comm, slip)
+                    res_oos = backtest_v2(df_oos, INITIAL_CAPITAL, RISK, comm, slip,
+                                         leverage=LEVERAGE, sizing_mode=SIZING_MODE,
+                                         fixed_amount_usd=FIXED_AMOUNT_USD)
                     m_oos   = compute_metrics(res_oos, INITIAL_CAPITAL)
                     oos_sharpe = m_oos.get("sharpe_ratio", 0)
                     is_sharpe  = float(best["sharpe_ratio"])
@@ -403,7 +418,12 @@ if __name__ == "__main__":
 
     # strategy_meta.json
     with open(os.path.join(OUTPUT_DIR, "strategy_meta.json"), "w") as f:
-        json.dump({"asset": STRATEGY_ASSET}, f)
+        json.dump({
+            "asset":            STRATEGY_ASSET,
+            "leverage":         LEVERAGE,
+            "sizing_mode":      SIZING_MODE,
+            "fixed_amount_usd": FIXED_AMOUNT_USD,
+        }, f, indent=2)
 
     # Run validation
     import subprocess as _sp
