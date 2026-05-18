@@ -56,7 +56,7 @@ function ScreenContent({ screen }: { screen: ScreenId }) {
           }}
         >
           <div style={{ color: "var(--amber)", marginBottom: 8 }}>
-            {screen.toUpperCase()}
+            {String(screen).toUpperCase()}
           </div>
           <div>Coming in M5</div>
         </div>
