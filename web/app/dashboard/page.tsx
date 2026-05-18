@@ -16,6 +16,9 @@ import { SweepScreen }      from "@/components/screens/SweepScreen";
 import { MonteCarloScreen } from "@/components/screens/MonteCarloScreen";
 import { UnderwaterScreen } from "@/components/screens/UnderwaterScreen";
 import { CompareScreen }    from "@/components/screens/CompareScreen";
+import { AssetsScreen }     from "@/components/screens/AssetsScreen";
+import { LibraryScreen }    from "@/components/screens/LibraryScreen";
+import { VibeScreen }       from "@/components/screens/VibeScreen";
 import { useHotkeys } from "@/hooks/useHotkeys";
 import type { ScreenId } from "@/store";
 
@@ -37,6 +40,12 @@ function ScreenContent({ screen }: { screen: ScreenId }) {
       return <UnderwaterScreen />;
     case "compare":
       return <CompareScreen />;
+    case "assets":
+      return <AssetsScreen />;
+    case "library":
+      return <LibraryScreen />;
+    case "vibe":
+      return <VibeScreen />;
     default:
       return (
         <div
