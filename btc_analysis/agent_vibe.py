@@ -23,12 +23,13 @@ sys.path.insert(0, os.path.dirname(__file__))
 from agent_strategy import (
     _build_context, _atr_stats,
     _extract_block, _validate_config, _validate_code,
-    save_outputs,
+    save_outputs, _quick_backtest,
     OPENROUTER_API_URL, OPENROUTER_DEFAULT_MODEL,
 )
 from strategy_core import OUTPUT_DIR
 
-VIBE_TIMEOUT = 600   # 10 min
+VIBE_TIMEOUT      = 600   # 10 min
+VIBE_N_CANDIDATES = int(os.environ.get("VIBE_N_CANDIDATES", "2"))  # candidates to generate & compare
 
 CATALOGUE_FILE = os.path.join(OUTPUT_DIR, "custom_strategies_catalogue.json")
 CUSTOM_KEY_PREFIX = "custom__"
@@ -718,6 +719,66 @@ def _post_process(
     return cfg, code, report
 
 
+# ── Multi-candidate selection helpers ────────────────────────────────────────
+
+_DIVERSITY_HINTS = [
+    "",  # candidate 1: default prompt (no extra instruction)
+    (
+        "\n\n══ DIVERSITY INSTRUCTION (alternative candidate) ══\n"
+        "Generate an ALTERNATIVE implementation that uses DIFFERENT signal logic "
+        "from the most obvious approach. Explore a different combination of indicators "
+        "or entry triggers (e.g., if the canonical approach is trend-following, consider "
+        "a breakout variant; if it is mean-reversion, try a momentum filter). "
+        "Different active_hours, SL/TP ratios, and lookback windows are encouraged. "
+        "Goal: maximise candidate diversity so the best strategy can be selected via backtest."
+    ),
+]
+
+
+def _candidate_score(m: dict) -> float:
+    """Composite score for ranking candidates. Returns -inf if disqualified."""
+    nt = m.get("n_trades", 0)
+    if nt < 10:
+        return float("-inf")  # too few trades — disqualify
+    sh  = m.get("sharpe",        -999.0)
+    pf  = m.get("profit_factor",    0.0)
+    cagr = m.get("cagr",         -999.0)
+    # Sharpe dominates; PF and CAGR break ties
+    return sh * 0.60 + min(pf, 4.0) * 0.25 + min(max(cagr, -100), 100) / 100 * 0.15
+
+
+def _candidate_summary(m: dict) -> str:
+    return (
+        f"Sharpe={m.get('sharpe', 'N/A'):.2f}  "
+        f"N={m.get('n_trades', 0)}  "
+        f"PF={m.get('profit_factor', 0):.2f}  "
+        f"WR={m.get('win_rate', 0):.1f}%  "
+        f"CAGR={m.get('cagr', -999):.1f}%"
+    )
+
+
+def _compare_report_section(candidates_info: list) -> str:
+    """Markdown table summarising all tested candidates."""
+    rows = ["", "## Selezione Multi-Candidato", "",
+            "| # | Sharpe | N trade | PF | Win Rate | CAGR | Score | Selezionato |",
+            "|---|--------|---------|----|---------:|-----:|-------|:-----------:|"]
+    best_score = max(c["score"] for c in candidates_info) if candidates_info else -999
+    for c in candidates_info:
+        sel = "✅" if c["score"] == best_score else ""
+        m = c["metrics"]
+        rows.append(
+            f"| {c['idx']} "
+            f"| {m.get('sharpe', 0):.2f} "
+            f"| {m.get('n_trades', 0)} "
+            f"| {m.get('profit_factor', 0):.2f} "
+            f"| {m.get('win_rate', 0):.1f}% "
+            f"| {m.get('cagr', -999):.1f}% "
+            f"| {c['score']:.3f} "
+            f"| {sel} |"
+        )
+    return "\n".join(rows)
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def run_vibe_agent(
@@ -749,40 +810,85 @@ def run_vibe_agent(
 
     prompt = prompt_override if prompt_override else _build_vibe_prompt(asset)
 
-    # ── Mode 1: Railway remote API ────────────────────────────────────────────
+    # ── Mode 1: Railway remote API (multi-candidate) ──────────────────────────
     if vibe_api_url:
-        print(f"  [vibe] Modalità Railway: {vibe_api_url}")
-        raw_code = _call_railway_api(
-            prompt, vibe_api_url, anthropic_key,
-            openrouter_key, openrouter_model, vibe_service_token,
-        )
-        print(f"  [vibe] Codice ricevuto ({len(raw_code)} chars). Adattamento contratto…")
-        cfg, code, report = _post_process(
-            raw_code, asset, "Vibe-Trading (Railway)",
-            anthropic_key, openrouter_key, openrouter_model,
-        )
-        print(f"  [vibe] ✅ Strategia: {cfg.get('strategy_name')}")
+        print(f"  [vibe] Modalità Railway: {vibe_api_url}  ({VIBE_N_CANDIDATES} candidati)")
+        _candidates_info = []
+        _best = None  # (score, cfg, code, report)
+
+        for _idx in range(1, VIBE_N_CANDIDATES + 1):
+            _hint = _DIVERSITY_HINTS[min(_idx - 1, len(_DIVERSITY_HINTS) - 1)]
+            _c_prompt = prompt + _hint
+            print(f"  [vibe] Generazione candidato {_idx}/{VIBE_N_CANDIDATES}…")
+            try:
+                _raw = _call_railway_api(
+                    _c_prompt, vibe_api_url, anthropic_key,
+                    openrouter_key, openrouter_model, vibe_service_token,
+                )
+                print(f"  [vibe] Candidato {_idx}: {len(_raw)} chars. Adattamento…")
+                _cfg_c, _code_c, _report_c = _post_process(
+                    _raw, asset, f"Vibe-Trading (Railway) cand.{_idx}",
+                    anthropic_key, openrouter_key, openrouter_model,
+                )
+                _m = _quick_backtest(_code_c, asset) or {}
+                _sc = _candidate_score(_m)
+                print(f"  [vibe] Candidato {_idx}: {_candidate_summary(_m)}  Score={_sc:.3f}")
+                _candidates_info.append({"idx": _idx, "metrics": _m, "score": _sc})
+                if _best is None or _sc > _best[0]:
+                    _best = (_sc, _cfg_c, _code_c, _report_c)
+            except Exception as _ce:
+                print(f"  [vibe] Candidato {_idx} fallito: {_ce}")
+
+        if _best is None:
+            raise RuntimeError("Tutti i candidati Railway sono falliti.")
+
+        _score_best, cfg, code, report = _best
+        print(f"  [vibe] ✅ Miglior candidato selezionato (Score={_score_best:.3f}): {cfg.get('strategy_name')}")
+        if len(_candidates_info) > 1:
+            report += _compare_report_section(_candidates_info)
         return cfg, code, report, "vibe-trading (Railway)"
 
     # ── Mode 2: Local CLI ─────────────────────────────────────────────────────
     if not _is_vibe_installed():
+        from agent_strategy import _generate_strategy_from_stats
         _hint = _extract_strategy_hint(prompt_override)
         if _hint:
             print(f"  [vibe] Hint rilevato dal prompt: '{_hint}'")
-        print("  [vibe] vibe-trading CLI non disponibile — generazione stats-based...")
-        from agent_strategy import _generate_strategy_from_stats, _quick_backtest
-        cfg, code, report = _generate_strategy_from_stats(asset, strategy_hint=_hint)
-        metrics = _quick_backtest(code, asset)
+        print(f"  [vibe] vibe-trading CLI non disponibile — generazione stats-based ({VIBE_N_CANDIDATES} candidati)…")
+
+        # Map hint to complementary hint for diversity
+        _ALT_HINTS = {
+            "trend following": "mean reversion",
+            "mean reversion":  "breakout",
+            "breakout":        "trend following",
+            "":                "momentum",
+        }
+        _hints = [_hint, _ALT_HINTS.get(_hint, "breakout")]
+
+        _stats_candidates = []
+        _stats_best = None  # (score, cfg, code, report, metrics)
+        for _idx, _h in enumerate(_hints[:VIBE_N_CANDIDATES], 1):
+            try:
+                _cfg_s, _code_s, _report_s = _generate_strategy_from_stats(asset, strategy_hint=_h)
+                _m_s = _quick_backtest(_code_s, asset) or {}
+                _sc_s = _candidate_score(_m_s)
+                print(f"  [vibe] Candidato {_idx} ({_h or 'auto'}): {_candidate_summary(_m_s)}  Score={_sc_s:.3f}")
+                _stats_candidates.append({"idx": _idx, "metrics": _m_s, "score": _sc_s})
+                if _stats_best is None or _sc_s > _stats_best[0]:
+                    _stats_best = (_sc_s, _cfg_s, _code_s, _report_s, _m_s)
+            except Exception as _se:
+                print(f"  [vibe] Candidato stats {_idx} fallito: {_se}")
+
+        if _stats_best is None:
+            raise RuntimeError("Generazione stats-based fallita per tutti i candidati.")
+
+        _, cfg, code, report, metrics = _stats_best
         if metrics:
             n  = metrics.get("n_trades", 0)
             sh = metrics.get("sharpe", -999.0)
             pf = metrics.get("profit_factor", 0.0)
             wr = metrics.get("win_rate", 0.0)
             cagr = metrics.get("cagr", -999.0)
-            print(
-                f"  [vibe] Backtest: N={n}  WR={wr:.1f}%  "
-                f"Sharpe={sh:.3f}  CAGR={cagr:.1f}%  PF={pf:.3f}"
-            )
             report += (
                 f"\n\n## Backtest (in-sample)\n"
                 f"| Metric | Value |\n|---|---|\n"
@@ -792,9 +898,12 @@ def run_vibe_agent(
                 f"| CAGR     | {cagr:.1f}% |\n"
                 f"| Profit Factor | {pf:.3f} |\n"
             )
+        if len(_stats_candidates) > 1:
+            report += _compare_report_section(_stats_candidates)
         print(f"  [vibe] ✅ Strategia stats-based: {cfg.get('strategy_name')}")
         return cfg, code, report, "stats-derived"
 
+    # ── Mode 3: Local CLI (multi-candidate) ──────────────────────────────────
     env, vibe_home = _make_vibe_env(anthropic_key, openrouter_key, openrouter_model)
 
     # Write .env to vibe_home CWD — load_dotenv() checks CWD before site-packages
@@ -823,39 +932,57 @@ def run_vibe_agent(
         except Exception as _we:
             print(f"  [vibe] WARNING: cannot write vibe_home/.env: {_we}")
 
-    prompt_file = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False, encoding="utf-8",
-            dir=vibe_home,
-        ) as f:
-            f.write(prompt)
-            prompt_file = f.name
+    print(f"  [vibe] CLI — {VIBE_N_CANDIDATES} candidati (timeout {VIBE_TIMEOUT}s, cwd={vibe_home})")
+    _cli_candidates = []
+    _cli_best = None  # (score, cfg, code, report)
 
-        print(f"  [vibe] CLI run (timeout {VIBE_TIMEOUT}s, cwd={vibe_home})…")
-        data    = _run_cli(prompt_file, env, cwd=vibe_home)
-        run_id  = data.get("run_id", "")
-        run_dir = data.get("run_dir", "")
-        if run_dir and not os.path.isabs(run_dir):
-            run_dir = os.path.join(vibe_home, run_dir)
-        print(f"  [vibe] Run completato: {run_id}  run_dir={run_dir}")
+    for _idx in range(1, VIBE_N_CANDIDATES + 1):
+        _hint_sfx = _DIVERSITY_HINTS[min(_idx - 1, len(_DIVERSITY_HINTS) - 1)]
+        _c_prompt = prompt + _hint_sfx
+        prompt_file = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", delete=False, encoding="utf-8",
+                dir=vibe_home,
+            ) as f:
+                f.write(_c_prompt)
+                prompt_file = f.name
 
-        raw_code = _fetch_code(run_id, run_dir, env)
-        print(f"  [vibe] Codice ({len(raw_code)} chars). Adattamento contratto…")
+            print(f"  [vibe] CLI candidato {_idx}/{VIBE_N_CANDIDATES}…")
+            data    = _run_cli(prompt_file, env, cwd=vibe_home)
+            run_id  = data.get("run_id", "")
+            run_dir = data.get("run_dir", "")
+            if run_dir and not os.path.isabs(run_dir):
+                run_dir = os.path.join(vibe_home, run_dir)
 
-    finally:
-        if prompt_file:
-            try:
-                os.unlink(prompt_file)
-            except Exception:
-                pass
+            raw_code = _fetch_code(run_id, run_dir, env)
+            print(f"  [vibe] Candidato {_idx}: {len(raw_code)} chars. Adattamento…")
+            _cfg_c, _code_c, _report_c = _post_process(
+                raw_code, asset, f"Vibe-Trading (CLI) cand.{_idx}",
+                anthropic_key, openrouter_key, openrouter_model, run_id=run_id,
+            )
+            _m = _quick_backtest(_code_c, asset) or {}
+            _sc = _candidate_score(_m)
+            print(f"  [vibe] Candidato {_idx}: {_candidate_summary(_m)}  Score={_sc:.3f}")
+            _cli_candidates.append({"idx": _idx, "metrics": _m, "score": _sc})
+            if _cli_best is None or _sc > _cli_best[0]:
+                _cli_best = (_sc, _cfg_c, _code_c, _report_c)
+        except Exception as _ce:
+            print(f"  [vibe] CLI candidato {_idx} fallito: {_ce}")
+        finally:
+            if prompt_file:
+                try:
+                    os.unlink(prompt_file)
+                except Exception:
+                    pass
 
-    cfg, code, report = _post_process(
-        raw_code, asset, "Vibe-Trading (CLI)",
-        anthropic_key, openrouter_key, openrouter_model,
-        run_id=run_id,
-    )
-    print(f"  [vibe] ✅ Strategia: {cfg.get('strategy_name')}")
+    if _cli_best is None:
+        raise RuntimeError("Tutti i candidati CLI sono falliti.")
+
+    _score_cli, cfg, code, report = _cli_best
+    print(f"  [vibe] ✅ Miglior candidato selezionato (Score={_score_cli:.3f}): {cfg.get('strategy_name')}")
+    if len(_cli_candidates) > 1:
+        report += _compare_report_section(_cli_candidates)
     return cfg, code, report, "vibe-trading (CLI)"
 
 

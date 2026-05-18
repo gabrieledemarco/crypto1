@@ -536,6 +536,17 @@ with st.sidebar:
     )
     st.caption(_lev_caption)
 
+    # ── VibeTradingAI candidati ───────────────────────────────────────────────
+    st.markdown("**🧠 VibeTradingAI**")
+    _vibe_n_cand = st.select_slider(
+        "Candidati strategia",
+        options=[1, 2, 3],
+        value=2,
+        key="vibe_n_candidates",
+        help="Numero di strategie generate e confrontate via backtest. Più candidati = selezione migliore ma tempo maggiore.",
+        format_func=lambda v: f"{v} candidat{'o' if v == 1 else 'i'}",
+    )
+
     _env = {
         "STRATEGY_ASSET":    asset,
         "HOURLY_DAYS":       str(_tf_actual),
@@ -815,7 +826,12 @@ with st.sidebar:
 
             with st.status(f"🤖 {_vibe_label}", expanded=True) as _status:
                 try:
-                    st.write(f"Asset: **{asset}**  |  Motore previsto: **{_vibe_mode}**")
+                    os.environ["VIBE_N_CANDIDATES"] = str(_vibe_n_cand)
+                    import agent_vibe as _avib_inner; _il.reload(_avib_inner)
+                    _n_cand = _avib_inner.VIBE_N_CANDIDATES
+                    st.write(f"Asset: **{asset}**  |  Motore previsto: **{_vibe_mode}**  |  Candidati: **{_n_cand}**")
+                    if _n_cand > 1:
+                        st.write(f"🔍 Generando {_n_cand} strategie alternative e selezionando la migliore…")
                     _cfg_r, _code_r, _report_r, _engine_r = _av.run_vibe_agent(
                         asset=asset,
                         anthropic_key=_ant_key,
@@ -832,6 +848,8 @@ with st.sidebar:
                         f"SL {_cfg_r.get('sl_mult')}×ATR | "
                         f"TP {_cfg_r.get('tp_mult')}×ATR"
                     )
+                    if _n_cand > 1:
+                        st.write("📊 Candidati valutati tramite backtest in-sample — selezionato il miglior Sharpe.")
                     _status.update(
                         label=f"✅ Strategia generata — {_engine_r}",
                         state="complete", expanded=False,
