@@ -15,6 +15,6 @@
   source = "."
   dockerfile = "Dockerfile.web"
   [services.deploy]
-    startCommand = "node web/.next/standalone/server.js"
+    startCommand = "node server.js"
   [services.variables]
     PORT = "3000"
