@@ -199,7 +199,55 @@ def run_optimization(df_ind: pd.DataFrame) -> pd.DataFrame:
                 })
 
     df_opt = pd.DataFrame(rows)
-    return df_opt.sort_values("sharpe_ratio", ascending=False) if not df_opt.empty else df_opt
+    if df_opt.empty:
+        return df_opt
+    df_opt = df_opt.sort_values("sharpe_ratio", ascending=False)
+
+    # ── OOS re-validation of the best parameter combo ─────────────────────────
+    wfo_path = os.path.join(OUTPUT_DIR, "walk_forward_results.csv")
+    if os.path.exists(wfo_path):
+        try:
+            wfo_df = pd.read_csv(wfo_path)
+            if not wfo_df.empty:
+                last_fold = wfo_df.iloc[-1]
+                # Reconstruct OOS date range from the WFO metadata
+                n_total = len(df_ind)
+                is_len, oos_len, _ = _wfo_window_sizes(n_total)
+                # Last fold start index
+                last_fold_idx = int(last_fold.get("fold", len(wfo_df) - 1))
+                oos_start = last_fold_idx * oos_len + is_len
+                oos_end   = oos_start + oos_len
+                oos_end   = min(oos_end, n_total)
+                oos_data  = df_ind.iloc[oos_start:oos_end]
+
+                best = df_opt.iloc[0]
+                _sl  = float(best["sl_mult"])
+                _tp  = float(best["tp_mult"])
+                _hrs_str = str(best["active_hours"])
+                _h0, _h1 = (int(x) for x in _hrs_str.split("-"))
+
+                if len(oos_data) >= 5:
+                    df_oos = _apply_direction_filter(
+                        generate_signals_v2(oos_data, atr_mult_sl=_sl, atr_mult_tp=_tp,
+                                            active_hours=(_h0, _h1), use_garch_filter=True))
+                    res_oos = backtest_v2(df_oos, INITIAL_CAPITAL, RISK, comm, slip)
+                    m_oos   = compute_metrics(res_oos, INITIAL_CAPITAL)
+                    oos_sharpe = m_oos.get("sharpe_ratio", 0)
+                    is_sharpe  = float(best["sharpe_ratio"])
+                    if is_sharpe != 0:
+                        deg = (is_sharpe - oos_sharpe) / abs(is_sharpe) * 100
+                    else:
+                        deg = 0.0
+                    df_opt["oos_sharpe"]              = np.nan
+                    df_opt["is_oos_degradation_pct"]  = np.nan
+                    df_opt.iloc[0, df_opt.columns.get_loc("oos_sharpe")]             = oos_sharpe
+                    df_opt.iloc[0, df_opt.columns.get_loc("is_oos_degradation_pct")] = round(deg, 2)
+                    print(f"  Best params OOS Sharpe: {oos_sharpe:.2f} "
+                          f"(IS: {is_sharpe:.2f}, degradation: {deg:.1f}%)")
+        except Exception as exc:
+            print(f"  [OOS validation] skipped: {exc}")
+
+    return df_opt
 
 
 # ── Comparison chart ──────────────────────────────────────────────────────────

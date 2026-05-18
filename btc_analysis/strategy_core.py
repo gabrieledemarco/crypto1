@@ -13,6 +13,7 @@ Fornisce:
 """
 
 import re
+from collections import deque
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
@@ -239,6 +240,7 @@ def backtest_v2(df: pd.DataFrame,
                 slippage: float = 0.0001,     # floor slippage (adaptive may exceed)
                 use_adaptive_slippage: bool = True,
                 liquidity_pct: float = 0.10,  # max fraction of avg hourly volume per trade
+                use_kelly: bool = False,       # enable Kelly + drawdown-adjusted sizing
                 ) -> dict:
     """
     Backtest event-driven 1h con:
@@ -248,6 +250,7 @@ def backtest_v2(df: pd.DataFrame,
       - Position sizing: risk_per_trade % capitale / SL_dist
       - Leverage cap: max 3× il capitale per trade
       - Riduzione size in regime HIGH (size_mult)
+      - Opzionale: Kelly fraction + drawdown-based size reduction (use_kelly=True)
     """
     capital = initial_capital
     equity = [capital]
@@ -273,6 +276,12 @@ def backtest_v2(df: pd.DataFrame,
     hours_arr    = np.array([t.hour for t in times])
 
     max_leverage = 3.0
+
+    # Kelly sizing state
+    _KELLY_WINDOW = 20
+    _kelly_pnl_window: deque = deque(maxlen=_KELLY_WINDOW)
+    _peak_capital = initial_capital
+    _current_kelly_active = False  # tracks last entry's kelly state
 
     for i in range(len(df)):
         if in_trade:
@@ -309,6 +318,12 @@ def backtest_v2(df: pd.DataFrame,
                 exit_cost = exit_price * qty * (commission + exit_slip)
                 pnl = gross_pnl - exit_cost
                 capital += pnl
+                # Update peak for drawdown calculation
+                if capital > _peak_capital:
+                    _peak_capital = capital
+                # Feed Kelly rolling window with trade pnl
+                if use_kelly:
+                    _kelly_pnl_window.append(pnl)
                 # MAE/MFE as multiples of initial SL distance (R-multiples)
                 if direction == 1:
                     mae_r = (entry_price - mae_extreme) / sl_d_entry if sl_d_entry > 0 else 0
@@ -316,7 +331,7 @@ def backtest_v2(df: pd.DataFrame,
                 else:
                     mae_r = (mae_extreme - entry_price) / sl_d_entry if sl_d_entry > 0 else 0
                     mfe_r = (entry_price - mfe_extreme) / sl_d_entry if sl_d_entry > 0 else 0
-                trades.append({
+                trade_rec = {
                     "entry_time": entry_time,
                     "exit_time": times[i],
                     "direction": "LONG" if direction == 1 else "SHORT",
@@ -330,7 +345,10 @@ def backtest_v2(df: pd.DataFrame,
                     "exit_reason": exit_reason,
                     "mae_r": round(mae_r, 4),
                     "mfe_r": round(mfe_r, 4),
-                })
+                }
+                if use_kelly:
+                    trade_rec["kelly_sizing_active"] = _current_kelly_active
+                trades.append(trade_rec)
                 in_trade = False
 
         if not in_trade and signals[i] != 0:
@@ -340,7 +358,34 @@ def backtest_v2(df: pd.DataFrame,
             tp_d = tp_dists[i]
             sm = float(size_mults[i])
             if sl_d > 0 and sm > 0:
-                risk_amount = capital * risk_per_trade * sm
+                effective_risk = risk_per_trade
+
+                if use_kelly and len(_kelly_pnl_window) >= _KELLY_WINDOW:
+                    # Compute Kelly fraction from rolling window
+                    _hist = list(_kelly_pnl_window)
+                    _wins  = [p for p in _hist if p > 0]
+                    _losses = [p for p in _hist if p <= 0]
+                    _win_rate = len(_wins) / len(_hist)
+                    _avg_win  = float(np.mean(_wins))  if _wins   else 0.0
+                    _avg_loss = float(np.mean([abs(p) for p in _losses])) if _losses else 0.0
+                    if _avg_win > 0:
+                        kelly_f = (_win_rate * _avg_win - (1 - _win_rate) * _avg_loss) / _avg_win
+                        half_kelly = 0.5 * kelly_f
+                        # Clamp to [0.01, 0.05]
+                        effective_risk = float(np.clip(half_kelly, 0.01, 0.05))
+
+                    # Drawdown-based reduction
+                    dd_pct = (capital - _peak_capital) / _peak_capital * 100  # negative when in DD
+                    if dd_pct < -25.0:
+                        effective_risk *= 0.25
+                    elif dd_pct < -15.0:
+                        effective_risk *= 0.5
+
+                    _current_kelly_active = True
+                else:
+                    _current_kelly_active = False
+
+                risk_amount = capital * effective_risk * sm
                 qty = risk_amount / sl_d
                 # Cap 1: leverage ceiling (3× capital)
                 max_qty = (capital * max_leverage) / ep
