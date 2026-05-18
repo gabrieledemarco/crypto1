@@ -30,7 +30,7 @@ export function DrawdownChart({
   useEffect(() => {
     if (!containerRef.current) return;
     const chart = createChart(containerRef.current, {
-      width: containerRef.current.clientWidth,
+      autoSize: true,
       height,
       layout: {
         background: { color: "transparent" },
@@ -68,15 +68,9 @@ export function DrawdownChart({
       }))
     );
 
-    const ro = new ResizeObserver(() => {
-      if (containerRef.current)
-        chart.applyOptions({ width: containerRef.current.clientWidth });
-    });
-    ro.observe(containerRef.current);
     seriesRef.current = area;
     chartRef.current = chart;
     return () => {
-      ro.disconnect();
       chart.remove();
     };
   }, [equity, height, color]);
