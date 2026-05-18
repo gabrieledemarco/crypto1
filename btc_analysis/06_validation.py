@@ -78,9 +78,17 @@ def sharpe_ci_bootstrap(equity_series, n_bootstrap=5000, confidence=0.95):
     }
 
 
-def permutation_test(trades_df, n_permutations=1000):
+def permutation_test(trades_df, n_permutations=1000, block_size=10):
     """
     Permutation test: is the observed Sharpe statistically significant?
+
+    Uses **block bootstrap** (shuffling contiguous blocks of trades rather than
+    individual trades) to preserve short-term autocorrelation such as volatility
+    clustering and losing/winning streaks.  This is more conservative than the
+    i.i.d. shuffle because it keeps the within-block dependence structure intact,
+    making it harder for a null-hypothesis path to accidentally look like a good
+    strategy.  The i.i.d. shuffle would underestimate the p-value when trades are
+    serially correlated.
 
     Parameters
     ----------
@@ -88,10 +96,13 @@ def permutation_test(trades_df, n_permutations=1000):
         DataFrame with at least a 'pnl' column.
     n_permutations : int
         Number of random permutations.
+    block_size : int
+        Number of consecutive trades per block.  Use ``autocorr_block_size()``
+        to choose a data-driven value.
 
     Returns
     -------
-    dict with keys: observed_sharpe, p_value, n_permutations, pct_rank
+    dict with keys: observed_sharpe, p_value, n_permutations, pct_rank, block_size
     """
     if not isinstance(trades_df, pd.DataFrame) or "pnl" not in trades_df.columns:
         return {
@@ -100,6 +111,7 @@ def permutation_test(trades_df, n_permutations=1000):
             "p_value": None,
             "n_permutations": n_permutations,
             "pct_rank": None,
+            "block_size": block_size,
         }
 
     pnl = trades_df["pnl"].values
@@ -112,6 +124,7 @@ def permutation_test(trades_df, n_permutations=1000):
             "p_value": None,
             "n_permutations": n_permutations,
             "pct_rank": None,
+            "block_size": block_size,
         }
 
     def _sharpe_from_pnl(arr):
@@ -123,21 +136,18 @@ def permutation_test(trades_df, n_permutations=1000):
 
     observed_sharpe = _sharpe_from_pnl(pnl)
 
-    # Vectorise: each row is one permutation of pnl indices
+    # Block bootstrap: split pnl into contiguous blocks, then shuffle block order.
+    # Any leftover trades that don't fill a complete block form a final partial block.
+    bs = max(1, int(block_size))
+    blocks = [pnl[i:i + bs] for i in range(0, n, bs)]
+    n_blocks = len(blocks)
+
     rng = np.random.default_rng(42)
-    permuted_indices = np.argsort(
-        rng.random((n_permutations, n)), axis=1
-    )
-    permuted_pnl = pnl[permuted_indices]  # shape (n_permutations, n)
-
-    permuted_equity = np.cumsum(permuted_pnl, axis=1)
-    # returns along each path: diff on axis=1
-    permuted_ret = np.diff(permuted_equity, axis=1)
-
-    perm_means = permuted_ret.mean(axis=1)
-    perm_stds = permuted_ret.std(axis=1)
-    valid = perm_stds != 0
-    perm_sharpes = np.where(valid, perm_means / perm_stds * np.sqrt(24 * 365), 0.0)
+    perm_sharpes = np.empty(n_permutations)
+    for k in range(n_permutations):
+        block_order = rng.permutation(n_blocks)
+        permuted_pnl = np.concatenate([blocks[b] for b in block_order])
+        perm_sharpes[k] = _sharpe_from_pnl(permuted_pnl)
 
     p_value = float(np.mean(perm_sharpes >= observed_sharpe))
     pct_rank = float(np.mean(perm_sharpes < observed_sharpe) * 100)
@@ -147,7 +157,52 @@ def permutation_test(trades_df, n_permutations=1000):
         "p_value": p_value,
         "n_permutations": n_permutations,
         "pct_rank": pct_rank,
+        "block_size": bs,
     }
+
+
+def autocorr_block_size(pnl_array, max_lag=20, threshold=0.1):
+    """
+    Suggest a block size for block bootstrap based on the ACF of the P&L series.
+
+    Computes the autocorrelation function (ACF) of ``pnl_array`` for lags 1 …
+    ``max_lag`` and returns the first lag at which the ACF drops below
+    ``threshold``.  If all lags remain above the threshold, returns ``max_lag``.
+    If no lag exceeds the threshold at all (i.e., lags are already decorrelated),
+    returns the default value of 5.
+
+    Parameters
+    ----------
+    pnl_array : array-like
+        1-D array of per-trade P&L values.
+    max_lag : int
+        Maximum lag to inspect (default 20).
+    threshold : float
+        ACF threshold below which the series is considered decorrelated (default 0.1).
+
+    Returns
+    -------
+    int
+        Recommended block size.
+    """
+    arr = np.asarray(pnl_array, dtype=float)
+    arr = arr[~np.isnan(arr)]
+    if len(arr) < max_lag + 2:
+        return 5
+
+    mean = arr.mean()
+    demeaned = arr - mean
+    var = np.dot(demeaned, demeaned)
+    if var == 0:
+        return 5
+
+    # Compute ACF for lags 1..max_lag
+    for lag in range(1, max_lag + 1):
+        acf = np.dot(demeaned[lag:], demeaned[:-lag]) / var
+        if abs(acf) < threshold:
+            return lag
+
+    return max_lag
 
 
 def min_track_record(n_trades, sharpe):
@@ -285,12 +340,15 @@ if __name__ == "__main__":
 
     # ── 2. Permutation test ───────────────────────────────────────────────────
     if trades_df is not None and "pnl" in trades_df.columns:
-        print("Running permutation test...")
-        perm = permutation_test(trades_df)
+        print("Running permutation test (block bootstrap)...")
+        _block_size = autocorr_block_size(trades_df["pnl"].values)
+        print(f"  autocorr_block_size → {_block_size}")
+        perm = permutation_test(trades_df, block_size=_block_size)
         results["permutation_test"] = perm
         print(f"  Observed Sharpe: {perm.get('observed_sharpe', 'N/A'):.3f}  "
               f"p-value: {perm.get('p_value', 'N/A'):.4f}  "
-              f"pct_rank: {perm.get('pct_rank', 'N/A'):.1f}%")
+              f"pct_rank: {perm.get('pct_rank', 'N/A'):.1f}%  "
+              f"block_size: {perm.get('block_size', 'N/A')}")
     else:
         results["permutation_test"] = {"error": "No trades data available"}
         print("Skipping permutation test — no trades data")
