@@ -36,7 +36,20 @@ INITIAL_CAPITAL  = 10_000
 RISK             = 0.01
 COMMISSION       = 0.0004
 SLIPPAGE         = 0.0001
-HOURS_MONTH      = 24 * 30
+
+# Position sizing / leverage
+LEVERAGE         = float(os.environ.get("LEVERAGE",          "1.0"))
+SIZING_MODE      = os.environ.get("SIZING_MODE",             "pct_risk")  # pct_risk | pct_capital | fixed_usd
+FIXED_AMOUNT_USD = float(os.environ.get("FIXED_AMOUNT_USD",  "1000.0"))
+
+# WFO window specification — timeframe-agnostic
+# mode "pct":  IS/OOS as % of total dataset length (works on any timeframe)
+# mode "bars": IS/OOS as absolute number of bars/periods
+WFO_MODE     = os.environ.get("WFO_MODE",    "pct")   # "pct" | "bars"
+WFO_IS_PCT   = float(os.environ.get("WFO_IS_PCT",   "35.0"))
+WFO_OOS_PCT  = float(os.environ.get("WFO_OOS_PCT",  "10.0"))
+WFO_IS_BARS  = int(os.environ.get("WFO_IS_BARS",    "0"))
+WFO_OOS_BARS = int(os.environ.get("WFO_OOS_BARS",   "0"))
 
 
 def _apply_direction_filter(df: pd.DataFrame) -> pd.DataFrame:
@@ -57,6 +70,23 @@ BEST_HOURS = tuple(_ACFG["active_hours"])
 _A_COMM    = _ACFG["commission"]
 _A_SLIP    = _ACFG["slippage"]
 _A_RISK    = _ACFG.get("risk_per_trade", RISK)
+
+
+def _apply_cfg_overrides(df: pd.DataFrame) -> pd.DataFrame:
+    """Override SL_dist / TP_dist / active_hours in a V_Agent dataframe with
+    the values from agent_strategy_config.json (BEST_SL, BEST_TP, BEST_HOURS).
+
+    The generated strategy function hard-codes these distances; this override
+    makes the parametric panel and any config edits actually take effect.
+    """
+    df = df.copy()
+    df["SL_dist"] = df["ATR14"] * BEST_SL
+    df["TP_dist"] = df["ATR14"] * BEST_TP
+    # Apply active_hours filter: zero out signals outside the config window
+    hour = pd.to_datetime(df.index).hour
+    time_ok = (hour >= BEST_HOURS[0]) & (hour <= BEST_HOURS[1])
+    df.loc[~time_ok, "signal"] = 0
+    return df
 
 
 # ── Version backtests ─────────────────────────────────────────────────────────
@@ -81,9 +111,11 @@ def run_versions(df_ind: pd.DataFrame) -> dict:
     print("  V_Agent (strategia AI)...")
     try:
         agent_fn = load_agent_strategy()
-        df_a     = _apply_direction_filter(agent_fn(df_ind))
+        df_a     = _apply_cfg_overrides(_apply_direction_filter(agent_fn(df_ind)))
         res_a    = backtest_v2(df_a, INITIAL_CAPITAL, _A_RISK,
-                                commission=_A_COMM, slippage=_A_SLIP)
+                                commission=_A_COMM, slippage=_A_SLIP,
+                                leverage=LEVERAGE, sizing_mode=SIZING_MODE,
+                                fixed_amount_usd=FIXED_AMOUNT_USD)
         results["V_Agent"] = {"result": res_a, "metrics": compute_metrics(res_a, INITIAL_CAPITAL)}
     except Exception as exc:
         print(f"  [V_Agent] errore: {exc}")
@@ -93,51 +125,82 @@ def run_versions(df_ind: pd.DataFrame) -> dict:
 
 # ── Walk-Forward Optimization ─────────────────────────────────────────────────
 
+def _wfo_window_sizes(n_total: int) -> tuple[int, int, str, str]:
+    """Compute IS and OOS bar counts from env vars. Returns (is_len, oos_len, label, actual_mode)."""
+    if WFO_MODE == "bars" and WFO_IS_BARS > 0 and WFO_OOS_BARS > 0:
+        is_len      = WFO_IS_BARS
+        oos_len     = WFO_OOS_BARS
+        label       = f"IS={WFO_IS_BARS}bar OOS={WFO_OOS_BARS}bar"
+        actual_mode = "bars"
+    else:
+        if WFO_MODE == "bars":
+            print("  [WFO] Avviso: WFO_MODE=bars ma IS/OOS bars non impostati — fallback a pct")
+        is_pct  = max(5.0,  min(WFO_IS_PCT,  90.0))
+        oos_pct = max(1.0,  min(WFO_OOS_PCT, 50.0))
+        if is_pct + oos_pct > 100.0:
+            oos_pct = max(1.0, 100.0 - is_pct)
+            print(f"  [WFO] Avviso: IS%+OOS% > 100 — OOS ridotto a {oos_pct:.0f}%")
+        is_len      = max(10, int(n_total * is_pct  / 100.0))
+        oos_len     = max(5,  int(n_total * oos_pct / 100.0))
+        label       = f"IS={is_pct:.0f}% OOS={oos_pct:.0f}%"
+        actual_mode = "pct"
+    return is_len, oos_len, label, actual_mode
+
+
 def run_wfo(df_ind: pd.DataFrame) -> pd.DataFrame:
     agent_fn = load_agent_strategy()
     comm     = _ACFG.get("commission", COMMISSION)
     slip     = _ACFG.get("slippage",   SLIPPAGE)
 
-    window_configs = [
-        {"label": "IS=4m OOS=1m", "train": 4 * HOURS_MONTH, "test": 1 * HOURS_MONTH},
-        {"label": "IS=6m OOS=2m", "train": 6 * HOURS_MONTH, "test": 2 * HOURS_MONTH},
-        {"label": "IS=8m OOS=2m", "train": 8 * HOURS_MONTH, "test": 2 * HOURS_MONTH},
-        {"label": "IS=8m OOS=3m", "train": 8 * HOURS_MONTH, "test": 3 * HOURS_MONTH},
-    ]
+    n = len(df_ind)
+    is_len, oos_len, label, _actual_mode = _wfo_window_sizes(n)
+    print(f"  WFO: {label}  — IS={is_len}bar OOS={oos_len}bar su {n} periodi totali")
 
+    if is_len + oos_len > n:
+        print(f"  [WFO] ERRORE: IS+OOS ({is_len}+{oos_len}={is_len+oos_len}) > dataset ({n}). Skip.")
+        return pd.DataFrame()
+
+    step = oos_len
+    fold = 0
+    i    = 0
     rows = []
-    for cfg in window_configs:
-        is_len  = cfg["train"]
-        oos_len = cfg["test"]
-        step    = oos_len
-        fold    = 0
-        i       = 0
-        while i + is_len + oos_len <= len(df_ind):
-            is_data  = df_ind.iloc[i : i + is_len]
-            oos_data = df_ind.iloc[i + is_len : i + is_len + oos_len]
+    _remainder = (n - is_len) % oos_len if oos_len > 0 else 0
+    if _remainder > 0:
+        print(f"  [WFO] Nota: {_remainder} barre finali non coprono un fold OOS completo — verranno scartate")
+    while i + is_len + oos_len <= n:
+        is_data  = df_ind.iloc[i : i + is_len]
+        oos_data = df_ind.iloc[i + is_len : i + is_len + oos_len]
 
-            df_is  = _apply_direction_filter(agent_fn(is_data))
-            res_is = backtest_v2(df_is,  INITIAL_CAPITAL, RISK, comm, slip)
-            m_is   = compute_metrics(res_is, INITIAL_CAPITAL)
+        df_is  = _apply_cfg_overrides(_apply_direction_filter(agent_fn(is_data)))
+        res_is = backtest_v2(df_is, INITIAL_CAPITAL, RISK, comm, slip,
+                             leverage=LEVERAGE, sizing_mode=SIZING_MODE,
+                             fixed_amount_usd=FIXED_AMOUNT_USD)
+        m_is   = compute_metrics(res_is, INITIAL_CAPITAL)
 
-            df_os  = _apply_direction_filter(agent_fn(oos_data))
-            res_os = backtest_v2(df_os, INITIAL_CAPITAL, RISK, comm, slip)
-            m_os   = compute_metrics(res_os, INITIAL_CAPITAL)
+        df_os  = _apply_cfg_overrides(_apply_direction_filter(agent_fn(oos_data)))
+        res_os = backtest_v2(df_os, INITIAL_CAPITAL, RISK, comm, slip,
+                             leverage=LEVERAGE, sizing_mode=SIZING_MODE,
+                             fixed_amount_usd=FIXED_AMOUNT_USD)
+        m_os   = compute_metrics(res_os, INITIAL_CAPITAL)
 
-            rows.append({
-                "window_config":  cfg["label"],
-                "fold":           fold,
-                "is_sharpe":      m_is.get("sharpe_ratio", 0),
-                "oos_sharpe":     m_os.get("sharpe_ratio", 0),
-                "is_cagr":        m_is.get("cagr_pct",     0),
-                "oos_cagr":       m_os.get("cagr_pct",     0),
-                "is_n_trades":    m_is.get("n_trades",      0),
-                "oos_n_trades":   m_os.get("n_trades",      0),
-                "is_max_dd":      m_is.get("max_drawdown_pct", 0),
-                "oos_max_dd":     m_os.get("max_drawdown_pct", 0),
-            })
-            fold += 1
-            i    += step
+        rows.append({
+            "window_config": label,
+            "fold":          fold,
+            "is_bars":       is_len,
+            "oos_bars":      oos_len,
+            "is_pct":        round(is_len / n * 100, 1),
+            "oos_pct":       round(oos_len / n * 100, 1),
+            "is_sharpe":     m_is.get("sharpe_ratio",    0),
+            "oos_sharpe":    m_os.get("sharpe_ratio",    0),
+            "is_cagr":       m_is.get("cagr_pct",        0),
+            "oos_cagr":      m_os.get("cagr_pct",        0),
+            "is_n_trades":   m_is.get("n_trades",         0),
+            "oos_n_trades":  m_os.get("n_trades",         0),
+            "is_max_dd":     m_is.get("max_drawdown_pct", 0),
+            "oos_max_dd":    m_os.get("max_drawdown_pct", 0),
+        })
+        fold += 1
+        i    += step
 
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
@@ -160,7 +223,9 @@ def run_optimization(df_ind: pd.DataFrame) -> pd.DataFrame:
                 df_s = _apply_direction_filter(
                     generate_signals_v2(df_ind, atr_mult_sl=sl, atr_mult_tp=tp,
                                         active_hours=h, use_garch_filter=True))
-                res  = backtest_v2(df_s, INITIAL_CAPITAL, RISK, comm, slip)
+                res  = backtest_v2(df_s, INITIAL_CAPITAL, RISK, comm, slip,
+                                   leverage=LEVERAGE, sizing_mode=SIZING_MODE,
+                                   fixed_amount_usd=FIXED_AMOUNT_USD)
                 m    = compute_metrics(res, INITIAL_CAPITAL)
                 rows.append({
                     "sl_mult":          sl,
@@ -174,7 +239,62 @@ def run_optimization(df_ind: pd.DataFrame) -> pd.DataFrame:
                 })
 
     df_opt = pd.DataFrame(rows)
-    return df_opt.sort_values("sharpe_ratio", ascending=False) if not df_opt.empty else df_opt
+    if df_opt.empty:
+        return df_opt
+    df_opt = df_opt.sort_values("sharpe_ratio", ascending=False)
+
+    if df_opt["n_trades"].max() == 0:
+        print("  [Grid Search] Avviso: nessuna combinazione SL/TP ha generato trade. "
+              "Verificare segnali e parametri ATR.")
+        return df_opt
+
+    # ── OOS re-validation of the best parameter combo ─────────────────────────
+    wfo_path = os.path.join(OUTPUT_DIR, "walk_forward_results.csv")
+    if os.path.exists(wfo_path):
+        try:
+            wfo_df = pd.read_csv(wfo_path)
+            if not wfo_df.empty:
+                last_fold = wfo_df.iloc[-1]
+                # Reconstruct OOS date range from the WFO metadata
+                n_total = len(df_ind)
+                is_len, oos_len, _, _am = _wfo_window_sizes(n_total)
+                # Last fold start index
+                last_fold_idx = int(last_fold.get("fold", len(wfo_df) - 1))
+                oos_start = last_fold_idx * oos_len + is_len
+                oos_end   = oos_start + oos_len
+                oos_end   = min(oos_end, n_total)
+                oos_data  = df_ind.iloc[oos_start:oos_end]
+
+                best = df_opt.iloc[0]
+                _sl  = float(best["sl_mult"])
+                _tp  = float(best["tp_mult"])
+                _hrs_str = str(best["active_hours"])
+                _h0, _h1 = (int(x) for x in _hrs_str.split("-"))
+
+                if len(oos_data) >= 5:
+                    df_oos = _apply_direction_filter(
+                        generate_signals_v2(oos_data, atr_mult_sl=_sl, atr_mult_tp=_tp,
+                                            active_hours=(_h0, _h1), use_garch_filter=True))
+                    res_oos = backtest_v2(df_oos, INITIAL_CAPITAL, RISK, comm, slip,
+                                         leverage=LEVERAGE, sizing_mode=SIZING_MODE,
+                                         fixed_amount_usd=FIXED_AMOUNT_USD)
+                    m_oos   = compute_metrics(res_oos, INITIAL_CAPITAL)
+                    oos_sharpe = m_oos.get("sharpe_ratio", 0)
+                    is_sharpe  = float(best["sharpe_ratio"])
+                    if is_sharpe != 0:
+                        deg = (is_sharpe - oos_sharpe) / abs(is_sharpe) * 100
+                    else:
+                        deg = 0.0
+                    df_opt["oos_sharpe"]              = np.nan
+                    df_opt["is_oos_degradation_pct"]  = np.nan
+                    df_opt.iloc[0, df_opt.columns.get_loc("oos_sharpe")]             = oos_sharpe
+                    df_opt.iloc[0, df_opt.columns.get_loc("is_oos_degradation_pct")] = round(deg, 2)
+                    print(f"  Best params OOS Sharpe: {oos_sharpe:.2f} "
+                          f"(IS: {is_sharpe:.2f}, degradation: {deg:.1f}%)")
+        except Exception as exc:
+            print(f"  [OOS validation] skipped: {exc}")
+
+    return df_opt
 
 
 # ── Comparison chart ──────────────────────────────────────────────────────────
@@ -283,8 +403,21 @@ if __name__ == "__main__":
         print(f"  Saved: walk_forward_results.csv  ({len(wfo)} folds)")
         oos_avg = wfo["oos_sharpe"].mean()
         is_avg  = wfo["is_sharpe"].mean()
-        wfe     = oos_avg / is_avg if is_avg != 0 else 0
+        wfe     = oos_avg / is_avg if is_avg > 0 else (float("inf") if oos_avg > 0 else 0.0)
         print(f"  IS Sharpe medio: {is_avg:.3f}  |  OOS Sharpe medio: {oos_avg:.3f}  |  WFE: {wfe:.3f}")
+        _n_total = len(df_ind)
+        _is_len, _oos_len, _label, _actual_mode_json = _wfo_window_sizes(_n_total)
+        with open(os.path.join(OUTPUT_DIR, "wfo_meta.json"), "w") as _wf:
+            json.dump({
+                "mode":     _actual_mode_json,
+                "is_pct":   round(_is_len  / _n_total * 100, 1),
+                "oos_pct":  round(_oos_len / _n_total * 100, 1),
+                "is_bars":  _is_len,
+                "oos_bars": _oos_len,
+                "n_total":  _n_total,
+                "label":    _label,
+                "n_folds":  len(wfo),
+            }, _wf, indent=2)
 
     # Grid search
     print("\nGrid search SL/TP...")
@@ -302,6 +435,16 @@ if __name__ == "__main__":
 
     # strategy_meta.json
     with open(os.path.join(OUTPUT_DIR, "strategy_meta.json"), "w") as f:
-        json.dump({"asset": STRATEGY_ASSET}, f)
+        json.dump({
+            "asset":            STRATEGY_ASSET,
+            "leverage":         LEVERAGE,
+            "sizing_mode":      SIZING_MODE,
+            "fixed_amount_usd": FIXED_AMOUNT_USD,
+        }, f, indent=2)
+
+    # Run validation
+    import subprocess as _sp
+    _sp.run(["python3", os.path.join(os.path.dirname(OUTPUT_DIR), "06_validation.py")],
+            check=False, env={**os.environ, "STRATEGY_ASSET": STRATEGY_ASSET})
 
     print("\nBacktest completato.")

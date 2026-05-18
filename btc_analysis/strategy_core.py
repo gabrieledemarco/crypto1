@@ -13,6 +13,7 @@ Fornisce:
 """
 
 import re
+from collections import deque
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
@@ -112,11 +113,12 @@ def compute_indicators_v2(df: pd.DataFrame,
     df["TR"] = df[["HL", "HC", "LC"]].max(axis=1)
     df["ATR14"] = df["TR"].ewm(span=14, adjust=False).mean()
 
-    # RSI
+    # RSI — guard against both gain and loss being zero (flat price segments)
     delta = df["Close"].diff()
     gain = delta.clip(lower=0).ewm(span=14, adjust=False).mean()
     loss = (-delta.clip(upper=0)).ewm(span=14, adjust=False).mean()
-    df["RSI14"] = 100 - 100 / (1 + gain / loss.replace(0, np.nan))
+    rs = gain / loss.replace(0, np.nan)
+    df["RSI14"] = np.where((gain == 0) & (loss == 0), 50.0, 100 - 100 / (1 + rs))
 
     # EMA
     df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
@@ -132,18 +134,32 @@ def compute_indicators_v2(df: pd.DataFrame,
     df["hour"] = df.index.hour
     df["dow"] = df.index.dayofweek
 
-    df = df.dropna()
+    # Liquidity proxy: rolling 24h average USD volume
+    if "Volume" in df.columns:
+        df["vol_usd_h"] = df["Volume"] * df["Close"]
+        df["avg_vol_usd_24h"] = df["vol_usd_h"].rolling(24).mean()
+    else:
+        df["avg_vol_usd_24h"] = np.nan
+
+    df = df.dropna(subset=[c for c in df.columns if c != "avg_vol_usd_24h"])
 
     # GARCH regime
     if fit_garch and len(df) > 100:
-        log_ret = np.log(df["Close"] / df["Close"].shift(1)).dropna().values
         r_aligned = np.log(df["Close"] / df["Close"].shift(1)).fillna(0).values
         try:
             _, _, _, h_all = fit_garch11(r_aligned[1:])
-            h_padded = np.concatenate([[h_all[0]], h_all])
-            df["garch_h"] = h_padded[:len(df)]
-        except Exception:
-            df["garch_h"] = df["ret"].rolling(24).var().fillna(df["ret"].var())
+            # h_all has len(df)-1 elements; prepend first value to align with df
+            if len(h_all) + 1 == len(df):
+                h_padded = np.concatenate([[h_all[0]], h_all])
+            elif len(h_all) == len(df):
+                h_padded = h_all
+            else:
+                raise ValueError(f"GARCH length mismatch: {len(h_all)} vs {len(df)}")
+            df["garch_h"] = h_padded
+        except Exception as _garch_exc:
+            warnings.warn(f"GARCH fit failed ({_garch_exc}); using rolling variance fallback")
+            _h_fb = df["ret"].rolling(24).var().bfill().fillna(df["ret"].var())
+            df["garch_h"] = _h_fb.values  # .values avoids index mismatch
 
         regime = compute_garch_regime(df["garch_h"].values)
         df["garch_regime"] = regime
@@ -200,45 +216,94 @@ def generate_signals_v2(df: pd.DataFrame,
     return df
 
 
+# ── Adaptive slippage model ───────────────────────────────────────────────────
+
+def _adaptive_slippage(qty: float, ep: float, avg_vol_usd: float,
+                       h_t: float, hour: int, base: float = 0.0001) -> float:
+    """
+    Slippage stimato come funzione di:
+      - market impact: qty_usd / avg_vol_usd (proporzionale alla % del volume)
+      - volatility: sqrt(GARCH h_t) — volatilità alta → impatto maggiore
+      - time-of-day: ore notturne (0-5 UTC) → liquidità ridotta, +50% slippage
+    """
+    if qty <= 0 or ep <= 0:
+        return base
+    if not np.isfinite(avg_vol_usd) or avg_vol_usd <= 0:
+        return base
+    h_t = float(h_t) if np.isfinite(h_t) and h_t >= 0 else 0.0
+    qty_usd = qty * ep
+    vol_impact = min(0.002, qty_usd / avg_vol_usd * 0.5)
+    sigma = h_t ** 0.5
+    vol_mult = 1.0 + min(2.0, sigma * 100)
+    time_mult = 1.5 if hour < 6 else 1.0
+    return base + vol_impact * vol_mult * time_mult
+
+
 # ── Backtest v2: con costi di transazione ─────────────────────────────────────
 
 def backtest_v2(df: pd.DataFrame,
                 initial_capital: float = 10_000,
                 risk_per_trade: float = 0.01,
-                commission: float = 0.0004,   # 0.04% Binance taker fee
-                slippage: float = 0.0001      # 0.01% market impact BTC/USDT
+                commission: float = 0.0004,        # 0.04% Binance taker fee
+                slippage: float = 0.0001,          # floor slippage (adaptive may exceed)
+                use_adaptive_slippage: bool = True,
+                liquidity_pct: float = 0.10,       # max fraction of avg hourly volume per trade
+                use_kelly: bool = False,            # enable Kelly + drawdown-adjusted sizing
+                leverage: float = 1.0,             # leva finanziaria (1 = no leva, max 20)
+                sizing_mode: str = "pct_risk",     # "pct_risk" | "pct_capital" | "fixed_usd"
+                fixed_amount_usd: float = 1_000.0, # notionale fisso (solo sizing_mode="fixed_usd")
                 ) -> dict:
     """
     Backtest event-driven 1h con:
       - Stop Loss e Take Profit basati su ATR
-      - Commissioni e slippage su entrata + uscita
-      - Position sizing: risk_per_trade % capitale / SL_dist
-      - Leverage cap: max 3× il capitale per trade
+      - Commissioni + slippage adattativo (volume × volatilità × time-of-day)
+      - Liquidity constraint: qty ≤ avg_vol_usd_24h × liquidity_pct / price
+      - Tre modalità di sizing: pct_risk (ATR-based), pct_capital (notionale %), fixed_usd
+      - Leva finanziaria: moltiplica la size base (cap a 20×)
       - Riduzione size in regime HIGH (size_mult)
+      - Opzionale: Kelly fraction + drawdown-based size reduction (use_kelly=True)
     """
     capital = initial_capital
     equity = [capital]
     trades = []
 
     in_trade = False
-    entry_price = direction = sl = tp = qty = 0.0
+    entry_price = direction = sl = tp = qty = sl_d_entry = 0.0
     entry_cost = 0.0
     entry_time = None
+    entry_slip = 0.0
+    mae_extreme = mfe_extreme = 0.0
 
-    prices = df["Close"].values
-    signals = df["signal"].values
-    sl_dists = df["SL_dist"].values
-    tp_dists = df["TP_dist"].values
-    highs = df["High"].values
-    lows = df["Low"].values
-    times = df.index
-    size_mults = df["size_mult"].values if "size_mult" in df.columns else np.ones(len(df))
+    prices    = df["Close"].values
+    signals   = df["signal"].values
+    sl_dists  = df["SL_dist"].values
+    tp_dists  = df["TP_dist"].values
+    highs     = df["High"].values
+    lows      = df["Low"].values
+    times     = df.index
+    size_mults   = df["size_mult"].values if "size_mult" in df.columns else np.ones(len(df))
+    garch_h_arr  = df["garch_h"].values if "garch_h" in df.columns else np.full(len(df), 1e-6)
+    avg_vol_arr  = df["avg_vol_usd_24h"].values if "avg_vol_usd_24h" in df.columns else np.full(len(df), np.nan)
+    hours_arr    = np.array([t.hour for t in times])
 
-    cost_rate = commission + slippage  # costo per lato (entrata o uscita)
-    max_leverage = 3.0                 # cap: notionale max 3× capitale
+    effective_leverage = max(1.0, min(leverage, 20.0))  # hard cap at 20×
+
+    # Kelly sizing state
+    _KELLY_WINDOW = 20
+    _kelly_pnl_window: deque = deque(maxlen=_KELLY_WINDOW)
+    _peak_capital = initial_capital
+    _current_kelly_active = False  # tracks last entry's kelly state
 
     for i in range(len(df)):
         if in_trade:
+            # Update MAE/MFE extremes for this bar
+            if direction == 1:   # LONG: adverse = low, favorable = high
+                mae_extreme = min(mae_extreme, lows[i])
+                mfe_extreme = max(mfe_extreme, highs[i])
+            else:                # SHORT: adverse = high, favorable = low
+                mae_extreme = max(mae_extreme, highs[i])
+                mfe_extreme = min(mfe_extreme, lows[i])
+
             exit_price = exit_reason = None
 
             if direction == 1:
@@ -254,22 +319,49 @@ def backtest_v2(df: pd.DataFrame,
 
             if exit_price is not None:
                 gross_pnl = direction * qty * (exit_price - entry_price)
-                exit_cost = exit_price * qty * cost_rate
+                if use_adaptive_slippage:
+                    exit_slip = _adaptive_slippage(
+                        qty, exit_price,
+                        float(avg_vol_arr[i]) if not np.isnan(avg_vol_arr[i]) else exit_price * qty * 10,
+                        float(garch_h_arr[i]), int(hours_arr[i]), base=slippage)
+                else:
+                    exit_slip = slippage
+                exit_cost = exit_price * qty * (commission + exit_slip)
                 pnl = gross_pnl - exit_cost
                 capital += pnl
-                trades.append({
+                # Update peak for drawdown calculation
+                if capital > _peak_capital:
+                    _peak_capital = capital
+                # Feed Kelly rolling window with trade pnl
+                if use_kelly:
+                    _kelly_pnl_window.append(pnl)
+                # MAE/MFE as multiples of initial SL distance (R-multiples)
+                if direction == 1:
+                    mae_r = (entry_price - mae_extreme) / sl_d_entry if sl_d_entry > 0 else 0
+                    mfe_r = (mfe_extreme - entry_price) / sl_d_entry if sl_d_entry > 0 else 0
+                else:
+                    mae_r = (mae_extreme - entry_price) / sl_d_entry if sl_d_entry > 0 else 0
+                    mfe_r = (entry_price - mfe_extreme) / sl_d_entry if sl_d_entry > 0 else 0
+                trade_rec = {
                     "entry_time": entry_time,
                     "exit_time": times[i],
                     "direction": "LONG" if direction == 1 else "SHORT",
                     "entry_price": entry_price,
                     "exit_price": exit_price,
                     "qty": qty,
+                    "leverage": effective_leverage,
+                    "sizing_mode": sizing_mode,
                     "gross_pnl": gross_pnl,
                     "costs": entry_cost + exit_cost,
                     "pnl": pnl,
                     "pnl_pct": pnl / (entry_price * qty) * 100 if qty > 0 else 0,
                     "exit_reason": exit_reason,
-                })
+                    "mae_r": round(mae_r, 4),
+                    "mfe_r": round(mfe_r, 4),
+                }
+                if use_kelly:
+                    trade_rec["kelly_sizing_active"] = _current_kelly_active
+                trades.append(trade_rec)
                 in_trade = False
 
         if not in_trade and signals[i] != 0:
@@ -279,13 +371,62 @@ def backtest_v2(df: pd.DataFrame,
             tp_d = tp_dists[i]
             sm = float(size_mults[i])
             if sl_d > 0 and sm > 0:
-                risk_amount = capital * risk_per_trade * sm
-                qty = risk_amount / sl_d
-                # Cap notionale a max_leverage × capitale
-                max_qty = (capital * max_leverage) / ep
-                qty = min(qty, max_qty)
+                effective_risk = risk_per_trade
 
-                entry_cost = ep * qty * cost_rate
+                if use_kelly and len(_kelly_pnl_window) >= _KELLY_WINDOW:
+                    # Compute Kelly fraction from rolling window
+                    _hist = list(_kelly_pnl_window)
+                    _wins  = [p for p in _hist if p > 0]
+                    _losses = [p for p in _hist if p <= 0]
+                    _win_rate = len(_wins) / len(_hist)
+                    _avg_win  = float(np.mean(_wins))  if _wins   else 0.0
+                    _avg_loss = float(np.mean([abs(p) for p in _losses])) if _losses else 0.0
+                    if _avg_win > 0:
+                        kelly_f = (_win_rate * _avg_win - (1 - _win_rate) * _avg_loss) / _avg_win
+                        half_kelly = 0.5 * kelly_f
+                        # Clamp to [0.01, 0.05]
+                        effective_risk = float(np.clip(half_kelly, 0.01, 0.05))
+
+                    # Drawdown-based reduction
+                    dd_pct = (capital - _peak_capital) / _peak_capital * 100  # negative when in DD
+                    if dd_pct < -25.0:
+                        effective_risk *= 0.25
+                    elif dd_pct < -15.0:
+                        effective_risk *= 0.5
+
+                    _current_kelly_active = True
+                else:
+                    _current_kelly_active = False
+
+                # ── Position sizing (3 modalità) ──────────────────────────
+                if sizing_mode == "pct_capital":
+                    # Invest effective_risk% of capital as notional (ignores SL for sizing)
+                    base_qty = (capital * effective_risk * sm) / ep if ep > 0 else 0
+                elif sizing_mode == "fixed_usd":
+                    # Fixed notional in USD (Kelly/drawdown ignored for base qty)
+                    base_qty = (fixed_amount_usd * sm) / ep if ep > 0 else 0
+                else:  # "pct_risk" — default: risk effective_risk% per trade via ATR SL
+                    risk_amount = capital * effective_risk * sm
+                    base_qty = risk_amount / sl_d if sl_d > 0 else 0
+
+                # Apply leverage, then hard-cap at leverage × capital notional
+                qty = base_qty * effective_leverage
+                max_qty = (capital * effective_leverage) / ep if ep > 0 else 0
+                qty = min(qty, max_qty)
+                # Cap: liquidity constraint (max liquidity_pct of avg hourly volume)
+                avg_vol = float(avg_vol_arr[i])
+                if not np.isnan(avg_vol) and avg_vol > 0:
+                    max_qty_liq = avg_vol * liquidity_pct / ep
+                    qty = min(qty, max_qty_liq)
+
+                if use_adaptive_slippage:
+                    entry_slip = _adaptive_slippage(
+                        qty, ep,
+                        avg_vol if not np.isnan(avg_vol) else ep * qty * 10,
+                        float(garch_h_arr[i]), int(hours_arr[i]), base=slippage)
+                else:
+                    entry_slip = slippage
+                entry_cost = ep * qty * (commission + entry_slip)
                 capital -= entry_cost
 
                 sl = ep - sl_d if direction == 1 else ep + sl_d
@@ -294,14 +435,47 @@ def backtest_v2(df: pd.DataFrame,
                 in_trade = True
                 entry_price = ep
                 entry_time = times[i]
+                sl_d_entry = sl_d
+                mae_extreme = ep   # reset: start tracking from entry price
+                mfe_extreme = ep
 
         equity.append(capital)
 
+    # Forced exit on last bar if still in trade
+    if in_trade:
+        exit_price = prices[-1]
+        gross_pnl  = direction * qty * (exit_price - entry_price)
+        exit_cost  = exit_price * qty * (commission + slippage)
+        pnl        = gross_pnl - exit_cost
+        capital   += pnl
+        if direction == 1:
+            mae_r = (entry_price - mae_extreme) / sl_d_entry if sl_d_entry > 0 else 0
+            mfe_r = (mfe_extreme - entry_price) / sl_d_entry if sl_d_entry > 0 else 0
+        else:
+            mae_r = (mae_extreme - entry_price) / sl_d_entry if sl_d_entry > 0 else 0
+            mfe_r = (entry_price - mfe_extreme) / sl_d_entry if sl_d_entry > 0 else 0
+        trade_rec = {
+            "entry_time": entry_time, "exit_time": times[-1],
+            "direction": "LONG" if direction == 1 else "SHORT",
+            "entry_price": entry_price, "exit_price": exit_price,
+            "qty": qty, "gross_pnl": gross_pnl,
+            "costs": entry_cost + exit_cost, "pnl": pnl,
+            "pnl_pct": pnl / (entry_price * qty) * 100 if qty > 0 else 0,
+            "exit_reason": "EOD", "mae_r": round(mae_r, 4), "mfe_r": round(mfe_r, 4),
+        }
+        if use_kelly:
+            trade_rec["kelly_sizing_active"] = _current_kelly_active
+        trades.append(trade_rec)
+        equity[-1] = capital  # update last equity point
+
     equity_s = pd.Series(equity[1:], index=df.index)
     return {
-        "trades": pd.DataFrame(trades) if trades else pd.DataFrame(),
-        "equity": equity_s,
-        "final_capital": capital,
+        "trades":          pd.DataFrame(trades) if trades else pd.DataFrame(),
+        "equity":          equity_s,
+        "final_capital":   capital,
+        "leverage":        effective_leverage,
+        "sizing_mode":     sizing_mode,
+        "fixed_amount_usd": fixed_amount_usd,
     }
 
 
@@ -323,36 +497,120 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
     avg_win = wins["pnl"].mean() if len(wins) > 0 else 0
     avg_loss = losses["pnl"].mean() if len(losses) > 0 else 0
     pf = wins["pnl"].sum() / abs(losses["pnl"].sum()) \
-         if len(losses) > 0 and losses["pnl"].sum() != 0 else np.inf
+         if len(losses) > 0 and losses["pnl"].sum() != 0 \
+         else (999.0 if len(wins) > 0 else 0.0)
 
-    days = max((equity.index[-1] - equity.index[0]).days, 1)
-    cagr = ((result["final_capital"] / initial_capital) ** (365 / days) - 1) * 100
+    try:
+        days = max((pd.Timestamp(equity.index[-1]) - pd.Timestamp(equity.index[0])).days, 1)
+    except Exception:
+        days = max(len(equity) // 24, 1)
+    _safe_capital = max(result["final_capital"], 0.01)
+    cagr = ((_safe_capital / initial_capital) ** (365 / days) - 1) * 100
 
     ret_s = equity.pct_change().dropna()
     sharpe = ret_s.mean() / ret_s.std() * np.sqrt(24 * 365) \
              if ret_s.std() > 0 else 0
 
+    # Sortino Ratio — penalises only downside volatility
+    down_ret = ret_s[ret_s < 0]
+    sortino = ret_s.mean() / down_ret.std() * np.sqrt(24 * 365) \
+              if len(down_ret) > 1 and down_ret.std() > 0 else 0
+
     roll_max = equity.cummax()
     dd = (equity - roll_max) / roll_max * 100
     max_dd = dd.min()
-    calmar = cagr / abs(max_dd) if max_dd != 0 else np.inf
+    calmar = cagr / abs(max_dd) if max_dd != 0 else (999.0 if cagr > 0 else 0.0)
+
+    # Ulcer Index — root-mean-square of drawdown depth (captures duration too)
+    ulcer_index = float(np.sqrt((dd ** 2).mean()))
+
+    # VaR and CVaR on trade-level P&L (as % of initial capital)
+    tr_ret = trades["pnl"] / initial_capital * 100
+    var_95 = float(np.percentile(tr_ret, 5))
+    var_99 = float(np.percentile(tr_ret, 1))
+    tail_95 = tr_ret[tr_ret <= var_95]
+    cvar_95 = float(tail_95.mean()) if len(tail_95) > 0 else var_95
+
+    # Omega Ratio — gains above 0 / losses below 0
+    gains = tr_ret[tr_ret > 0].sum()
+    losses_abs = abs(tr_ret[tr_ret <= 0].sum())
+    omega = gains / losses_abs if losses_abs > 0 else np.inf
+
+    # Drawdown duration: longest consecutive bars below running max
+    in_dd_flag = dd < -0.01
+    max_dd_duration = 0
+    cur_dur = 0
+    dd_durations = []
+    for v in in_dd_flag:
+        if v:
+            cur_dur += 1
+        else:
+            if cur_dur > 0:
+                dd_durations.append(cur_dur)
+            max_dd_duration = max(max_dd_duration, cur_dur)
+            cur_dur = 0
+    if cur_dur > 0:
+        dd_durations.append(cur_dur)
+        max_dd_duration = max(max_dd_duration, cur_dur)
+
+    # Average holding time in hours
+    avg_hold_h = 0.0
+    if "entry_time" in trades.columns and "exit_time" in trades.columns:
+        try:
+            avg_hold_h = float(
+                (pd.to_datetime(trades["exit_time"]) - pd.to_datetime(trades["entry_time"]))
+                .dt.total_seconds().mean() / 3600
+            )
+        except Exception:
+            pass
+
+    # Consecutive loss streak
+    pnl_arr = trades["pnl"].values
+    max_consec_loss = cur_loss = 0
+    for p in pnl_arr:
+        if p <= 0:
+            cur_loss += 1
+            max_consec_loss = max(max_consec_loss, cur_loss)
+        else:
+            cur_loss = 0
+
+    # MAE/MFE statistics (if tracked)
+    mae_mean = mfe_mean = mae_p95 = mfe_p95 = 0.0
+    if "mae_r" in trades.columns and "mfe_r" in trades.columns:
+        mae_mean = float(trades["mae_r"].mean())
+        mfe_mean = float(trades["mfe_r"].mean())
+        mae_p95  = float(np.percentile(trades["mae_r"], 95))
+        mfe_p95  = float(np.percentile(trades["mfe_r"], 95))
 
     total_costs = trades["costs"].sum() if "costs" in trades.columns else 0
 
     return {
-        "total_return_pct": total_return,
-        "cagr_pct": cagr,
-        "sharpe_ratio": sharpe,
-        "max_drawdown_pct": max_dd,
-        "calmar_ratio": calmar,
-        "n_trades": n,
-        "win_rate_pct": win_rate,
-        "profit_factor": pf,
-        "avg_win_usd": avg_win,
-        "avg_loss_usd": avg_loss,
-        "sl_hits": len(trades[trades["exit_reason"] == "SL"]),
-        "tp_hits": len(trades[trades["exit_reason"] == "TP"]),
-        "total_costs_usd": total_costs,
+        "total_return_pct":  total_return,
+        "cagr_pct":          cagr,
+        "sharpe_ratio":      sharpe,
+        "sortino_ratio":     sortino,
+        "calmar_ratio":      calmar,
+        "omega_ratio":       float(omega) if np.isfinite(omega) else 999.0,
+        "ulcer_index":       ulcer_index,
+        "max_drawdown_pct":  max_dd,
+        "max_dd_duration_h": max_dd_duration,
+        "var_95_pct":        var_95,
+        "var_99_pct":        var_99,
+        "cvar_95_pct":       cvar_95,
+        "n_trades":          n,
+        "win_rate_pct":      win_rate,
+        "profit_factor":     pf,
+        "avg_win_usd":       avg_win,
+        "avg_loss_usd":      avg_loss,
+        "avg_hold_hours":    avg_hold_h,
+        "max_consec_losses": max_consec_loss,
+        "mae_mean_r":        mae_mean,
+        "mfe_mean_r":        mfe_mean,
+        "mae_p95_r":         mae_p95,
+        "mfe_p95_r":         mfe_p95,
+        "sl_hits":           len(trades[trades["exit_reason"] == "SL"]),
+        "tp_hits":           len(trades[trades["exit_reason"] == "TP"]),
+        "total_costs_usd":   total_costs,
     }
 
 

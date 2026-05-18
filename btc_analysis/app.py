@@ -107,10 +107,18 @@ def _run_script(name: str, extra_env: dict = None):
             env[_key] = _k[_key]
     if extra_env:
         env.update(extra_env)
-    subprocess.run(
-        [sys.executable, os.path.join(BASE, name)],
-        check=True, capture_output=True, env=env,
-    )
+    try:
+        subprocess.run(
+            [sys.executable, os.path.join(BASE, name)],
+            check=True, capture_output=True, env=env,
+        )
+    except subprocess.CalledProcessError as _cpe:
+        _stderr = _cpe.stderr.decode(errors="replace")[:800] if _cpe.stderr else ""
+        raise subprocess.CalledProcessError(
+            _cpe.returncode, _cpe.cmd,
+            output=_cpe.output,
+            stderr=(_stderr or "(nessun output stderr)").encode(),
+        ) from _cpe
 
 def ensure_data():
     os.makedirs(OUTPUT, exist_ok=True)
@@ -302,65 +310,105 @@ with st.sidebar:
     st.subheader("🔑 Chiavi API")
     _sk = _load_api_keys()
 
+    # Keys already set in os.environ (e.g. Railway) are used directly —
+    # their input fields are hidden to avoid redundancy.
+    def _resolve_key(name: str, default: str = "") -> tuple:
+        env_val = os.environ.get(name, "")
+        if env_val:
+            return env_val, True   # (value, from_env)
+        return _sk.get(name, "") or default, False
+
+    _ant_key,    _ant_env = _resolve_key("ANTHROPIC_API_KEY")
+    _or_key,     _or_env  = _resolve_key("OPENROUTER_API_KEY")
+    _or_model,   _orm_env = _resolve_key("OPENROUTER_MODEL", "anthropic/claude-opus-4")
+    _vibe_url,   _vu_env  = _resolve_key("VIBE_TRADING_API_URL")
+    _vibe_token, _vt_env  = _resolve_key("VIBE_SERVICE_TOKEN")
+    _alp_key,    _ak_env  = _resolve_key("ALPACA_API_KEY")
+    _alp_sec,    _as_env  = _resolve_key("ALPACA_SECRET_KEY")
+
+    _from_env_flags = [_ant_env, _or_env, _orm_env, _vu_env, _vt_env, _ak_env, _as_env]
+    if any(_from_env_flags):
+        st.caption("🚂 Le chiavi contrassegnate con ✅ provengono da variabili d'ambiente (Railway).")
+
     st.caption("🤖 Agent AI")
-    _ant_key = st.text_input(
-        "ANTHROPIC_API_KEY",
-        value=_sk.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", ""),
-        type="password", placeholder="sk-ant-…",
-        help="Claude claude-opus-4-7 con adaptive thinking",
-    )
-    _or_key = st.text_input(
-        "OPENROUTER_API_KEY",
-        value=_sk.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY", ""),
-        type="password", placeholder="sk-or-…",
-        help="Alternativa: Claude/GPT-4o/Gemini via OpenRouter",
-    )
-    _or_model = st.text_input(
-        "OPENROUTER_MODEL",
-        value=_sk.get("OPENROUTER_MODEL") or os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-4"),
-        help="Ignorato se si usa Anthropic diretto",
-    )
+    if _ant_env:
+        st.caption("✅ ANTHROPIC_API_KEY — da Railway")
+    else:
+        _ant_key = st.text_input(
+            "ANTHROPIC_API_KEY", value=_ant_key,
+            type="password", placeholder="sk-ant-…",
+            help="Claude claude-opus-4-7 con adaptive thinking",
+        )
+
+    if _or_env:
+        st.caption("✅ OPENROUTER_API_KEY — da Railway")
+    else:
+        _or_key = st.text_input(
+            "OPENROUTER_API_KEY", value=_or_key,
+            type="password", placeholder="sk-or-…",
+            help="Alternativa: Claude/GPT-4o/Gemini via OpenRouter",
+        )
+
+    if _orm_env:
+        st.caption(f"✅ OPENROUTER_MODEL — da Railway (`{_or_model}`)")
+    else:
+        _or_model = st.text_input(
+            "OPENROUTER_MODEL", value=_or_model,
+            help="Ignorato se si usa Anthropic diretto",
+        )
 
     st.caption("🚂 Vibe-Trading (Railway)")
-    _vibe_url = st.text_input(
-        "VIBE_TRADING_API_URL",
-        value=_sk.get("VIBE_TRADING_API_URL") or os.environ.get("VIBE_TRADING_API_URL", ""),
-        placeholder="https://your-service.up.railway.app",
-        help="URL del microservizio Vibe-Trading su Railway. "
-             "Lascia vuoto per usare la CLI locale (o il fallback AI).",
-    )
-    _vibe_token = st.text_input(
-        "VIBE_SERVICE_TOKEN",
-        value=_sk.get("VIBE_SERVICE_TOKEN") or os.environ.get("VIBE_SERVICE_TOKEN", ""),
-        type="password", placeholder="token opzionale",
-        help="SERVICE_TOKEN configurato sul servizio Railway (opzionale).",
-    )
+    if _vu_env:
+        st.caption("✅ VIBE_TRADING_API_URL — da Railway")
+    else:
+        _vibe_url = st.text_input(
+            "VIBE_TRADING_API_URL", value=_vibe_url,
+            placeholder="https://your-service.up.railway.app",
+            help="URL del microservizio Vibe-Trading su Railway. "
+                 "Lascia vuoto per usare la CLI locale (o il fallback AI).",
+        )
+
+    if _vt_env:
+        st.caption("✅ VIBE_SERVICE_TOKEN — da Railway")
+    else:
+        _vibe_token = st.text_input(
+            "VIBE_SERVICE_TOKEN", value=_vibe_token,
+            type="password", placeholder="token opzionale",
+            help="SERVICE_TOKEN configurato sul servizio Railway (opzionale).",
+        )
 
     st.caption("📡 Dati (Alpaca Markets)")
-    _alp_key = st.text_input(
-        "ALPACA_API_KEY",
-        value=_sk.get("ALPACA_API_KEY") or os.environ.get("ALPACA_API_KEY", ""),
-        type="password", placeholder="PK…",
-        help="Fallback se Yahoo Finance non è disponibile",
-    )
-    _alp_sec = st.text_input(
-        "ALPACA_SECRET_KEY",
-        value=_sk.get("ALPACA_SECRET_KEY") or os.environ.get("ALPACA_SECRET_KEY", ""),
-        type="password", placeholder="…",
-    )
+    if _ak_env:
+        st.caption("✅ ALPACA_API_KEY — da Railway")
+    else:
+        _alp_key = st.text_input(
+            "ALPACA_API_KEY", value=_alp_key,
+            type="password", placeholder="PK…",
+            help="Fallback se Yahoo Finance non è disponibile",
+        )
 
-    if st.button("💾 Salva tutte le chiavi", use_container_width=True,
-                 help="Salva in output/api_keys.json (escluso da git)"):
-        _save_api_keys({
-            "ANTHROPIC_API_KEY":    _ant_key,
-            "OPENROUTER_API_KEY":   _or_key,
-            "OPENROUTER_MODEL":     _or_model,
-            "VIBE_TRADING_API_URL": _vibe_url,
-            "VIBE_SERVICE_TOKEN":   _vibe_token,
-            "ALPACA_API_KEY":       _alp_key,
-            "ALPACA_SECRET_KEY":    _alp_sec,
-        })
-        st.success("Chiavi salvate.")
+    if _as_env:
+        st.caption("✅ ALPACA_SECRET_KEY — da Railway")
+    else:
+        _alp_sec = st.text_input(
+            "ALPACA_SECRET_KEY", value=_alp_sec,
+            type="password", placeholder="…",
+        )
+
+    # Save button only when at least one key is entered via the UI (not env)
+    if not all(_from_env_flags):
+        if st.button("💾 Salva tutte le chiavi", use_container_width=True,
+                     help="Salva in output/api_keys.json (escluso da git)"):
+            _to_save = dict(_sk)
+            if not _ant_env: _to_save["ANTHROPIC_API_KEY"]    = _ant_key
+            if not _or_env:  _to_save["OPENROUTER_API_KEY"]   = _or_key
+            if not _orm_env: _to_save["OPENROUTER_MODEL"]     = _or_model
+            if not _vu_env:  _to_save["VIBE_TRADING_API_URL"] = _vibe_url
+            if not _vt_env:  _to_save["VIBE_SERVICE_TOKEN"]   = _vibe_token
+            if not _ak_env:  _to_save["ALPACA_API_KEY"]       = _alp_key
+            if not _as_env:  _to_save["ALPACA_SECRET_KEY"]    = _alp_sec
+            _save_api_keys(_to_save)
+            st.success("Chiavi salvate.")
 
     st.divider()
 
@@ -381,10 +429,134 @@ with st.sidebar:
         key="direction_filter",
     )
 
+    # ── WFO window sizes ──────────────────────────────────────────────────────
+    st.markdown("**⏱️ Finestre Walk-Forward**")
+    _wfo_mode = st.radio(
+        "Tipo di finestra",
+        options=["pct", "bars"],
+        format_func=lambda x: "📊 % del dataset" if x == "pct" else "📏 Numero di periodi",
+        horizontal=True,
+        key="wfo_mode",
+        help="pct: percentuale del dataset totale (funziona con qualsiasi timeframe); bars: numero fisso di periodi",
+    )
+    _wfo_env = {"WFO_MODE": _wfo_mode}
+    if _wfo_mode == "pct":
+        _wfo_is_pct  = st.slider(
+            "IS % (In-Sample)", min_value=10, max_value=80, value=35, step=5,
+            key="wfo_is_pct",
+            help="Percentuale del dataset usata per l'ottimizzazione In-Sample",
+        )
+        _wfo_oos_pct = st.slider(
+            "OOS % (Out-of-Sample)", min_value=5, max_value=40, value=10, step=5,
+            key="wfo_oos_pct",
+            help="Percentuale del dataset usata per la validazione Out-of-Sample",
+        )
+        if _wfo_is_pct + _wfo_oos_pct >= 100:
+            st.warning("⚠️ IS% + OOS% deve essere inferiore a 100%.")
+        else:
+            st.caption(
+                f"Fold stimati: ~{max(1, int((100 - _wfo_is_pct) / _wfo_oos_pct))} "
+                f"· IS={_wfo_is_pct}% OOS={_wfo_oos_pct}%"
+            )
+        _wfo_env["WFO_IS_PCT"]  = str(_wfo_is_pct)
+        _wfo_env["WFO_OOS_PCT"] = str(_wfo_oos_pct)
+    else:
+        _wfo_bar_cols = st.columns(2)
+        _wfo_is_b  = _wfo_bar_cols[0].number_input(
+            "IS (periodi)", min_value=10, max_value=500_000, value=5_000, step=500,
+            key="wfo_is_bars",
+            help="Numero di barre per la finestra In-Sample",
+        )
+        _wfo_oos_b = _wfo_bar_cols[1].number_input(
+            "OOS (periodi)", min_value=5, max_value=100_000, value=1_000, step=200,
+            key="wfo_oos_bars",
+            help="Numero di barre per la finestra Out-of-Sample",
+        )
+        if _wfo_oos_b >= _wfo_is_b:
+            st.warning("⚠️ OOS deve essere inferiore a IS.")
+        _wfo_env["WFO_IS_BARS"]  = str(_wfo_is_b)
+        _wfo_env["WFO_OOS_BARS"] = str(_wfo_oos_b)
+
+    # ── Monte Carlo ───────────────────────────────────────────────────────────
+    st.markdown("**🎲 Monte Carlo**")
+    _mc_n_sims = st.select_slider(
+        "Simulazioni bootstrap",
+        options=[1_000, 2_000, 5_000, 10_000, 20_000, 50_000],
+        value=5_000,
+        key="mc_n_sims",
+        help="Numero di simulazioni bootstrap. Valori alti aumentano la precisione ma rallentano l'esecuzione.",
+        format_func=lambda v: f"{v:,}",
+    )
+    _mc_sim_mult = st.select_slider(
+        "Periodo di simulazione",
+        options=[0.25, 0.5, 1.0, 2.0, 5.0, 10.0],
+        value=1.0,
+        key="mc_sim_mult",
+        help="Moltiplicatore del numero di trade per percorso. 1× = stesso periodo del backtest; 2× = doppio; 0.5× = metà.",
+        format_func=lambda v: f"{int(v * 100)}% dei trade" if v < 1.0 else ("= backtest" if v == 1.0 else f"{v:.0f}× trade"),
+    )
+
+    # ── Sizing & Leva ─────────────────────────────────────────────────────────
+    st.markdown("**⚡ Sizing & Leva**")
+    _sizing_mode = st.selectbox(
+        "Modalità sizing",
+        options=["pct_risk", "pct_capital", "fixed_usd"],
+        format_func=lambda x: {
+            "pct_risk":    "% Capitale ÷ Distanza SL (ATR)",
+            "pct_capital": "% Capitale come notionale",
+            "fixed_usd":   "Importo fisso (USD)",
+        }[x],
+        key="sizing_mode",
+        help=(
+            "**% Capitale ÷ SL**: rischia X% del capitale per trade (sizing ATR-based, default).\n\n"
+            "**% Capitale notionale**: investe X% del capitale come controvalore — ignora SL per il sizing.\n\n"
+            "**Importo fisso USD**: investe sempre lo stesso importo in USD per trade."
+        ),
+    )
+    _leverage = st.slider(
+        "Leva finanziaria",
+        min_value=1.0, max_value=20.0, value=1.0, step=0.5,
+        key="leverage",
+        format="%g×",
+        help="Moltiplica la size base. 1× = nessuna leva. Attenzione: la leva amplifica sia i guadagni sia le perdite.",
+    )
+    if _leverage > 5.0:
+        st.warning(f"⚠️ Leva {_leverage:.0f}× — rischio liquidazione elevato.")
+    if _sizing_mode == "fixed_usd":
+        _fixed_amt = st.number_input(
+            "Importo fisso (USD)", min_value=10.0, max_value=float(1_000_000),
+            value=1_000.0, step=100.0, key="fixed_amount_usd",
+            help="Notionale investito per ogni trade (prima di applicare la leva).",
+        )
+    else:
+        _fixed_amt = 1_000.0
+    _lev_caption = (
+        f"Sizing: **{_sizing_mode}** · Leva: **{_leverage:.1f}×**"
+        + (f" · Importo: **${_fixed_amt:,.0f}**" if _sizing_mode == "fixed_usd" else "")
+    )
+    st.caption(_lev_caption)
+
+    # ── VibeTradingAI candidati ───────────────────────────────────────────────
+    st.markdown("**🧠 VibeTradingAI**")
+    _vibe_n_cand = st.select_slider(
+        "Candidati strategia",
+        options=[1, 2, 3],
+        value=2,
+        key="vibe_n_candidates",
+        help="Numero di strategie generate e confrontate via backtest. Più candidati = selezione migliore ma tempo maggiore.",
+        format_func=lambda v: f"{v} candidat{'o' if v == 1 else 'i'}",
+    )
+
     _env = {
-        "STRATEGY_ASSET":   asset,
-        "HOURLY_DAYS":      str(_tf_actual),
-        "DIRECTION_FILTER": _direction_filter,
+        "STRATEGY_ASSET":    asset,
+        "HOURLY_DAYS":       str(_tf_actual),
+        "DIRECTION_FILTER":  _direction_filter,
+        "MC_N_SIMS":         str(_mc_n_sims),
+        "MC_SIM_MULTIPLIER": str(_mc_sim_mult),
+        "LEVERAGE":          str(_leverage),
+        "SIZING_MODE":       _sizing_mode,
+        "FIXED_AMOUNT_USD":  str(_fixed_amt),
+        **_wfo_env,
     }
 
     def _do_download_module(tickers_list, skip_existing=False):
@@ -497,78 +669,139 @@ with st.sidebar:
                         _nl_status.update(label="❌ Generazione fallita", state="error")
                         st.error(f"Errore: {_nl_e}")
 
-    # ── Step 1.6: Standard strategy templates ────────────────────────────────
-    with st.expander("🎯 Scegli una strategia standard da ottimizzare (opzionale)", expanded=False):
-        st.caption(
-            "Seleziona un modello classico. Vibe-Trading ottimizzerà tutti i parametri "
-            "per massimizzare le performance su questo asset garantendo robustezza OOS."
-        )
+    # ── Step 1.6: Standard + custom strategy templates ───────────────────────
+    with st.expander("🎯 Scegli una strategia da ottimizzare (opzionale)", expanded=False):
         import importlib as _il1b
         import agent_vibe as _av1b; _il1b.reload(_av1b)
 
-        _std_options = {
-            k: f"{v['icon']}  {v['name']}"
-            for k, v in _av1b.STANDARD_STRATEGIES.items()
-        }
+        _all_strat_opts = _av1b.get_all_strategies_options()
+        _n_custom = sum(1 for v in _all_strat_opts.values() if v["is_custom"])
+        _caption_parts = ["Seleziona un modello classico da ottimizzare con Vibe-Trading."]
+        if _n_custom:
+            _caption_parts.append(f"Hai **{_n_custom}** strategi{'a' if _n_custom == 1 else 'e'} nel catalogo personale — vengono applicate direttamente senza rigenerare il codice.")
+        st.caption(" ".join(_caption_parts))
+
         _sel_strat = st.selectbox(
             "Strategia",
-            options=list(_std_options.keys()),
-            format_func=lambda k: _std_options[k],
+            options=list(_all_strat_opts.keys()),
+            format_func=lambda k: (
+                f"⭐ {_all_strat_opts[k]['icon']}  {_all_strat_opts[k]['name']}  [personale]"
+                if _all_strat_opts[k]["is_custom"]
+                else f"{_all_strat_opts[k]['icon']}  {_all_strat_opts[k]['name']}"
+            ),
             label_visibility="collapsed",
             key="std_strat_sel",
         )
         if _sel_strat:
-            st.info(_av1b.STANDARD_STRATEGIES[_sel_strat]["description"])
+            _sel_data = _all_strat_opts[_sel_strat]
+            if _sel_data["is_custom"]:
+                st.info(
+                    f"**Strategia personale** — asset: `{_sel_data.get('asset','?')}` · "
+                    f"salvata il {_sel_data.get('added_at','')[:10]}  \n"
+                    f"{_sel_data.get('description','')}"
+                )
+            else:
+                st.info(_sel_data["description"])
 
-        _std_btn = st.button(
-            "🎯 Ottimizza Strategia Standard",
-            use_container_width=True,
-            help="Vibe-Trading implementa e ottimizza la strategia selezionata per questo asset.",
-        )
+        _is_custom_sel = _sel_strat and _all_strat_opts[_sel_strat]["is_custom"]
 
-        if _std_btn and _sel_strat:
-            if not _ant_key and not _or_key:
-                st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
-            elif _ensure_download():
-                import importlib as _il1c
-                import agent_vibe as _av1c;     _il1c.reload(_av1c)
-                import agent_strategy as _ag1c; _il1c.reload(_ag1c)
+        if _is_custom_sel:
+            # Custom strategy: apply saved config+code directly
+            if st.button(
+                "✅ Applica strategia personale",
+                use_container_width=True,
+                help="Carica la configurazione e il codice salvati nel catalogo, poi esegui il backtest.",
+            ):
+                if _ensure_download():
+                    import importlib as _il1d
+                    import agent_strategy as _ag1d; _il1d.reload(_ag1d)
+                    import agent_vibe as _av1d;     _il1d.reload(_av1d)
 
-                _strat_label = _av1c.STANDARD_STRATEGIES[_sel_strat]["name"]
-                with st.status(f"🎯 Ottimizzazione {_strat_label}…", expanded=True) as _std_status:
-                    try:
-                        st.write(f"📐 Costruisco prompt per **{_strat_label}**…")
-                        _std_prompt = _av1c.build_standard_strategy_prompt(_sel_strat, asset)
-                        st.write(f"✅ Prompt pronto ({len(_std_prompt)} chars) — invio a Vibe-Trading…")
+                    _cust_data = _av1d.get_all_strategies_options()[_sel_strat]
+                    _cust_cfg  = _cust_data.get("config", {})
+                    _cust_code = _cust_data.get("code", "")
+                    _cust_name = _cust_data.get("name", "?")
 
-                        _cfg_std, _code_std, _report_std, _engine_std = _av1c.run_vibe_agent(
-                            asset=asset,
-                            anthropic_key=_ant_key,
-                            openrouter_key=_or_key,
-                            openrouter_model=_or_model,
-                            vibe_api_url=_vibe_url,
-                            vibe_service_token=_vibe_token,
-                            prompt_override=_std_prompt,
-                        )
-                        _ag1c.save_outputs(_cfg_std, _code_std, _report_std)
-                        st.write(f"✅ Strategia generata via **{_engine_std}**")
-                        st.write(
-                            f"`{_cfg_std.get('strategy_name','?')}` "
-                            f"({_cfg_std.get('strategy_type','?')}) | "
-                            f"SL {_cfg_std.get('sl_mult')}×ATR | "
-                            f"TP {_cfg_std.get('tp_mult')}×ATR"
-                        )
-                        if _cfg_std.get("rationale"):
-                            st.info(_cfg_std["rationale"])
+                    with st.status(f"✅ Applicazione {_cust_name}…", expanded=True) as _cust_status:
+                        try:
+                            st.write(f"📋 Carico configurazione **{_cust_name}**…")
+                            _cust_report = (
+                                f"# Strategy Report — {asset}\n"
+                                f"*Fonte: catalogo personale*\n\n"
+                                f"**{_cust_cfg.get('strategy_name', _cust_name)}** "
+                                f"({_cust_cfg.get('strategy_type', '—')})\n"
+                                f"SL {_cust_cfg.get('sl_mult')}×ATR | TP {_cust_cfg.get('tp_mult')}×ATR | "
+                                f"active_hours {_cust_cfg.get('active_hours')}\n\n"
+                                f"---\n\n```python\n{_cust_code}\n```"
+                            )
+                            _ag1d.save_outputs(_cust_cfg, _cust_code, _cust_report)
+                            st.write("✅ Config e codice caricati.")
+                            st.write("📈 Eseguo backtest…")
+                            _run_script("04_backtest.py", extra_env=_env)
+                            st.cache_data.clear()
+                            _cust_status.update(
+                                label=f"✅ {_cust_name} applicata",
+                                state="complete", expanded=False,
+                            )
+                            st.success("Strategia applicata e testata. Consulta i grafici nella pagina principale.")
+                        except Exception as _cust_e:
+                            _cust_status.update(label="❌ Applicazione fallita", state="error")
+                            st.error(f"Errore: {_cust_e}")
+        else:
+            # Standard strategy: generate+optimise via Vibe-Trading
+            _std_btn = st.button(
+                "🎯 Ottimizza Strategia Standard",
+                use_container_width=True,
+                help="Vibe-Trading implementa e ottimizza la strategia selezionata per questo asset.",
+            )
 
-                        _std_status.update(
-                            label=f"✅ {_strat_label} salvata",
-                            state="complete", expanded=False,
-                        )
-                        st.success("✅ Strategia salvata. Premi **▶ 3. Analisi Completa** per eseguire backtest + WFO + Monte Carlo.")
-                    except Exception as _std_e:
-                        _std_status.update(label="❌ Ottimizzazione fallita", state="error")
-                        st.error(f"Errore: {_std_e}")
+            if _std_btn and _sel_strat:
+                if not _ant_key and not _or_key:
+                    st.warning("Inserisci almeno una chiave AI (Anthropic o OpenRouter).")
+                elif _ensure_download():
+                    import importlib as _il1c
+                    import agent_vibe as _av1c;     _il1c.reload(_av1c)
+                    import agent_strategy as _ag1c; _il1c.reload(_ag1c)
+
+                    _strat_label = _av1c.STANDARD_STRATEGIES[_sel_strat]["name"]
+                    with st.status(f"🎯 Ottimizzazione {_strat_label}…", expanded=True) as _std_status:
+                        try:
+                            st.write(f"📐 Costruisco prompt per **{_strat_label}**…")
+                            _std_prompt = _av1c.build_standard_strategy_prompt(_sel_strat, asset)
+                            st.write(f"✅ Prompt pronto ({len(_std_prompt)} chars) — invio a Vibe-Trading…")
+
+                            _cfg_std, _code_std, _report_std, _engine_std = _av1c.run_vibe_agent(
+                                asset=asset,
+                                anthropic_key=_ant_key,
+                                openrouter_key=_or_key,
+                                openrouter_model=_or_model,
+                                vibe_api_url=_vibe_url,
+                                vibe_service_token=_vibe_token,
+                                prompt_override=_std_prompt,
+                            )
+                            _ag1c.save_outputs(_cfg_std, _code_std, _report_std)
+                            st.write(f"✅ Strategia generata via **{_engine_std}**")
+                            st.write(
+                                f"`{_cfg_std.get('strategy_name','?')}` "
+                                f"({_cfg_std.get('strategy_type','?')}) | "
+                                f"SL {_cfg_std.get('sl_mult')}×ATR | "
+                                f"TP {_cfg_std.get('tp_mult')}×ATR"
+                            )
+                            if _cfg_std.get("rationale"):
+                                st.info(_cfg_std["rationale"])
+
+                            st.write("📈 Eseguo backtest…")
+                            _run_script("04_backtest.py", extra_env=_env)
+                            st.cache_data.clear()
+
+                            _std_status.update(
+                                label=f"✅ {_strat_label} ottimizzata",
+                                state="complete", expanded=False,
+                            )
+                            st.success("Strategia ottimizzata e testata. Consulta i grafici nella pagina principale.")
+                        except Exception as _std_e:
+                            _std_status.update(label="❌ Ottimizzazione fallita", state="error")
+                            st.error(f"Errore: {_std_e}")
 
     # ── Step 2 ────────────────────────────────────────────────────────────────
     if st.button("🤖 2. Elabora Strategia", use_container_width=True,
@@ -593,7 +826,12 @@ with st.sidebar:
 
             with st.status(f"🤖 {_vibe_label}", expanded=True) as _status:
                 try:
-                    st.write(f"Asset: **{asset}**  |  Motore previsto: **{_vibe_mode}**")
+                    os.environ["VIBE_N_CANDIDATES"] = str(_vibe_n_cand)
+                    import agent_vibe as _avib_inner; _il.reload(_avib_inner)
+                    _n_cand = _avib_inner.VIBE_N_CANDIDATES
+                    st.write(f"Asset: **{asset}**  |  Motore previsto: **{_vibe_mode}**  |  Candidati: **{_n_cand}**")
+                    if _n_cand > 1:
+                        st.write(f"🔍 Generando {_n_cand} strategie alternative e selezionando la migliore…")
                     _cfg_r, _code_r, _report_r, _engine_r = _av.run_vibe_agent(
                         asset=asset,
                         anthropic_key=_ant_key,
@@ -610,6 +848,8 @@ with st.sidebar:
                         f"SL {_cfg_r.get('sl_mult')}×ATR | "
                         f"TP {_cfg_r.get('tp_mult')}×ATR"
                     )
+                    if _n_cand > 1:
+                        st.write("📊 Candidati valutati tramite backtest in-sample — selezionato il miglior Sharpe.")
                     _status.update(
                         label=f"✅ Strategia generata — {_engine_r}",
                         state="complete", expanded=False,
@@ -625,7 +865,7 @@ with st.sidebar:
                       "Applica il filtro direzione selezionato sopra."):
         if _ensure_download():
             with st.status(
-                f"▶ Analisi Completa — {asset} | direzione: {_direction_filter}",
+                f"▶ Analisi Completa — {asset} | {_direction_filter}",
                 expanded=True,
             ) as _run_status:
                 try:
@@ -646,6 +886,64 @@ with st.sidebar:
                 except subprocess.CalledProcessError as _re:
                     _run_status.update(label="❌ Analisi fallita", state="error")
                     st.error(f"Errore:\n```\n{_re.stderr.decode()[:400]}\n```")
+
+    st.divider()
+
+    # ── 💾 Salva strategia nel catalogo ──────────────────────────────────────
+    _sb_cfg_path  = os.path.join(OUTPUT, "agent_strategy_config.json")
+    _sb_code_path = os.path.join(OUTPUT, "agent_strategy_code.py")
+    if os.path.exists(_sb_cfg_path):
+        try:
+            with open(_sb_cfg_path) as _sbf:
+                _sb_cfg = _json.load(_sbf)
+            _sb_default_name = _sb_cfg.get("strategy_name", "")
+            with st.expander("💾 Salva strategia nel catalogo", expanded=False):
+                st.caption(
+                    f"**{_sb_default_name}** · "
+                    f"{_sb_cfg.get('strategy_type','—')} · "
+                    f"SL {_sb_cfg.get('sl_mult')}×ATR · "
+                    f"TP {_sb_cfg.get('tp_mult')}×ATR"
+                )
+                _sb_name = st.text_input(
+                    "Nome nel catalogo",
+                    value=_sb_default_name,
+                    max_chars=80,
+                    key="sb_cat_name",
+                )
+                if st.button("💾 Salva nel catalogo", use_container_width=True,
+                             key="sb_cat_save", type="primary"):
+                    if not _sb_name.strip():
+                        st.error("Il nome è obbligatorio.")
+                    else:
+                        import importlib as _sbil
+                        import agent_vibe as _sbav; _sbil.reload(_sbav)
+                        _sb_slug = (
+                            _sb_name.strip().lower()
+                            .replace(" ", "_").replace("-", "_").replace("/", "_")
+                        )
+                        _sb_slug = "".join(c for c in _sb_slug if c.isalnum() or c == "_")
+                        _sb_code_content = (
+                            open(_sb_code_path, encoding="utf-8").read()
+                            if os.path.exists(_sb_code_path) else ""
+                        )
+                        _sbav.add_to_catalogue({
+                            "key":         _sb_slug,
+                            "name":        _sb_name.strip(),
+                            "icon":        "⭐",
+                            "description": (
+                                f"{_sb_cfg.get('strategy_type','—')} · "
+                                f"SL {_sb_cfg.get('sl_mult')}×ATR · "
+                                f"TP {_sb_cfg.get('tp_mult')}×ATR · "
+                                f"ore {_sb_cfg.get('active_hours',[])} UTC"
+                            ),
+                            "added_at":    __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+                            "asset":       _sb_cfg.get("asset", asset),
+                            "config":      dict(_sb_cfg),
+                            "code":        _sb_code_content,
+                        })
+                        st.success(f"✅ **{_sb_name.strip()}** salvata nel catalogo.")
+        except Exception:
+            pass
 
     st.divider()
 
@@ -811,31 +1109,202 @@ def download_fine_grain(sym: str, interval: str, max_days: int) -> str | bool:
 
 @st.cache_data
 def load_trades():
-    return pd.read_csv(f"{OUTPUT}/trades.csv", parse_dates=["entry_time","exit_time"])
+    try:
+        return pd.read_csv(f"{OUTPUT}/trades.csv", parse_dates=["entry_time","exit_time"])
+    except FileNotFoundError:
+        return pd.DataFrame()
 
 @st.cache_data
 def load_strategy_comparison():
-    return pd.read_csv(f"{OUTPUT}/enhanced_strategy_comparison.csv")
+    try:
+        return pd.read_csv(f"{OUTPUT}/enhanced_strategy_comparison.csv")
+    except FileNotFoundError:
+        return pd.DataFrame()
 
 @st.cache_data
 def load_wfo():
-    return pd.read_csv(f"{OUTPUT}/walk_forward_results.csv")
+    try:
+        return pd.read_csv(f"{OUTPUT}/walk_forward_results.csv")
+    except FileNotFoundError:
+        return pd.DataFrame()
 
 @st.cache_data
 def load_mc_bootstrap():
-    return pd.read_csv(f"{OUTPUT}/mc_bootstrap_results.csv")
+    try:
+        return pd.read_csv(f"{OUTPUT}/mc_bootstrap_results.csv")
+    except FileNotFoundError:
+        return pd.DataFrame()
 
 @st.cache_data
 def load_mc_stress():
-    return pd.read_csv(f"{OUTPUT}/mc_stress_results.csv")
+    try:
+        return pd.read_csv(f"{OUTPUT}/mc_stress_results.csv")
+    except FileNotFoundError:
+        return pd.DataFrame()
 
 @st.cache_data
 def load_multi_asset():
-    return pd.read_csv(f"{OUTPUT}/multi_asset_results.csv")
+    try:
+        return pd.read_csv(f"{OUTPUT}/multi_asset_results.csv")
+    except FileNotFoundError:
+        return pd.DataFrame()
 
 @st.cache_data
 def load_optimization():
-    return pd.read_csv(f"{OUTPUT}/optimization_results.csv")
+    try:
+        return pd.read_csv(f"{OUTPUT}/optimization_results.csv")
+    except FileNotFoundError:
+        return pd.DataFrame()
+
+@st.cache_data
+def load_price_data(ticker: str) -> pd.DataFrame:
+    """Load hourly OHLCV from CSV for the trade overlay chart."""
+    try:
+        from strategy_core import ticker_to_fname as _t2f
+        _csv = os.path.join(OUTPUT, f"{_t2f(ticker)}_hourly.csv")
+        _df  = pd.read_csv(_csv, parse_dates=["Datetime"], index_col="Datetime")
+        _df.index = pd.to_datetime(_df.index, utc=True).tz_localize(None)
+        return _df
+    except Exception:
+        return pd.DataFrame()
+
+
+def _plot_trades_on_price(
+    trades_df: pd.DataFrame,
+    price_df: pd.DataFrame,
+    chart_start=None,
+) -> "go.Figure":
+    """Plotly figure: candlestick / line price + LONG/SHORT entry & exit markers."""
+    import plotly.graph_objects as _go
+
+    # ── Price trace ──────────────────────────────────────────────────────────
+    price_plot = (
+        price_df[price_df.index >= pd.Timestamp(chart_start)]
+        if chart_start is not None and not price_df.empty else price_df
+    )
+
+    fig = _go.Figure()
+
+    _ohlcv_cols = {"Open", "High", "Low", "Close"}
+    if _ohlcv_cols.issubset(price_plot.columns) and not price_plot.empty:
+        fig.add_trace(_go.Candlestick(
+            x=price_plot.index,
+            open=price_plot["Open"],
+            high=price_plot["High"],
+            low=price_plot["Low"],
+            close=price_plot["Close"],
+            name="Prezzo",
+            increasing_line_color="#2ECC71",
+            decreasing_line_color="#E74C3C",
+            increasing_fillcolor="#2ECC71",
+            decreasing_fillcolor="#E74C3C",
+        ))
+    elif "Close" in price_plot.columns and not price_plot.empty:
+        fig.add_trace(_go.Scatter(
+            x=price_plot.index, y=price_plot["Close"],
+            mode="lines", name="Close",
+            line=dict(color="#3498DB", width=1),
+        ))
+
+    if trades_df.empty:
+        fig.update_layout(
+            height=550, template="plotly_dark",
+            title="Prezzo & Trade (nessun trade disponibile)",
+            xaxis_rangeslider_visible=False,
+        )
+        return fig
+
+    # ── Filter trades to timeframe ───────────────────────────────────────────
+    _td = trades_df.copy()
+    _td["entry_time"] = pd.to_datetime(_td["entry_time"])
+    _td["exit_time"]  = pd.to_datetime(_td["exit_time"])
+    if chart_start is not None:
+        _td = _td[_td["entry_time"] >= pd.Timestamp(chart_start)]
+
+    longs  = _td[_td["direction"] == "LONG"]
+    shorts = _td[_td["direction"] == "SHORT"]
+    wins   = _td[_td["pnl"] > 0]
+    losses = _td[_td["pnl"] <= 0]
+
+    # ── Entry markers ────────────────────────────────────────────────────────
+    if not longs.empty:
+        fig.add_trace(_go.Scatter(
+            x=longs["entry_time"], y=longs["entry_price"],
+            mode="markers",
+            marker=dict(symbol="triangle-up", color="#00E676", size=11,
+                        line=dict(width=1, color="white")),
+            name="Long Entry",
+            hovertemplate="<b>LONG Entry</b><br>%{x|%Y-%m-%d %H:%M}<br>%{y:,.2f} USD<extra></extra>",
+        ))
+    if not shorts.empty:
+        fig.add_trace(_go.Scatter(
+            x=shorts["entry_time"], y=shorts["entry_price"],
+            mode="markers",
+            marker=dict(symbol="triangle-down", color="#FF5252", size=11,
+                        line=dict(width=1, color="white")),
+            name="Short Entry",
+            hovertemplate="<b>SHORT Entry</b><br>%{x|%Y-%m-%d %H:%M}<br>%{y:,.2f} USD<extra></extra>",
+        ))
+
+    # ── Exit markers (circle: green = profit, orange = loss) ─────────────────
+    if not wins.empty:
+        fig.add_trace(_go.Scatter(
+            x=wins["exit_time"], y=wins["exit_price"],
+            mode="markers",
+            marker=dict(symbol="circle", color="#00E676", size=7,
+                        line=dict(width=1, color="white")),
+            name="Exit (Profit)",
+            hovertemplate=(
+                "<b>Exit ✅</b><br>%{x|%Y-%m-%d %H:%M}<br>%{y:,.2f} USD<extra></extra>"
+            ),
+        ))
+    if not losses.empty:
+        fig.add_trace(_go.Scatter(
+            x=losses["exit_time"], y=losses["exit_price"],
+            mode="markers",
+            marker=dict(symbol="circle", color="#FF7043", size=7,
+                        line=dict(width=1, color="white")),
+            name="Exit (Loss)",
+            hovertemplate=(
+                "<b>Exit ❌</b><br>%{x|%Y-%m-%d %H:%M}<br>%{y:,.2f} USD<extra></extra>"
+            ),
+        ))
+
+    # ── Entry→Exit lines (all in a single trace via None separators) ──────────
+    _lx, _ly = [], []
+    for _, _row in _td.iterrows():
+        _lx.extend([_row["entry_time"], _row["exit_time"], None])
+        _ly.extend([_row["entry_price"], _row["exit_price"], None])
+    if _lx:
+        fig.add_trace(_go.Scatter(
+            x=_lx, y=_ly,
+            mode="lines",
+            line=dict(color="rgba(255,255,255,0.18)", width=0.9, dash="dot"),
+            name="Durata trade",
+            hoverinfo="skip",
+        ))
+
+    # ── Layout ───────────────────────────────────────────────────────────────
+    _n_long  = len(longs)
+    _n_short = len(shorts)
+    fig.update_layout(
+        height=580,
+        template="plotly_dark",
+        title=(
+            f"Prezzo + Trade eseguiti  "
+            f"({len(_td)} trade · {_n_long}L / {_n_short}S)"
+        ),
+        xaxis_title="",
+        yaxis_title="Prezzo (USD)",
+        xaxis_rangeslider_visible=False,
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.01,
+            xanchor="right", x=1, font=dict(size=11),
+        ),
+        margin=dict(l=0, r=0, t=60, b=0),
+    )
+    fig.update_yaxes(tickprefix="$", tickformat=",.0f")
+    return fig
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -851,8 +1320,12 @@ def _strategy_asset() -> str:
         return "BTC-USD"
 
 def equity_curve(trades: pd.DataFrame, capital: float = 10_000) -> pd.Series:
+    trades = trades.sort_values("exit_time").reset_index(drop=True)
     eq = capital + trades["pnl"].cumsum()
-    eq.index = trades["exit_time"]
+    eq.index = pd.to_datetime(trades["exit_time"])
+    # Resolve duplicate timestamps by adding microsecond offsets
+    if eq.index.duplicated().any():
+        eq.index = eq.index + pd.to_timedelta(range(len(eq)), unit="us")
     return eq
 
 def drawdown_series(eq: pd.Series) -> pd.Series:
@@ -877,13 +1350,15 @@ try:
     col2.metric("Sharpe",       f"{best['sharpe_ratio']:.2f}")
     col3.metric("Max Drawdown", f"{best['max_drawdown_pct']:.1f}%")
     col4.metric("Win Rate",     f"{best['win_rate_pct']:.1f}%")
-    col5.metric("Trade totali", f"{int(best['n_trades'])}  [{best['version']}]")
+    _nt = best['n_trades']
+    _nt_str = str(int(_nt)) if pd.notna(_nt) else "N/A"
+    col5.metric("Trade totali", f"{_nt_str}  [{best['version']}]")
 except Exception:
     pass
 
 st.divider()
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📊 Prezzi & Rendimenti",
     "📈 Strategia V5",
     "🔄 Walk-Forward",
@@ -891,6 +1366,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🌐 Multi-Asset",
     "🤖 Agent Strategy",
     "🔍 Analisi Trade",
+    "⚙️ Parametri Strategia",
 ])
 
 
@@ -1239,28 +1715,154 @@ with tab2:
                                   margin=dict(l=0, r=0, t=40, b=0))
             st.plotly_chart(fig_pie, use_container_width=True)
 
+        # ── Grafico Prezzo + Trade ─────────────────────────────────────────────
+        st.subheader("🕯️ Prezzo & Trade eseguiti")
+        try:
+            _price_df = load_price_data(_strat_asset)
+            _fig_pt   = _plot_trades_on_price(trades, _price_df, chart_start)
+            st.plotly_chart(_fig_pt, use_container_width=True)
+
+            # Show sizing/leverage info from last backtest
+            _meta_path = os.path.join(OUTPUT, "strategy_meta.json")
+            if os.path.exists(_meta_path):
+                try:
+                    import json as _jpt
+                    _meta_pt = _jpt.load(open(_meta_path))
+                    _lev_pt  = _meta_pt.get("leverage", 1.0)
+                    _sz_pt   = _meta_pt.get("sizing_mode", "pct_risk")
+                    _sz_labels = {
+                        "pct_risk":    "% Capitale ÷ SL",
+                        "pct_capital": "% Capitale notionale",
+                        "fixed_usd":   "Importo fisso USD",
+                    }
+                    _cols_pt = st.columns(3)
+                    _cols_pt[0].metric("Modalità sizing", _sz_labels.get(_sz_pt, _sz_pt))
+                    _cols_pt[1].metric("Leva finanziaria", f"{_lev_pt:.1f}×")
+                    if _sz_pt == "fixed_usd":
+                        _fa_pt = _meta_pt.get("fixed_amount_usd", 1000.0)
+                        _cols_pt[2].metric("Importo fisso", f"${_fa_pt:,.0f}")
+                    else:
+                        _cols_pt[2].metric("Trade nel grafico", str(len(trades)))
+                except Exception:
+                    pass
+        except Exception as _pt_exc:
+            st.warning(f"Grafico trade non disponibile: {_pt_exc}")
+
+        # ── Metriche di rischio avanzate ──────────────────────────────────────
+        st.subheader("📊 Metriche di rischio avanzate")
+        _mv = cmp.iloc[-1] if not cmp.empty else pd.Series(dtype=float)
+
+        def _metric_kpi(col, label, key, fmt="{:.2f}", suffix=""):
+            try:
+                val = _mv.get(key, None)
+                fval = float(val)
+                if np.isfinite(fval):
+                    col.metric(label, f"{fmt.format(fval)}{suffix}")
+                else:
+                    col.metric(label, "—")
+            except (TypeError, ValueError):
+                col.metric(label, "—")
+
+        _r1, _r2, _r3, _r4 = st.columns(4)
+        _metric_kpi(_r1, "Sortino",      "sortino_ratio",     "{:.2f}")
+        _metric_kpi(_r2, "Calmar",       "calmar_ratio",      "{:.2f}")
+        _metric_kpi(_r3, "Omega",        "omega_ratio",       "{:.2f}")
+        _metric_kpi(_r4, "Ulcer Index",  "ulcer_index",       "{:.3f}")
+        _r5, _r6, _r7, _r8 = st.columns(4)
+        _metric_kpi(_r5, "VaR 95%",      "var_95_pct",        "{:.2f}", "%")
+        _metric_kpi(_r6, "CVaR 95%",     "cvar_95_pct",       "{:.2f}", "%")
+        _metric_kpi(_r7, "Max DD dur.",  "max_dd_duration_h", "{:.0f}", "h")
+        _metric_kpi(_r8, "Consec. loss", "max_consec_losses", "{:.0f}")
+
+        if "mae_r" in trades.columns and trades["mae_r"].notna().any():
+            _r9, _r10, _r11, _r12 = st.columns(4)
+            _r9.metric("MAE medio (R)",  f"{trades['mae_r'].mean():.2f}R")
+            _r10.metric("MFE medio (R)", f"{trades['mfe_r'].mean():.2f}R")
+            _r11.metric("MAE p95 (R)",   f"{trades['mae_r'].quantile(0.95):.2f}R")
+            _r12.metric("MFE p95 (R)",   f"{trades['mfe_r'].quantile(0.95):.2f}R")
+
+        _hold_h = _mv.get("avg_hold_hours", None)
+        if _hold_h is not None and not pd.isna(float(_hold_h)):
+            st.caption(f"⏱ Holding medio: **{float(_hold_h):.1f}h**")
+
+        # ── Rolling metrics ───────────────────────────────────────────────────
+        st.subheader("📈 Metriche rolling (finestra 90 giorni)")
+        _ret_r  = eq_full.pct_change().dropna()
+        _window = 90 * 24
+        if len(_ret_r) >= _window:
+            _roll_sharpe = (
+                _ret_r.rolling(_window).mean()
+                / _ret_r.rolling(_window).std().replace(0, np.nan)
+                * np.sqrt(24 * 365)
+            )
+            _peak_r = eq_full.cummax()
+            _roll_dd_ser = ((eq_full - _peak_r) / _peak_r * 100).rolling(_window).min()
+            fig_roll = make_subplots(
+                rows=2, cols=1, shared_xaxes=True,
+                row_heights=[0.5, 0.5], vertical_spacing=0.06,
+                subplot_titles=["Rolling Sharpe (90d)", "Rolling Max DD % (90d)"],
+            )
+            fig_roll.add_trace(go.Scatter(
+                x=_roll_sharpe.index, y=_roll_sharpe.values,
+                mode="lines", line=dict(color="#3498DB", width=1.5),
+                name="Rolling Sharpe"), row=1, col=1)
+            fig_roll.add_hline(y=0, line_dash="dash", line_color="gray", row=1, col=1)
+            fig_roll.add_trace(go.Scatter(
+                x=_roll_dd_ser.index, y=_roll_dd_ser.values,
+                mode="lines", line=dict(color=C_DOWN, width=1.5),
+                fill="tozeroy", fillcolor="rgba(239,83,80,0.15)",
+                name="Rolling Max DD"), row=2, col=1)
+            fig_roll.update_layout(height=400, template="plotly_dark",
+                                   margin=dict(l=0, r=0, t=40, b=0))
+            st.plotly_chart(fig_roll, use_container_width=True)
+        else:
+            st.info("Dati insufficienti per il calcolo rolling (min 90 giorni di trade).")
+
+        # ── Underwater equity ─────────────────────────────────────────────────
+        st.subheader("🌊 Underwater equity curve")
+        _dd_uw = drawdown_series(eq_full)
+        fig_uw = go.Figure(go.Scatter(
+            x=_dd_uw.index, y=_dd_uw.values,
+            mode="lines", line=dict(color=C_DOWN, width=1.5),
+            fill="tozeroy", fillcolor="rgba(239,83,80,0.2)",
+            name="Underwater %",
+        ))
+        fig_uw.add_hline(y=0, line_dash="dash", line_color="gray")
+        fig_uw.update_layout(height=250, template="plotly_dark",
+                              title="Underwater equity — perdita dal massimo storico",
+                              yaxis_title="Drawdown %",
+                              margin=dict(l=0, r=0, t=40, b=0))
+        st.plotly_chart(fig_uw, use_container_width=True)
+
         # ── Confronto versioni strategia ──────────────────────────────────────
         st.subheader("Confronto versioni strategia")
-        disp = cmp[["version", "cagr_pct", "sharpe_ratio",
-                     "max_drawdown_pct", "win_rate_pct",
-                     "n_trades", "total_costs_usd"]].copy()
-        disp.columns = ["Versione", "CAGR %", "Sharpe",
-                        "Max DD %", "Win %", "Trade", "Costi USD"]
+        _cmp_cols  = ["version", "cagr_pct", "sharpe_ratio"]
+        _cmp_names = ["Versione", "CAGR %", "Sharpe"]
+        if "sortino_ratio" in cmp.columns:
+            _cmp_cols.append("sortino_ratio")
+            _cmp_names.append("Sortino")
+        _cmp_cols  += ["max_drawdown_pct", "win_rate_pct", "n_trades", "total_costs_usd"]
+        _cmp_names += ["Max DD %", "Win %", "Trade", "Costi USD"]
+        disp = cmp[_cmp_cols].copy()
+        disp.columns = _cmp_names
         disp = disp.set_index("Versione")
+        _grad_pos = [c for c in ["CAGR %", "Sharpe", "Sortino"] if c in disp.columns]
+        _fmt_map  = {"CAGR %": "{:.1f}", "Sharpe": "{:.2f}",
+                     "Max DD %": "{:.1f}", "Win %": "{:.1f}", "Costi USD": "{:.0f}"}
+        if "Sortino" in disp.columns:
+            _fmt_map["Sortino"] = "{:.2f}"
         st.dataframe(
             disp.style
-                .background_gradient(subset=["CAGR %", "Sharpe"], cmap="RdYlGn")
+                .background_gradient(subset=_grad_pos, cmap="RdYlGn")
                 .background_gradient(subset=["Max DD %"], cmap="RdYlGn_r")
-                .format({"CAGR %": "{:.1f}", "Sharpe": "{:.2f}",
-                         "Max DD %": "{:.1f}", "Win %": "{:.1f}",
-                         "Costi USD": "{:.0f}"}),
+                .format(_fmt_map),
             use_container_width=True,
         )
 
         # ── Grid search heatmap ───────────────────────────────────────────────
         st.subheader("Grid search — Sharpe ratio (SL mult × TP mult)")
         pivot = optim.pivot_table(index="sl_mult", columns="tp_mult",
-                                  values="sharpe", aggfunc="mean")
+                                  values="sharpe_ratio", aggfunc="mean")
         fig_ht = px.imshow(
             pivot, color_continuous_scale="RdYlGn",
             labels=dict(x="TP mult", y="SL mult", color="Sharpe"),
@@ -1270,6 +1872,314 @@ with tab2:
         fig_ht.update_layout(height=320, template="plotly_dark",
                               margin=dict(l=0, r=0, t=30, b=0))
         st.plotly_chart(fig_ht, use_container_width=True)
+
+        # ── 3D sensitivity surface ────────────────────────────────────────────
+        if len(pivot) >= 3 and len(pivot.columns) >= 3:
+            st.subheader("🔬 Superficie di sensibilità 3D (SL × TP → Sharpe)")
+            _x3 = [float(c) for c in pivot.columns]
+            _y3 = [float(i) for i in pivot.index]
+            _z3 = pivot.fillna(0).values.tolist()
+            fig_3d = go.Figure(go.Surface(
+                x=_x3, y=_y3, z=_z3,
+                colorscale="RdYlGn",
+                showscale=True,
+                contours=dict(z=dict(show=True, usecolormap=True, project_z=True)),
+            ))
+            fig_3d.update_layout(
+                height=480, template="plotly_dark",
+                scene=dict(xaxis_title="TP mult",
+                           yaxis_title="SL mult",
+                           zaxis_title="Sharpe"),
+                margin=dict(l=0, r=0, t=30, b=0),
+            )
+            st.plotly_chart(fig_3d, use_container_width=True)
+
+        # ── Best params OOS validation ────────────────────────────────────────
+        try:
+            if "oos_sharpe" in optim.columns:
+                _oos_row = optim[optim["oos_sharpe"].notna()]
+                if not _oos_row.empty:
+                    st.subheader("🔎 Best params OOS validation")
+                    _oos_r = _oos_row.iloc[0]
+                    _oos_c1, _oos_c2, _oos_c3 = st.columns(3)
+                    _oos_c1.metric("IS Sharpe",  f"{float(_oos_r['sharpe_ratio']):.2f}")
+                    _oos_c2.metric("OOS Sharpe", f"{float(_oos_r['oos_sharpe']):.2f}")
+                    _deg = float(_oos_r["is_oos_degradation_pct"])
+                    _oos_c3.metric("Degradation %", f"{_deg:.1f}%",
+                                   delta=f"{-_deg:.1f}%" if _deg > 0 else f"{abs(_deg):.1f}%",
+                                   delta_color="inverse")
+                    _oos_disp = _oos_row[
+                        ["sl_mult", "tp_mult", "active_hours",
+                         "sharpe_ratio", "oos_sharpe", "is_oos_degradation_pct"]
+                    ].copy()
+                    _oos_disp.columns = [
+                        "SL mult", "TP mult", "Ore attive",
+                        "IS Sharpe", "OOS Sharpe", "Degradation %"
+                    ]
+                    st.dataframe(
+                        _oos_disp.style.format({
+                            "IS Sharpe": "{:.2f}", "OOS Sharpe": "{:.2f}",
+                            "Degradation %": "{:.1f}",
+                        }),
+                        use_container_width=True,
+                    )
+        except Exception:
+            pass
+
+        # ── Kelly sizing summary ──────────────────────────────────────────────
+        try:
+            if "kelly_sizing_active" in trades.columns and trades["kelly_sizing_active"].notna().any():
+                st.subheader("⚖️ Kelly sizing")
+                _kt = trades[trades["kelly_sizing_active"] == True]
+                _kf = trades[trades["kelly_sizing_active"] == False]
+                _k1, _k2, _k3 = st.columns(3)
+                _k1.metric("Trade con Kelly attivo", f"{len(_kt)}")
+                _k2.metric("P&L medio (Kelly on)",
+                           f"{_kt['pnl'].mean():.2f} USDT" if len(_kt) > 0 else "—")
+                _k3.metric("P&L medio (Kelly off)",
+                           f"{_kf['pnl'].mean():.2f} USDT" if len(_kf) > 0 else "—")
+        except Exception:
+            pass
+
+        # ── Return Attribution by Direction & Hour ────────────────────────────
+        st.subheader("📊 Attribution — P&L per direzione e ora")
+
+        _attr_col_l, _attr_col_r = st.columns(2)
+
+        with _attr_col_l:
+            if "direction" in trades_view.columns and len(trades_view) > 0:
+                _dir_grp = (
+                    trades_view.groupby("direction")["pnl"]
+                    .agg(
+                        total_pnl="sum",
+                        count="count",
+                        avg_pnl="mean",
+                    )
+                    .reset_index()
+                )
+                _dir_grp["win_rate"] = (
+                    trades_view[trades_view["pnl"] > 0]
+                    .groupby("direction")["pnl"]
+                    .count()
+                    .reindex(_dir_grp["direction"])
+                    .values
+                    / _dir_grp["count"].values
+                    * 100
+                )
+                _dir_colors = [
+                    C_UP if d == "long" else C_DOWN
+                    for d in _dir_grp["direction"]
+                ]
+                fig_dir = go.Figure()
+                fig_dir.add_trace(go.Bar(
+                    x=_dir_grp["direction"],
+                    y=_dir_grp["total_pnl"],
+                    name="P&L totale",
+                    marker_color=_dir_colors,
+                    text=_dir_grp["total_pnl"].round(0).astype(int),
+                    textposition="outside",
+                    hovertemplate=(
+                        "<b>%{x}</b><br>"
+                        "P&L totale: %{y:.2f} USDT<br>"
+                        "Trade: %{customdata[0]}<br>"
+                        "Avg P&L: %{customdata[1]:.2f} USDT<br>"
+                        "Win rate: %{customdata[2]:.1f}%"
+                    ),
+                    customdata=_dir_grp[["count", "avg_pnl", "win_rate"]].values,
+                ))
+                fig_dir.update_layout(
+                    height=320,
+                    template="plotly_dark",
+                    title=f"P&L totale per direzione{_t2_note}",
+                    margin=dict(l=0, r=0, t=40, b=0),
+                    yaxis_title="P&L (USDT)",
+                )
+                st.plotly_chart(fig_dir, use_container_width=True)
+            else:
+                st.info("Colonna 'direction' non disponibile o nessun trade nel periodo.")
+
+        with _attr_col_r:
+            if "entry_time" in trades_view.columns and len(trades_view) > 0:
+                _tv = trades_view.copy()
+                _tv["hour"] = _tv["entry_time"].dt.hour
+                _hour_grp = (
+                    _tv.groupby("hour")["pnl"]
+                    .agg(total_pnl="sum", count="count")
+                    .reindex(range(24), fill_value=0)
+                    .reset_index()
+                )
+                _hour_grp.columns = ["hour", "total_pnl", "count"]
+                _hour_colors = [
+                    C_UP if v >= 0 else C_DOWN
+                    for v in _hour_grp["total_pnl"]
+                ]
+                fig_hour = go.Figure()
+                fig_hour.add_trace(go.Bar(
+                    x=_hour_grp["hour"],
+                    y=_hour_grp["total_pnl"],
+                    name="P&L per ora",
+                    marker_color=_hour_colors,
+                    hovertemplate=(
+                        "<b>Ora %{x}:00</b><br>"
+                        "P&L totale: %{y:.2f} USDT<br>"
+                        "Trade: %{customdata}"
+                    ),
+                    customdata=_hour_grp["count"].values,
+                ))
+                fig_hour.update_layout(
+                    height=320,
+                    template="plotly_dark",
+                    title=f"P&L per ora del giorno{_t2_note}",
+                    margin=dict(l=0, r=0, t=40, b=0),
+                    xaxis=dict(
+                        tickmode="linear",
+                        tick0=0,
+                        dtick=2,
+                        title="Ora (UTC)",
+                    ),
+                    yaxis_title="P&L (USDT)",
+                )
+                st.plotly_chart(fig_hour, use_container_width=True)
+            else:
+                st.info("Dati entry_time non disponibili.")
+
+        # ── Monthly Calendar Heatmap ──────────────────────────────────────────
+        st.subheader("📅 Heatmap mensile — P&L")
+
+        if "exit_time" in trades.columns and len(trades) > 0:
+            _trades_cal = trades.copy()
+            _trades_cal["exit_time"] = pd.to_datetime(_trades_cal["exit_time"])
+            _monthly = (
+                _trades_cal.groupby(pd.Grouper(key="exit_time", freq="ME"))["pnl"]
+                .sum()
+                .reset_index()
+            )
+            _monthly["year"]  = _monthly["exit_time"].dt.year
+            _monthly["month"] = _monthly["exit_time"].dt.month
+
+            _month_names = [
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            ]
+            _monthly["month_name"] = _monthly["month"].apply(
+                lambda m: _month_names[m - 1]
+            )
+
+            _pivot = _monthly.pivot_table(
+                index="year",
+                columns="month_name",
+                values="pnl",
+                aggfunc="sum",
+            ).reindex(columns=_month_names)
+
+            _n_years = len(_pivot)
+            fig_cal = px.imshow(
+                _pivot,
+                color_continuous_scale="RdYlGn",
+                color_continuous_midpoint=0,
+                text_auto=".0f",
+                labels=dict(x="Mese", y="Anno", color="P&L (USDT)"),
+                aspect="auto",
+            )
+            fig_cal.update_layout(
+                height=200 + 50 * _n_years,
+                template="plotly_dark",
+                margin=dict(l=0, r=0, t=30, b=0),
+            )
+            st.plotly_chart(fig_cal, use_container_width=True)
+        else:
+            st.info("Dati exit_time non disponibili per il calendario mensile.")
+
+        # ── Benchmark vs Buy-and-Hold ─────────────────────────────────────────
+        st.subheader("\U0001f4d0 Strategia vs Buy-and-Hold BTC")
+        try:
+            if eq_full is None or eq_full.empty:
+                raise ValueError("equity curve vuota")
+
+            # 1. Load BTC OHLCV
+            ohlcv = pd.read_csv(
+                f"{OUTPUT}/btc_ohlcv.csv",
+                parse_dates=["time"],
+            ).set_index("time")
+
+            # 2. Build B&H equity normalised to 10 000
+            bh_close = ohlcv["close"].reindex(eq_full.index, method="ffill")
+            bh_equity = 10_000 * bh_close / bh_close.iloc[0]
+
+            # 3. Overlay chart — strategy vs B&H
+            fig_bh = go.Figure()
+            fig_bh.add_trace(go.Scatter(
+                x=eq_full.index, y=eq_full,
+                name="Strategia", line=dict(color=C_UP, width=2),
+            ))
+            fig_bh.add_trace(go.Scatter(
+                x=bh_equity.index, y=bh_equity,
+                name="BTC Buy-and-Hold", line=dict(color="#FFA726", width=2, dash="dot"),
+            ))
+            fig_bh.add_hline(y=10_000, line_dash="dash",
+                             line_color="white", opacity=0.4,
+                             annotation_text="Start 10 000 USD")
+            fig_bh.update_layout(
+                template="plotly_dark",
+                height=340,
+                margin=dict(l=0, r=0, t=30, b=0),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                yaxis_title="Equity (USD)",
+            )
+            st.plotly_chart(fig_bh, use_container_width=True)
+
+            # 4. Returns correlation (monthly)
+            strat_ret = eq_full.resample("ME").last().pct_change().dropna()
+            bh_ret    = bh_equity.resample("ME").last().pct_change().dropna()
+            common_idx = strat_ret.index.intersection(bh_ret.index)
+            if len(common_idx) < 2:
+                raise ValueError("Dati mensili insufficienti per la correlazione")
+            strat_ret_c = strat_ret.loc[common_idx]
+            bh_ret_c    = bh_ret.loc[common_idx]
+            corr = float(np.corrcoef(strat_ret_c.values, bh_ret_c.values)[0, 1])
+            st.metric("Correlazione mensile BTC B&H", f"{corr:.2f}")
+
+            # 5. Scatter plot — monthly returns with regression line
+            coeffs = np.polyfit(bh_ret_c.values, strat_ret_c.values, 1)
+            beta, alpha = coeffs[0], coeffs[1]
+            x_line = np.linspace(bh_ret_c.min(), bh_ret_c.max(), 50)
+            y_line = beta * x_line + alpha
+
+            fig_sc = go.Figure()
+            fig_sc.add_trace(go.Scatter(
+                x=bh_ret_c.values * 100,
+                y=strat_ret_c.values * 100,
+                mode="markers",
+                marker=dict(color=C_UP, size=8, opacity=0.8),
+                name="Rendimenti mensili",
+                text=[str(d.date()) for d in common_idx],
+                hovertemplate="%{text}<br>BTC: %{x:.1f}%<br>Strat: %{y:.1f}%",
+            ))
+            fig_sc.add_trace(go.Scatter(
+                x=x_line * 100,
+                y=y_line * 100,
+                mode="lines",
+                line=dict(color=C_DOWN, width=2, dash="dash"),
+                name="Regressione",
+            ))
+            fig_sc.add_annotation(
+                xref="paper", yref="paper", x=0.02, y=0.96,
+                text=f"\u03c1 = {corr:.2f}   \u03b2 = {beta:.2f}   \u03b1 = {alpha*100:.2f}%/mese",
+                showarrow=False,
+                font=dict(size=13, color="white"),
+                align="left",
+            )
+            fig_sc.update_layout(
+                template="plotly_dark",
+                height=360,
+                margin=dict(l=0, r=0, t=30, b=0),
+                xaxis_title="BTC B&H rendimento mensile (%)",
+                yaxis_title="Strategia rendimento mensile (%)",
+            )
+            st.plotly_chart(fig_sc, use_container_width=True)
+
+        except Exception:
+            st.info("Dati benchmark non disponibili.")
 
     except Exception as e:
         st.error(f"Errore caricamento dati strategia: {e}")
@@ -1291,7 +2201,54 @@ with tab3:
     elif _strat_asset3 != "BTC-USD":
         st.success(f"Walk-Forward calcolata su **{_strat_name3}** ({_strat_asset3}).")
     try:
-        wfo = load_wfo()
+        import json as _t3json
+
+        # ── Show active WFO config ────────────────────────────────────────────
+        _wfo_meta_path = os.path.join(OUTPUT, "wfo_meta.json")
+        _wm = {}
+        if os.path.exists(_wfo_meta_path):
+            try:
+                with open(_wfo_meta_path) as _wf:
+                    _wm = _t3json.load(_wf)
+            except Exception:
+                pass
+        _wfo_configs_run = _wm.get("configs", [])
+        _wfo_mode_val = _wm.get("mode", "")
+        _mode_label = "📊 % del dataset" if _wfo_mode_val == "pct" else ("📏 Numero di periodi" if _wfo_mode_val == "bars" else "—")
+        if _wfo_mode_val == "pct":
+            _window_desc = f"IS={_wm.get('is_pct', '?')}% · OOS={_wm.get('oos_pct', '?')}%"
+        elif _wfo_mode_val == "bars":
+            _window_desc = f"IS={_wm.get('is_bars', '?')} barre · OOS={_wm.get('oos_bars', '?')} barre"
+        else:
+            _window_desc = "—"
+        if _wfo_mode_val:
+            _t3k1, _t3k2, _t3k3 = st.columns(3)
+            _t3k1.metric("Modalità finestre", _mode_label)
+            _t3k2.metric("Configurazione", _wm.get("label", "—"))
+            _t3k3.metric("Fold eseguiti", _wm.get("n_folds", "—"))
+            st.caption(
+                f"Dataset: **{_wm.get('n_total', 0):,} periodi** · {_window_desc} "
+                f"· Per modificare usa i controlli nella sidebar e riesegui **▶ 3. Analisi Completa**."
+            )
+
+        wfo_all = load_wfo()
+
+        # ── Window config selector (when multiple configs in CSV) ─────────────
+        if "window_config" in wfo_all.columns:
+            _avail_configs = wfo_all["window_config"].unique().tolist()
+            if len(_avail_configs) > 1:
+                _sel_wfo_cfg = st.selectbox(
+                    "Configurazione finestre",
+                    options=_avail_configs,
+                    index=len(_avail_configs) - 1,  # default: last (IS=8m OOS=2m)
+                    key="wfo_cfg_sel",
+                )
+                wfo = wfo_all[wfo_all["window_config"] == _sel_wfo_cfg].copy()
+                st.caption(f"Mostrando: **{_sel_wfo_cfg}** ({len(wfo)} fold)")
+            else:
+                wfo = wfo_all.copy()
+        else:
+            wfo = wfo_all.copy()
 
         # WFE = OOS_Sharpe / IS_Sharpe per fold
         wfo["wfe"] = wfo["oos_sharpe"] / wfo["is_sharpe"].replace(0, np.nan)
@@ -1377,8 +2334,74 @@ with tab3:
         )
 
         wfe_mean = wfo["wfe"].mean()
-        st.info(f"**WFE medio**: {wfe_mean:.2f}  —  "
-                f"{'✅ modello robusto (WFE > 0.5)' if wfe_mean > 0.5 else '⚠️ rischio overfitting (WFE < 0.5)'}")
+        if pd.notna(wfe_mean):
+            st.info(f"**WFE medio**: {wfe_mean:.2f}  —  "
+                    f"{'✅ modello robusto (WFE > 0.5)' if wfe_mean > 0.5 else '⚠️ rischio overfitting (WFE < 0.5)'}")
+        else:
+            st.warning("**WFE medio**: N/A (dati IS/OOS insufficienti)")
+
+        # ── Validazione statistica ────────────────────────────────────────────
+        st.subheader("🧮 Validazione Statistica")
+        _val_path = os.path.join(OUTPUT, "validation_results.json")
+        if os.path.exists(_val_path):
+            try:
+                import json as _val_json
+                with open(_val_path) as _vf:
+                    _val = _val_json.load(_vf)
+
+                _vc1, _vc2, _vc3 = st.columns(3)
+
+                # ── Column 1: Sharpe CI ───────────────────────────────────────
+                with _vc1:
+                    st.markdown("**Sharpe CI (Bootstrap)**")
+                    _sci = _val.get("sharpe_ci", {})
+                    if _sci.get("sharpe_point") is not None:
+                        st.metric("Sharpe (point)", f"{_sci['sharpe_point']:.3f}")
+                        st.metric(
+                            f"CI lower ({_sci.get('ci_pct', 95)}%)",
+                            f"{_sci['ci_lower']:.3f}",
+                        )
+                        st.metric("CI upper", f"{_sci['ci_upper']:.3f}")
+                        st.caption(f"n_bootstrap = {_sci.get('n_bootstrap', '—')}")
+                    else:
+                        st.warning(_sci.get("error", "Dati non disponibili"))
+
+                # ── Column 2: Permutation test ────────────────────────────────
+                with _vc2:
+                    st.markdown("**Permutation Test**")
+                    _pt = _val.get("permutation_test", {})
+                    if _pt.get("observed_sharpe") is not None:
+                        st.metric("Sharpe osservato", f"{_pt['observed_sharpe']:.3f}")
+                        st.metric("p-value", f"{_pt['p_value']:.4f}")
+                        st.metric("Percentile rank", f"{_pt['pct_rank']:.1f}%")
+                        if _pt["p_value"] < 0.05:
+                            st.success("PASS: p < 0.05 — strategia statisticamente significativa")
+                        else:
+                            st.error("FAIL: p ≥ 0.05 — nessuna evidenza di edge")
+                    else:
+                        st.warning(_pt.get("error", "Dati non disponibili"))
+
+                # ── Column 3: Track record + Bonferroni ───────────────────────
+                with _vc3:
+                    st.markdown("**Track Record & Bonferroni**")
+                    _mtr = _val.get("min_track_record", {})
+                    if _mtr:
+                        st.metric("N trade", _mtr.get("n_trades", "—"))
+                        if _mtr.get("ok"):
+                            st.success(f"PASS: {_mtr.get('message', '')}")
+                        else:
+                            st.error(f"FAIL: {_mtr.get('message', '')}")
+                    _bonf = _val.get("bonferroni", {})
+                    if _bonf:
+                        st.metric(
+                            "Bonferroni α corretto",
+                            f"{_bonf.get('corrected_alpha', 0):.6f}",
+                            help=f"α={_bonf.get('raw_alpha', 0.05)} / {_bonf.get('n_combinations', 1)} combinazioni",
+                        )
+            except Exception as _val_exc:
+                st.warning(f"Impossibile caricare i risultati di validazione: {_val_exc}")
+        else:
+            st.info("Esegui **▶ 3. Analisi Completa** per generare i risultati di validazione.")
 
     except Exception as e:
         st.error(f"Errore caricamento dati WFO: {e}")
@@ -1487,16 +2510,16 @@ with tab4:
         with col_r:
             fig_st = go.Figure(go.Bar(
                 x=stress["scenario"],
-                y=stress["cagr"],
-                marker_color=[C_UP if v >= 0 else C_DOWN for v in stress["cagr"]],
-                text=[f"{v:.1f}%" for v in stress["cagr"]],
+                y=stress["total_return_pct"],
+                marker_color=[C_UP if v >= 0 else C_DOWN for v in stress["total_return_pct"]],
+                text=[f"{v:.1f}%" for v in stress["total_return_pct"]],
                 textposition="outside",
             ))
             fig_st.add_hline(y=0, line_dash="dash", line_color="gray")
             fig_st.update_layout(
                 height=320, template="plotly_dark",
-                title="Stress test — CAGR per scenario",
-                yaxis_title="CAGR %",
+                title="Stress test — Return totale per scenario",
+                yaxis_title="Return totale %",
                 margin=dict(l=0, r=0, t=40, b=0),
                 xaxis_tickangle=-25,
             )
@@ -1678,6 +2701,13 @@ with tab6:
                 st.success(f"✅ Strategia generata da **Anthropic** (`{_src}`)")
             elif _src.startswith("openrouter"):
                 st.success(f"✅ Strategia generata da **OpenRouter** (`{_src}`)")
+            elif _src == "stats_derived":
+                st.info(
+                    f"ℹ️ Strategia generata dal **motore statistico** (nessuna API AI disponibile). "
+                    f"Tipo: **{_cfg.get('strategy_type', '—').replace('_', ' ').title()}** — "
+                    "determinato da Hurst, kurtosis e dal tuo prompt. "
+                    "Configura una chiave API nella sidebar per generare strategie AI personalizzate."
+                )
             else:
                 st.warning(
                     f"⚠️ Strategia di **default V5** (`{_src}`). "
@@ -1735,14 +2765,136 @@ with tab6:
                 st.markdown(open(_rpt_path, encoding="utf-8").read())
                 st.divider()
 
-            # ── Strategy code ─────────────────────────────────────────────────
+            # ── Strategy code — editable ──────────────────────────────────────
             if os.path.exists(_code_path):
-                with st.expander("📝 Codice strategia (`generate_signals_agent`)"):
-                    st.code(open(_code_path, encoding="utf-8").read(), language="python")
+                with st.expander("📝 Codice strategia (modificabile)", expanded=False):
+                    _current_code = open(_code_path, encoding="utf-8").read()
+                    _edited_code = st.text_area(
+                        "Modifica il codice della funzione `generate_signals_agent`",
+                        value=_current_code,
+                        height=400,
+                        key="t6_code_editor",
+                        help="Modifica il codice direttamente. Premi 'Valida e Salva' per applicare le modifiche.",
+                        label_visibility="collapsed",
+                    )
+                    _ce_col1, _ce_col2 = st.columns(2)
+                    _ce_save = _ce_col1.button(
+                        "💾 Valida e Salva",
+                        key="t6_code_save",
+                        use_container_width=True,
+                        type="primary",
+                    )
+                    _ce_run = _ce_col2.button(
+                        "▶ Salva e Riesegui Backtest",
+                        key="t6_code_run",
+                        use_container_width=True,
+                    )
+                    if _ce_save or _ce_run:
+                        _ce_errors = []
+                        if "def generate_signals_agent" not in _edited_code:
+                            _ce_errors.append("La funzione `generate_signals_agent` non è definita.")
+                        if 'df["signal"]' not in _edited_code and "df['signal']" not in _edited_code:
+                            _ce_errors.append("La colonna `df[\"signal\"]` non è assegnata.")
+                        if "return df" not in _edited_code:
+                            _ce_errors.append("`return df` mancante.")
+                        try:
+                            compile(_edited_code, "<strategy>", "exec")
+                        except SyntaxError as _se:
+                            _ce_errors.append(f"Errore di sintassi: {_se}")
+                        if _ce_errors:
+                            for _err in _ce_errors:
+                                st.error(_err)
+                        else:
+                            with open(_code_path, "w", encoding="utf-8") as _wf:
+                                _wf.write(_edited_code)
+                            st.cache_data.clear()
+                            st.success("✅ Codice salvato in `agent_strategy_code.py`.")
+                            if _ce_run:
+                                with st.spinner("▶ Rieseguo backtest con il codice modificato…"):
+                                    _run_script("04_backtest.py", extra_env=_env)
+                                    st.cache_data.clear()
+                                st.success("✅ Backtest completato — aggiorna le tab per vedere i risultati.")
 
             # ── Raw JSON ─────────────────────────────────────────────────────
             with st.expander("⚙️ Raw JSON config"):
                 st.json(_cfg)
+
+            st.divider()
+
+            # ── Add to custom catalogue ───────────────────────────────────────
+            st.subheader("💾 Aggiungi al catalogo strategie")
+            st.caption(
+                "Salva questa strategia nel catalogo personale per poterla riapplicare "
+                "in futuro senza doverla rigenerare con Vibe-Trading."
+            )
+            import importlib as _t6il
+            import agent_vibe as _t6av; _t6il.reload(_t6av)
+
+            with st.form("t6_add_catalogue"):
+                _cat_name = st.text_input(
+                    "Nome strategia",
+                    value=_cfg.get("strategy_name", ""),
+                    max_chars=80,
+                )
+                _cat_col1, _cat_col2 = st.columns([1, 5])
+                _cat_icon = _cat_col1.text_input("Icona", value="⭐", max_chars=2)
+                _cat_col2.text_input(
+                    "Tipo", value=_cfg.get("strategy_type", ""), disabled=True
+                )
+                _cat_desc = st.text_area(
+                    "Descrizione (mostrata nel catalogo)",
+                    value=_cfg.get("rationale", ""),
+                    height=80,
+                )
+                _cat_submit = st.form_submit_button(
+                    "💾 Salva nel catalogo", use_container_width=True, type="primary"
+                )
+                if _cat_submit:
+                    if not _cat_name.strip():
+                        st.error("Il nome è obbligatorio.")
+                    else:
+                        _cat_code_content = (
+                            open(_code_path, encoding="utf-8").read()
+                            if os.path.exists(_code_path) else ""
+                        )
+                        _cat_slug = (
+                            _cat_name.strip().lower()
+                            .replace(" ", "_")
+                            .replace("-", "_")
+                            .replace("/", "_")
+                        )
+                        _cat_slug = "".join(c for c in _cat_slug if c.isalnum() or c == "_")
+                        _cat_entry = {
+                            "key":         _cat_slug,
+                            "name":        _cat_name.strip(),
+                            "icon":        _cat_icon.strip() or "⭐",
+                            "description": _cat_desc.strip(),
+                            "added_at":    __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+                            "asset":       _cfg.get("asset", asset),
+                            "config":      dict(_cfg),
+                            "code":        _cat_code_content,
+                        }
+                        _t6av.add_to_catalogue(_cat_entry)
+                        st.success(
+                            f"✅ **{_cat_name.strip()}** salvata nel catalogo! "
+                            "Troverai questa strategia nel selettore 'Scegli una strategia' nella sidebar."
+                        )
+
+            # ── Catalogue management ──────────────────────────────────────────
+            _t6_custom = _t6av.load_custom_strategies()
+            if _t6_custom:
+                with st.expander(f"📋 Catalogo personale ({len(_t6_custom)} strategie)", expanded=True):
+                    for _t6_entry in _t6_custom:
+                        _t6c1, _t6c2 = st.columns([6, 1])
+                        _t6c1.markdown(
+                            f"**{_t6_entry.get('icon','⭐')} {_t6_entry.get('name','?')}**  "
+                            f"`{_t6_entry.get('asset','?')}` · "
+                            f"{_t6_entry.get('added_at','')[:10]}  \n"
+                            f"{_t6_entry.get('description','')[:120]}"
+                        )
+                        if _t6c2.button("🗑️", key=f"del_{_t6_entry.get('key')}", help="Rimuovi dal catalogo"):
+                            _t6av.delete_from_catalogue(_t6_entry.get("key"))
+                            st.rerun()
 
         except Exception as _e:
             st.error(f"Errore lettura output agent: {_e}")
@@ -1765,7 +2917,7 @@ with tab7:
     )
 
     _trades_csv = os.path.join(OUTPUT, "trades.csv")
-    _wfo_csv    = os.path.join(OUTPUT, "wfo_IS8m_OOS2m.csv")
+    _wfo_csv    = os.path.join(OUTPUT, "walk_forward_results.csv")
 
     if not os.path.exists(_trades_csv):
         st.info(
@@ -1777,7 +2929,7 @@ with tab7:
             import trade_analysis as _ta7; _t7il.reload(_ta7)
 
             _t7_trades = _ta7.load_trades(asset)
-            _t7_wfo    = _ta7.load_wfo("IS8m_OOS2m")
+            _t7_wfo    = load_wfo()
 
             if _t7_trades.empty:
                 st.warning("Il file trades.csv è vuoto.")
@@ -2037,8 +3189,294 @@ with tab7:
                     )
                     st.plotly_chart(_fig_eq, use_container_width=True)
 
+                st.divider()
+
+                # ── Drift Detection ───────────────────────────────────────────
+                st.subheader("📉 Drift Detection")
+                try:
+                    _drift_trades = load_trades()
+                    if _drift_trades is not None and not _drift_trades.empty and "pnl" in _drift_trades.columns:
+                        _drift_trades = _drift_trades.sort_values("entry_time").reset_index(drop=True) \
+                            if "entry_time" in _drift_trades.columns else _drift_trades.reset_index(drop=True)
+                        _drift_trades["win"] = (_drift_trades["pnl"] > 0).astype(int)
+                        _rolling_wr = _drift_trades["win"].rolling(30).mean() * 100
+                        _rolling_pnl = _drift_trades["pnl"].rolling(30).mean()
+                        _overall_wr = _drift_trades["win"].mean() * 100
+
+                        _fig_drift = make_subplots(
+                            rows=2, cols=1, shared_xaxes=True,
+                            vertical_spacing=0.08,
+                            subplot_titles=("Win rate mobile (30 trade)", "P&L medio mobile (30 trade)"),
+                        )
+
+                        # Row 1 — rolling win rate
+                        _trade_idx = np.arange(len(_drift_trades))
+                        _fig_drift.add_trace(
+                            go.Scatter(
+                                x=_trade_idx, y=_rolling_wr,
+                                mode="lines", name="Win rate %",
+                                line=dict(color=C_UP, width=2),
+                            ),
+                            row=1, col=1,
+                        )
+                        _fig_drift.add_hline(
+                            y=_overall_wr, line_dash="dash",
+                            line_color="white", opacity=0.5,
+                            annotation_text=f"Media {_overall_wr:.1f}%",
+                            row=1, col=1,
+                        )
+
+                        # Trend line on win rate (non-NaN values)
+                        _valid_mask = ~np.isnan(_rolling_wr.values)
+                        if _valid_mask.sum() >= 2:
+                            _xi = _trade_idx[_valid_mask]
+                            _yi = _rolling_wr.values[_valid_mask]
+                            _slope, _intercept = np.polyfit(_xi, _yi, 1)
+                            _trend_y = _slope * _trade_idx + _intercept
+                            _trend_color = C_DOWN if _slope < 0 else C_UP
+                            _fig_drift.add_trace(
+                                go.Scatter(
+                                    x=_trade_idx, y=_trend_y,
+                                    mode="lines", name="Trend",
+                                    line=dict(color=_trend_color, width=1.5, dash="dot"),
+                                ),
+                                row=1, col=1,
+                            )
+                        else:
+                            _slope = 0.0
+
+                        # Row 2 — rolling avg P&L
+                        _fig_drift.add_trace(
+                            go.Scatter(
+                                x=_trade_idx, y=_rolling_pnl,
+                                mode="lines", name="P&L medio",
+                                line=dict(color=C_UP, width=2),
+                            ),
+                            row=2, col=1,
+                        )
+                        _fig_drift.add_hline(
+                            y=0, line_dash="dash",
+                            line_color="white", opacity=0.4,
+                            row=2, col=1,
+                        )
+
+                        _fig_drift.update_layout(
+                            template="plotly_dark", height=400,
+                            margin=dict(l=0, r=0, t=50, b=0),
+                        )
+                        st.plotly_chart(_fig_drift, use_container_width=True)
+
+                        if _slope < -0.5:
+                            st.warning("⚠️ Win rate in declino — possibile deterioramento edge")
+                        elif _slope > 0:
+                            st.success("✅ Win rate stabile o in crescita")
+                except Exception as _drift_err:
+                    st.warning(f"Drift detection non disponibile: {_drift_err}")
+
         except Exception as _t7e:
             st.error(f"Errore analisi trade: {_t7e}")
+            import traceback
+            st.code(traceback.format_exc())
+
+
+with tab8:
+    import json as _t8json
+
+    st.header("⚙️ Parametri Strategia")
+    st.markdown(
+        "Modifica i parametri della strategia corrente e ricalcola backtest, "
+        "walk-forward e Monte Carlo per vedere come variano le performance."
+    )
+
+    _cfg_path = os.path.join(OUTPUT, "agent_strategy_config.json")
+
+    if not os.path.exists(_cfg_path):
+        st.info("Nessuna strategia configurata. Genera prima una strategia dalla tab **🤖 Agent Strategy**.")
+    else:
+        try:
+            with open(_cfg_path) as _f8:
+                _t8_cfg = _t8json.load(_f8)
+
+            # ── Strategy info ─────────────────────────────────────────────────
+            _t8_name = _t8_cfg.get("strategy_name", "Strategia corrente")
+            _t8_type = _t8_cfg.get("strategy_type", "—")
+            _t8_rationale = _t8_cfg.get("rationale", "")
+
+            st.subheader(f"📋 {_t8_name}")
+            _t8i1, _t8i2 = st.columns([1, 3])
+            _t8i1.markdown(f"**Tipo:** `{_t8_type}`")
+            _t8i1.markdown(f"**Asset:** `{_t8_cfg.get('asset', asset)}`")
+            _t8i1.markdown(f"**Fonte:** `{_t8_cfg.get('source', '—')}`")
+            if _t8_rationale:
+                _t8i2.info(_t8_rationale)
+
+            st.divider()
+
+            # ── Baseline metrics ──────────────────────────────────────────────
+            _t8_cmp_path = os.path.join(OUTPUT, "enhanced_strategy_comparison.csv")
+            _t8_baseline = None
+            if os.path.exists(_t8_cmp_path):
+                _t8_cmp = pd.read_csv(_t8_cmp_path)
+                _t8_vagent = _t8_cmp[_t8_cmp["version"] == "V_Agent"]
+                if not _t8_vagent.empty:
+                    _t8_baseline = _t8_vagent.iloc[0]
+
+            if _t8_baseline is not None:
+                st.subheader("📊 Performance corrente (baseline)")
+                _b1, _b2, _b3, _b4, _b5 = st.columns(5)
+                _b1.metric("CAGR %",         f"{_t8_baseline.get('cagr_pct', 0):.1f}%")
+                _b2.metric("Sharpe",          f"{_t8_baseline.get('sharpe_ratio', 0):.2f}")
+                _b3.metric("Max DD %",        f"{_t8_baseline.get('max_drawdown_pct', 0):.1f}%")
+                _b4.metric("Win rate %",      f"{_t8_baseline.get('win_rate_pct', 0):.1f}%")
+                _b5.metric("N trade",         int(_t8_baseline.get('n_trades', 0)))
+                st.divider()
+
+            # ── Parameter editor ──────────────────────────────────────────────
+            st.subheader("🔧 Modifica Parametri")
+
+            _t8c1, _t8c2 = st.columns(2)
+
+            with _t8c1:
+                st.markdown("**Stop-Loss & Take-Profit (× ATR)**")
+                _t8_sl = st.number_input(
+                    "SL moltiplicatore ATR",
+                    min_value=0.5, max_value=10.0,
+                    value=float(_t8_cfg.get("sl_mult", 2.5)),
+                    step=0.5,
+                    key="t8_sl_mult",
+                    help="Distanza dello stop-loss dall'entry in multipli dell'ATR",
+                )
+                _t8_tp = st.number_input(
+                    "TP moltiplicatore ATR",
+                    min_value=0.5, max_value=20.0,
+                    value=float(_t8_cfg.get("tp_mult", 7.0)),
+                    step=0.5,
+                    key="t8_tp_mult",
+                    help="Distanza del take-profit dall'entry in multipli dell'ATR",
+                )
+
+                _t8_rr = _t8_tp / _t8_sl if _t8_sl > 0 else 0
+                _orig_rr = _t8_cfg.get("tp_mult", 7.0) / max(_t8_cfg.get("sl_mult", 2.5), 0.01)
+                _rr_delta = f"{_t8_rr - _orig_rr:+.2f}" if abs(_t8_rr - _orig_rr) > 0.01 else None
+                st.metric("R:R ratio (TP/SL)", f"{_t8_rr:.2f}", delta=_rr_delta)
+
+                st.markdown("**Ore attive UTC**")
+                _t8_active = _t8_cfg.get("active_hours", [6, 17])
+                _t8c1a, _t8c1b = st.columns(2)
+                _t8_h_start = _t8c1a.number_input(
+                    "Ora inizio", min_value=0, max_value=23,
+                    value=int(_t8_active[0]) if len(_t8_active) > 0 else 6,
+                    step=1, key="t8_h_start",
+                    help="Prima ora UTC in cui i segnali sono attivi",
+                )
+                _t8_h_end = _t8c1b.number_input(
+                    "Ora fine", min_value=0, max_value=23,
+                    value=int(_t8_active[1]) if len(_t8_active) > 1 else 17,
+                    step=1, key="t8_h_end",
+                    help="Ultima ora UTC in cui i segnali sono attivi",
+                )
+                if _t8_h_end <= _t8_h_start:
+                    st.warning("⚠️ L'ora di fine deve essere maggiore dell'ora di inizio.")
+
+            with _t8c2:
+                st.markdown("**Gestione del rischio**")
+                _t8_risk = st.number_input(
+                    "Rischio per trade (%)",
+                    min_value=0.1, max_value=5.0,
+                    value=float(_t8_cfg.get("risk_per_trade", 0.01)) * 100,
+                    step=0.1, format="%.1f",
+                    key="t8_risk",
+                    help="Percentuale del capitale rischiata per ogni trade",
+                ) / 100
+
+                st.markdown("**Costi di transazione**")
+                _t8_comm = st.number_input(
+                    "Commissione (%)",
+                    min_value=0.0, max_value=1.0,
+                    value=float(_t8_cfg.get("commission", 0.0004)) * 100,
+                    step=0.01, format="%.3f",
+                    key="t8_commission",
+                    help="Commissione applicata per ogni trade (entry + exit)",
+                ) / 100
+                _t8_slip = st.number_input(
+                    "Slippage (%)",
+                    min_value=0.0, max_value=1.0,
+                    value=float(_t8_cfg.get("slippage", 0.0001)) * 100,
+                    step=0.005, format="%.4f",
+                    key="t8_slippage",
+                    help="Slippage stimato per ogni trade",
+                ) / 100
+
+                st.markdown("**Riepilogo modifiche**")
+                _t8_changes = []
+                if abs(_t8_sl - _t8_cfg.get("sl_mult", 2.5)) > 0.01:
+                    _t8_changes.append(f"SL: {_t8_cfg['sl_mult']} → **{_t8_sl}**")
+                if abs(_t8_tp - _t8_cfg.get("tp_mult", 7.0)) > 0.01:
+                    _t8_changes.append(f"TP: {_t8_cfg['tp_mult']} → **{_t8_tp}**")
+                if _t8_h_start != int(_t8_active[0] if len(_t8_active) > 0 else 6):
+                    _t8_changes.append(f"Ora inizio: {_t8_active[0]} → **{_t8_h_start}**")
+                if _t8_h_end != int(_t8_active[1] if len(_t8_active) > 1 else 17):
+                    _t8_changes.append(f"Ora fine: {_t8_active[1]} → **{_t8_h_end}**")
+                if abs(_t8_risk - _t8_cfg.get("risk_per_trade", 0.01)) > 0.0001:
+                    _t8_changes.append(f"Rischio: {_t8_cfg.get('risk_per_trade',0.01)*100:.1f}% → **{_t8_risk*100:.1f}%**")
+                if abs(_t8_comm - _t8_cfg.get("commission", 0.0004)) > 0.000001:
+                    _t8_changes.append(f"Comm: {_t8_cfg.get('commission',0.0004)*100:.3f}% → **{_t8_comm*100:.3f}%**")
+                if abs(_t8_slip - _t8_cfg.get("slippage", 0.0001)) > 0.000001:
+                    _t8_changes.append(f"Slip: {_t8_cfg.get('slippage',0.0001)*100:.4f}% → **{_t8_slip*100:.4f}%**")
+
+                if _t8_changes:
+                    for _ch in _t8_changes:
+                        st.markdown(f"- {_ch}")
+                else:
+                    st.caption("Nessuna modifica rispetto alla configurazione corrente.")
+
+            st.divider()
+
+            # ── Recalculate button ────────────────────────────────────────────
+            _t8_btn_disabled = (_t8_h_end <= _t8_h_start)
+            if st.button(
+                "▶ Ricalcola Analisi",
+                use_container_width=True,
+                type="primary",
+                disabled=_t8_btn_disabled,
+                key="t8_recalc",
+            ):
+                # Save updated config
+                _t8_new_cfg = dict(_t8_cfg)
+                _t8_new_cfg["sl_mult"]        = _t8_sl
+                _t8_new_cfg["tp_mult"]        = _t8_tp
+                _t8_new_cfg["active_hours"]   = [_t8_h_start, _t8_h_end]
+                _t8_new_cfg["risk_per_trade"] = _t8_risk
+                _t8_new_cfg["commission"]     = _t8_comm
+                _t8_new_cfg["slippage"]       = _t8_slip
+
+                with open(_cfg_path, "w") as _f8w:
+                    _t8json.dump(_t8_new_cfg, _f8w, indent=2)
+
+                with st.status(
+                    f"▶ Ricalcolo Analisi — {asset} | SL={_t8_sl} TP={_t8_tp} "
+                    f"ore={_t8_h_start}-{_t8_h_end}",
+                    expanded=True,
+                ) as _t8_status:
+                    try:
+                        st.write(f"📈 Backtest + Walk-Forward ({asset}, {_direction_filter})…")
+                        _run_script("04_backtest.py", extra_env=_env)
+                        st.cache_data.clear()
+                        st.write("✅ Backtest + WFO completati.")
+                        st.write("🎲 Monte Carlo (bootstrap + stress)…")
+                        _run_script("05_montecarlo.py", extra_env=_env)
+                        st.cache_data.clear()
+                        _t8_status.update(label="✅ Ricalcolo completato", state="complete", expanded=False)
+                        st.success(
+                            "Analisi aggiornata con i nuovi parametri. "
+                            "Consulta le tab 📈 Strategia V5, 🔄 Walk-Forward e 🎲 Monte Carlo per i risultati."
+                        )
+                    except subprocess.CalledProcessError as _t8e:
+                        _t8_status.update(label="❌ Ricalcolo fallito", state="error")
+                        st.error(f"Errore:\n```\n{_t8e.stderr.decode()[:400]}\n```")
+
+        except Exception as _t8ex:
+            st.error(f"Errore caricamento parametri: {_t8ex}")
             import traceback
             st.code(traceback.format_exc())
 

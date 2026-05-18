@@ -9,6 +9,9 @@ venv/
 # Secrets — never commit
 btc_analysis/output/api_keys.json
 
+# Claude Code session data
+.claude/
+
 # Output data (large files)
 btc_analysis/output/*.csv
 btc_analysis/output/*.png

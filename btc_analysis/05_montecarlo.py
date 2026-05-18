@@ -22,9 +22,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from strategy_core import OUTPUT_DIR, load_agent_config
 
-STRATEGY_ASSET  = os.environ.get("STRATEGY_ASSET", "BTC-USD")
-INITIAL_CAPITAL = 10_000
-N_SIMS          = 5_000   # simulazioni bootstrap (ridotto per velocità in pipeline)
+STRATEGY_ASSET   = os.environ.get("STRATEGY_ASSET", "BTC-USD")
+INITIAL_CAPITAL  = 10_000
+N_SIMS           = int(os.environ.get("MC_N_SIMS", "5000"))
+SIM_MULTIPLIER   = float(os.environ.get("MC_SIM_MULTIPLIER", "1.0"))
 np.random.seed(42)
 
 _ACFG = load_agent_config()
@@ -32,16 +33,20 @@ _ACFG = load_agent_config()
 
 # ── Bootstrap MC ──────────────────────────────────────────────────────────────
 
-def run_bootstrap(pnl: np.ndarray, n_sims: int = N_SIMS) -> dict:
-    K   = len(pnl)
-    idx = np.random.randint(0, K, size=(n_sims, K))
+def run_bootstrap(pnl: np.ndarray, n_sims: int = N_SIMS,
+                  sim_multiplier: float = SIM_MULTIPLIER) -> dict:
+    K          = len(pnl)
+    sim_length = max(1, int(K * sim_multiplier))
+    idx = np.random.randint(0, K, size=(n_sims, sim_length))
     sim = pnl[idx]
     eq  = INITIAL_CAPITAL + np.cumsum(sim, axis=1)
 
     final       = eq[:, -1]
-    cagr_arr    = ((final / INITIAL_CAPITAL) ** (1 / max((K / (24 * 365)), 0.1)) - 1) * 100
+    safe_final  = np.maximum(final, 0.01)
+    sim_years   = max(sim_length / (24 * 365), 1 / 365)   # minimum 1 day to avoid absurd exponent
+    cagr_arr    = ((safe_final / INITIAL_CAPITAL) ** (1 / sim_years) - 1) * 100
     max_dd_arr  = np.array([
-        ((e - np.maximum.accumulate(e)) / np.maximum.accumulate(e)).min() * 100
+        ((e - np.maximum.accumulate(e)) / np.maximum.accumulate(np.maximum(e, 0.01))).min() * 100
         for e in eq
     ])
     sharpe_arr  = np.array([
@@ -93,6 +98,9 @@ def run_stress(pnl: np.ndarray) -> list:
 
 def _save_chart(bs: dict, stress_rows: list, asset: str):
     eq_mat = bs["equity_matrix"]
+    if eq_mat.shape[1] < 2:
+        print("  Skipping fan chart: sim_length < 2")
+        return
     pcts   = [1, 5, 25, 50, 75, 95, 99]
     x      = np.arange(eq_mat.shape[1])
 
@@ -105,7 +113,8 @@ def _save_chart(bs: dict, stress_rows: list, asset: str):
     ax_fan.fill_between(x, p_vals[25], p_vals[75],  alpha=0.30, color="#3498DB", label="25-75%")
     ax_fan.plot(x, p_vals[50], color="#3498DB", linewidth=2, label="Mediana")
     ax_fan.axhline(INITIAL_CAPITAL, color="gray", linewidth=0.8, linestyle="--")
-    ax_fan.set_title(f"{asset} — Bootstrap MC ({N_SIMS:,} sim)", fontweight="bold")
+    _mult_label = f" · {SIM_MULTIPLIER}× periodi" if SIM_MULTIPLIER != 1.0 else ""
+    ax_fan.set_title(f"{asset} — Bootstrap MC ({N_SIMS:,} sim{_mult_label})", fontweight="bold")
     ax_fan.set_xlabel("Trade #")
     ax_fan.set_ylabel("Capitale (USD)")
     ax_fan.legend(fontsize=8)
@@ -142,12 +151,13 @@ if __name__ == "__main__":
         sys.exit(1)
 
     pnl = trades["pnl"].values
-    print(f"  Trade letti: {len(pnl)}")
+    sim_length = max(1, int(len(pnl) * SIM_MULTIPLIER))
+    print(f"  Trade letti: {len(pnl)}  |  Periodi/percorso: {sim_length} ({SIM_MULTIPLIER}×)")
     print(f"  PnL medio: ${pnl.mean():.2f}  |  Std: ${pnl.std():.2f}")
 
     # Bootstrap
-    print(f"\n  Bootstrap {N_SIMS:,} simulazioni...")
-    bs = run_bootstrap(pnl, N_SIMS)
+    print(f"\n  Bootstrap {N_SIMS:,} simulazioni ({sim_length} trade/percorso)...")
+    bs = run_bootstrap(pnl, N_SIMS, SIM_MULTIPLIER)
 
     # Percentili summary
     pcts = [1, 5, 25, 50, 75, 95, 99]
