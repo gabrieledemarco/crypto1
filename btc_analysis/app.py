@@ -107,10 +107,18 @@ def _run_script(name: str, extra_env: dict = None):
             env[_key] = _k[_key]
     if extra_env:
         env.update(extra_env)
-    subprocess.run(
-        [sys.executable, os.path.join(BASE, name)],
-        check=True, capture_output=True, env=env,
-    )
+    try:
+        subprocess.run(
+            [sys.executable, os.path.join(BASE, name)],
+            check=True, capture_output=True, env=env,
+        )
+    except subprocess.CalledProcessError as _cpe:
+        _stderr = _cpe.stderr.decode(errors="replace")[:800] if _cpe.stderr else ""
+        raise subprocess.CalledProcessError(
+            _cpe.returncode, _cpe.cmd,
+            output=_cpe.output,
+            stderr=(_stderr or "(nessun output stderr)").encode(),
+        ) from _cpe
 
 def ensure_data():
     os.makedirs(OUTPUT, exist_ok=True)
@@ -1040,31 +1048,52 @@ def download_fine_grain(sym: str, interval: str, max_days: int) -> str | bool:
 
 @st.cache_data
 def load_trades():
-    return pd.read_csv(f"{OUTPUT}/trades.csv", parse_dates=["entry_time","exit_time"])
+    try:
+        return pd.read_csv(f"{OUTPUT}/trades.csv", parse_dates=["entry_time","exit_time"])
+    except FileNotFoundError:
+        return pd.DataFrame()
 
 @st.cache_data
 def load_strategy_comparison():
-    return pd.read_csv(f"{OUTPUT}/enhanced_strategy_comparison.csv")
+    try:
+        return pd.read_csv(f"{OUTPUT}/enhanced_strategy_comparison.csv")
+    except FileNotFoundError:
+        return pd.DataFrame()
 
 @st.cache_data
 def load_wfo():
-    return pd.read_csv(f"{OUTPUT}/walk_forward_results.csv")
+    try:
+        return pd.read_csv(f"{OUTPUT}/walk_forward_results.csv")
+    except FileNotFoundError:
+        return pd.DataFrame()
 
 @st.cache_data
 def load_mc_bootstrap():
-    return pd.read_csv(f"{OUTPUT}/mc_bootstrap_results.csv")
+    try:
+        return pd.read_csv(f"{OUTPUT}/mc_bootstrap_results.csv")
+    except FileNotFoundError:
+        return pd.DataFrame()
 
 @st.cache_data
 def load_mc_stress():
-    return pd.read_csv(f"{OUTPUT}/mc_stress_results.csv")
+    try:
+        return pd.read_csv(f"{OUTPUT}/mc_stress_results.csv")
+    except FileNotFoundError:
+        return pd.DataFrame()
 
 @st.cache_data
 def load_multi_asset():
-    return pd.read_csv(f"{OUTPUT}/multi_asset_results.csv")
+    try:
+        return pd.read_csv(f"{OUTPUT}/multi_asset_results.csv")
+    except FileNotFoundError:
+        return pd.DataFrame()
 
 @st.cache_data
 def load_optimization():
-    return pd.read_csv(f"{OUTPUT}/optimization_results.csv")
+    try:
+        return pd.read_csv(f"{OUTPUT}/optimization_results.csv")
+    except FileNotFoundError:
+        return pd.DataFrame()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1110,7 +1139,9 @@ try:
     col2.metric("Sharpe",       f"{best['sharpe_ratio']:.2f}")
     col3.metric("Max Drawdown", f"{best['max_drawdown_pct']:.1f}%")
     col4.metric("Win Rate",     f"{best['win_rate_pct']:.1f}%")
-    col5.metric("Trade totali", f"{int(best['n_trades'])}  [{best['version']}]")
+    _nt = best['n_trades']
+    _nt_str = str(int(_nt)) if pd.notna(_nt) else "N/A"
+    col5.metric("Trade totali", f"{_nt_str}  [{best['version']}]")
 except Exception:
     pass
 
@@ -1475,7 +1506,7 @@ with tab2:
 
         # ── Metriche di rischio avanzate ──────────────────────────────────────
         st.subheader("📊 Metriche di rischio avanzate")
-        _mv = cmp.iloc[-1]
+        _mv = cmp.iloc[-1] if not cmp.empty else pd.Series(dtype=float)
 
         def _metric_kpi(col, label, key, fmt="{:.2f}", suffix=""):
             try:
@@ -2059,8 +2090,11 @@ with tab3:
         )
 
         wfe_mean = wfo["wfe"].mean()
-        st.info(f"**WFE medio**: {wfe_mean:.2f}  —  "
-                f"{'✅ modello robusto (WFE > 0.5)' if wfe_mean > 0.5 else '⚠️ rischio overfitting (WFE < 0.5)'}")
+        if pd.notna(wfe_mean):
+            st.info(f"**WFE medio**: {wfe_mean:.2f}  —  "
+                    f"{'✅ modello robusto (WFE > 0.5)' if wfe_mean > 0.5 else '⚠️ rischio overfitting (WFE < 0.5)'}")
+        else:
+            st.warning("**WFE medio**: N/A (dati IS/OOS insufficienti)")
 
         # ── Validazione statistica ────────────────────────────────────────────
         st.subheader("🧮 Validazione Statistica")
@@ -2529,6 +2563,7 @@ with tab6:
                         else:
                             with open(_code_path, "w", encoding="utf-8") as _wf:
                                 _wf.write(_edited_code)
+                            st.cache_data.clear()
                             st.success("✅ Codice salvato in `agent_strategy_code.py`.")
                             if _ce_run:
                                 with st.spinner("▶ Rieseguo backtest con il codice modificato…"):
@@ -2638,7 +2673,7 @@ with tab7:
     )
 
     _trades_csv = os.path.join(OUTPUT, "trades.csv")
-    _wfo_csv    = os.path.join(OUTPUT, "wfo_IS8m_OOS2m.csv")
+    _wfo_csv    = os.path.join(OUTPUT, "walk_forward_results.csv")
 
     if not os.path.exists(_trades_csv):
         st.info(
@@ -2650,7 +2685,7 @@ with tab7:
             import trade_analysis as _ta7; _t7il.reload(_ta7)
 
             _t7_trades = _ta7.load_trades(asset)
-            _t7_wfo    = _ta7.load_wfo("IS8m_OOS2m")
+            _t7_wfo    = load_wfo()
 
             if _t7_trades.empty:
                 st.warning("Il file trades.csv è vuoto.")

@@ -255,8 +255,8 @@ def streak_stats(df: pd.DataFrame) -> dict:
     return {
         "max_win_streak":  max_win_streak,
         "max_loss_streak": max_loss_streak,
-        "n_win_streaks":   int((df["win"] & ~df["win"].shift(1).fillna(False)).sum()),
-        "n_loss_streaks":  int((~df["win"] & df["win"].shift(1).fillna(True)).sum()),
+        "n_win_streaks":   int((df["win"].astype(bool) & ~df["win"].shift(1).fillna(False).astype(bool)).sum()),
+        "n_loss_streaks":  int((~df["win"].astype(bool) & df["win"].shift(1).fillna(True).astype(bool)).sum()),
     }
 
 

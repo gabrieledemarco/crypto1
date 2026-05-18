@@ -426,6 +426,33 @@ def backtest_v2(df: pd.DataFrame,
 
         equity.append(capital)
 
+    # Forced exit on last bar if still in trade
+    if in_trade:
+        exit_price = prices[-1]
+        gross_pnl  = direction * qty * (exit_price - entry_price)
+        exit_cost  = exit_price * qty * (commission + slippage)
+        pnl        = gross_pnl - exit_cost
+        capital   += pnl
+        if direction == 1:
+            mae_r = (entry_price - mae_extreme) / sl_d_entry if sl_d_entry > 0 else 0
+            mfe_r = (mfe_extreme - entry_price) / sl_d_entry if sl_d_entry > 0 else 0
+        else:
+            mae_r = (mae_extreme - entry_price) / sl_d_entry if sl_d_entry > 0 else 0
+            mfe_r = (entry_price - mfe_extreme) / sl_d_entry if sl_d_entry > 0 else 0
+        trade_rec = {
+            "entry_time": entry_time, "exit_time": times[-1],
+            "direction": "LONG" if direction == 1 else "SHORT",
+            "entry_price": entry_price, "exit_price": exit_price,
+            "qty": qty, "gross_pnl": gross_pnl,
+            "costs": entry_cost + exit_cost, "pnl": pnl,
+            "pnl_pct": pnl / (entry_price * qty) * 100 if qty > 0 else 0,
+            "exit_reason": "EOD", "mae_r": round(mae_r, 4), "mfe_r": round(mfe_r, 4),
+        }
+        if use_kelly:
+            trade_rec["kelly_sizing_active"] = _current_kelly_active
+        trades.append(trade_rec)
+        equity[-1] = capital  # update last equity point
+
     equity_s = pd.Series(equity[1:], index=df.index)
     return {
         "trades": pd.DataFrame(trades) if trades else pd.DataFrame(),
@@ -455,8 +482,12 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
          if len(losses) > 0 and losses["pnl"].sum() != 0 \
          else (999.0 if len(wins) > 0 else 0.0)
 
-    days = max((equity.index[-1] - equity.index[0]).days, 1)
-    cagr = ((result["final_capital"] / initial_capital) ** (365 / days) - 1) * 100
+    try:
+        days = max((pd.Timestamp(equity.index[-1]) - pd.Timestamp(equity.index[0])).days, 1)
+    except Exception:
+        days = max(len(equity) // 24, 1)
+    _safe_capital = max(result["final_capital"], 0.01)
+    cagr = ((_safe_capital / initial_capital) ** (365 / days) - 1) * 100
 
     ret_s = equity.pct_change().dropna()
     sharpe = ret_s.mean() / ret_s.std() * np.sqrt(24 * 365) \

@@ -101,19 +101,26 @@ def run_versions(df_ind: pd.DataFrame) -> dict:
 
 # ── Walk-Forward Optimization ─────────────────────────────────────────────────
 
-def _wfo_window_sizes(n_total: int) -> tuple[int, int, str]:
-    """Compute IS and OOS bar counts from env vars. Returns (is_len, oos_len, label)."""
+def _wfo_window_sizes(n_total: int) -> tuple[int, int, str, str]:
+    """Compute IS and OOS bar counts from env vars. Returns (is_len, oos_len, label, actual_mode)."""
     if WFO_MODE == "bars" and WFO_IS_BARS > 0 and WFO_OOS_BARS > 0:
-        is_len  = WFO_IS_BARS
-        oos_len = WFO_OOS_BARS
-        label   = f"IS={WFO_IS_BARS}bar OOS={WFO_OOS_BARS}bar"
+        is_len      = WFO_IS_BARS
+        oos_len     = WFO_OOS_BARS
+        label       = f"IS={WFO_IS_BARS}bar OOS={WFO_OOS_BARS}bar"
+        actual_mode = "bars"
     else:
+        if WFO_MODE == "bars":
+            print("  [WFO] Avviso: WFO_MODE=bars ma IS/OOS bars non impostati — fallback a pct")
         is_pct  = max(5.0,  min(WFO_IS_PCT,  90.0))
         oos_pct = max(1.0,  min(WFO_OOS_PCT, 50.0))
-        is_len  = max(10, int(n_total * is_pct  / 100.0))
-        oos_len = max(5,  int(n_total * oos_pct / 100.0))
-        label   = f"IS={is_pct:.0f}% OOS={oos_pct:.0f}%"
-    return is_len, oos_len, label
+        if is_pct + oos_pct > 100.0:
+            oos_pct = max(1.0, 100.0 - is_pct)
+            print(f"  [WFO] Avviso: IS%+OOS% > 100 — OOS ridotto a {oos_pct:.0f}%")
+        is_len      = max(10, int(n_total * is_pct  / 100.0))
+        oos_len     = max(5,  int(n_total * oos_pct / 100.0))
+        label       = f"IS={is_pct:.0f}% OOS={oos_pct:.0f}%"
+        actual_mode = "pct"
+    return is_len, oos_len, label, actual_mode
 
 
 def run_wfo(df_ind: pd.DataFrame) -> pd.DataFrame:
@@ -122,7 +129,7 @@ def run_wfo(df_ind: pd.DataFrame) -> pd.DataFrame:
     slip     = _ACFG.get("slippage",   SLIPPAGE)
 
     n = len(df_ind)
-    is_len, oos_len, label = _wfo_window_sizes(n)
+    is_len, oos_len, label, _actual_mode = _wfo_window_sizes(n)
     print(f"  WFO: {label}  — IS={is_len}bar OOS={oos_len}bar su {n} periodi totali")
 
     if is_len + oos_len > n:
@@ -206,6 +213,11 @@ def run_optimization(df_ind: pd.DataFrame) -> pd.DataFrame:
         return df_opt
     df_opt = df_opt.sort_values("sharpe_ratio", ascending=False)
 
+    if df_opt["n_trades"].max() == 0:
+        print("  [Grid Search] Avviso: nessuna combinazione SL/TP ha generato trade. "
+              "Verificare segnali e parametri ATR.")
+        return df_opt
+
     # ── OOS re-validation of the best parameter combo ─────────────────────────
     wfo_path = os.path.join(OUTPUT_DIR, "walk_forward_results.csv")
     if os.path.exists(wfo_path):
@@ -215,7 +227,7 @@ def run_optimization(df_ind: pd.DataFrame) -> pd.DataFrame:
                 last_fold = wfo_df.iloc[-1]
                 # Reconstruct OOS date range from the WFO metadata
                 n_total = len(df_ind)
-                is_len, oos_len, _ = _wfo_window_sizes(n_total)
+                is_len, oos_len, _, _am = _wfo_window_sizes(n_total)
                 # Last fold start index
                 last_fold_idx = int(last_fold.get("fold", len(wfo_df) - 1))
                 oos_start = last_fold_idx * oos_len + is_len
@@ -362,12 +374,12 @@ if __name__ == "__main__":
         wfe     = oos_avg / is_avg if is_avg > 0 else (float("inf") if oos_avg > 0 else 0.0)
         print(f"  IS Sharpe medio: {is_avg:.3f}  |  OOS Sharpe medio: {oos_avg:.3f}  |  WFE: {wfe:.3f}")
         _n_total = len(df_ind)
-        _is_len, _oos_len, _label = _wfo_window_sizes(_n_total)
+        _is_len, _oos_len, _label, _actual_mode_json = _wfo_window_sizes(_n_total)
         with open(os.path.join(OUTPUT_DIR, "wfo_meta.json"), "w") as _wf:
             json.dump({
-                "mode":     WFO_MODE,
-                "is_pct":   WFO_IS_PCT  if WFO_MODE == "pct"  else round(_is_len  / _n_total * 100, 1),
-                "oos_pct":  WFO_OOS_PCT if WFO_MODE == "pct"  else round(_oos_len / _n_total * 100, 1),
+                "mode":     _actual_mode_json,
+                "is_pct":   round(_is_len  / _n_total * 100, 1),
+                "oos_pct":  round(_oos_len / _n_total * 100, 1),
                 "is_bars":  _is_len,
                 "oos_bars": _oos_len,
                 "n_total":  _n_total,
