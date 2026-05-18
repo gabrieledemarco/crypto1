@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef } from "react";
-import { createChart, IChartApi, LineStyle } from "lightweight-charts";
+import { createChart, IChartApi, ISeriesApi, LineStyle } from "lightweight-charts";
 import styles from "./DrawdownChart.module.css";
 
 interface EquityPoint {
@@ -25,6 +25,7 @@ export function DrawdownChart({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -72,6 +73,7 @@ export function DrawdownChart({
         chart.applyOptions({ width: containerRef.current.clientWidth });
     });
     ro.observe(containerRef.current);
+    seriesRef.current = area;
     chartRef.current = chart;
     return () => {
       ro.disconnect();
@@ -81,14 +83,14 @@ export function DrawdownChart({
 
   // Sync crosshair position from shared hover
   useEffect(() => {
-    if (!chartRef.current || sharedHoverIndex == null) return;
+    if (!chartRef.current || !seriesRef.current || sharedHoverIndex == null) return;
     try {
       chartRef.current.setCrosshairPosition(
         0,
         {
           time: (sharedHoverIndex + 1000000) as unknown as import("lightweight-charts").Time,
         } as unknown as Parameters<typeof chartRef.current.setCrosshairPosition>[1],
-        chartRef.current.getSeries()[0]
+        seriesRef.current
       );
     } catch {
       // silent — API varies by lw-charts version
