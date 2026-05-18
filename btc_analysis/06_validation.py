@@ -130,15 +130,16 @@ def permutation_test(trades_df, n_permutations=1000, block_size=10):
     def _sharpe_from_pnl(arr):
         equity = np.cumsum(arr)
         ret = np.diff(equity)
-        if len(ret) == 0 or ret.std() == 0:
+        if len(ret) == 0 or ret.std() == 0 or np.all(np.isnan(ret)):
             return 0.0
-        return float(ret.mean() / ret.std() * np.sqrt(24 * 365))
+        return float(np.nanmean(ret) / np.nanstd(ret) * np.sqrt(24 * 365))
 
     observed_sharpe = _sharpe_from_pnl(pnl)
 
     # Block bootstrap: split pnl into contiguous blocks, then shuffle block order.
     # Any leftover trades that don't fill a complete block form a final partial block.
-    bs = max(1, int(block_size))
+    # Cap block size to at most half the data so permutation has meaningful variety
+    bs = max(1, min(int(block_size), max(1, n // 2)))
     blocks = [pnl[i:i + bs] for i in range(0, n, bs)]
     n_blocks = len(blocks)
 

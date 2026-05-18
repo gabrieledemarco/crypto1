@@ -1080,8 +1080,12 @@ def _strategy_asset() -> str:
         return "BTC-USD"
 
 def equity_curve(trades: pd.DataFrame, capital: float = 10_000) -> pd.Series:
+    trades = trades.sort_values("exit_time").reset_index(drop=True)
     eq = capital + trades["pnl"].cumsum()
-    eq.index = trades["exit_time"]
+    eq.index = pd.to_datetime(trades["exit_time"])
+    # Resolve duplicate timestamps by adding microsecond offsets
+    if eq.index.duplicated().any():
+        eq.index = eq.index + pd.to_timedelta(range(len(eq)), unit="us")
     return eq
 
 def drawdown_series(eq: pd.Series) -> pd.Series:
@@ -1474,10 +1478,14 @@ with tab2:
         _mv = cmp.iloc[-1]
 
         def _metric_kpi(col, label, key, fmt="{:.2f}", suffix=""):
-            val = _mv.get(key, None)
-            if val is not None and not pd.isna(float(val) if val is not None else float("nan")):
-                col.metric(label, f"{fmt.format(float(val))}{suffix}")
-            else:
+            try:
+                val = _mv.get(key, None)
+                fval = float(val)
+                if np.isfinite(fval):
+                    col.metric(label, f"{fmt.format(fval)}{suffix}")
+                else:
+                    col.metric(label, "—")
+            except (TypeError, ValueError):
                 col.metric(label, "—")
 
         _r1, _r2, _r3, _r4 = st.columns(4)

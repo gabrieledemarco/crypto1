@@ -133,6 +133,9 @@ def run_wfo(df_ind: pd.DataFrame) -> pd.DataFrame:
     fold = 0
     i    = 0
     rows = []
+    _remainder = (n - is_len) % oos_len if oos_len > 0 else 0
+    if _remainder > 0:
+        print(f"  [WFO] Nota: {_remainder} barre finali non coprono un fold OOS completo — verranno scartate")
     while i + is_len + oos_len <= n:
         is_data  = df_ind.iloc[i : i + is_len]
         oos_data = df_ind.iloc[i + is_len : i + is_len + oos_len]
@@ -356,7 +359,7 @@ if __name__ == "__main__":
         print(f"  Saved: walk_forward_results.csv  ({len(wfo)} folds)")
         oos_avg = wfo["oos_sharpe"].mean()
         is_avg  = wfo["is_sharpe"].mean()
-        wfe     = oos_avg / is_avg if is_avg != 0 else 0
+        wfe     = oos_avg / is_avg if is_avg > 0 else (float("inf") if oos_avg > 0 else 0.0)
         print(f"  IS Sharpe medio: {is_avg:.3f}  |  OOS Sharpe medio: {oos_avg:.3f}  |  WFE: {wfe:.3f}")
         _n_total = len(df_ind)
         _is_len, _oos_len, _label = _wfo_window_sizes(_n_total)
