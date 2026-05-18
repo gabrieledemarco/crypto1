@@ -67,14 +67,14 @@ export function DashboardScreen() {
             equity={equity}
             oosStart={run.oosStart}
             height={220}
-            color="var(--amber)"
+            color="#ffb53b"
             showBench
             onHoverIndex={setHoverIndex}
           />
           <DrawdownChart
             equity={equity}
             height={64}
-            color="var(--coral)"
+            color="#ff7a55"
             sharedHoverIndex={hoverIndex}
           />
         </div>
