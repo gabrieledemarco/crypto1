@@ -88,7 +88,7 @@ export function EquityScreen() {
             equity={equity}
             oosStart={run?.oosStart}
             height={300}
-            color="var(--amber)"
+            color="#ffb53b"
             showBench={showBench}
             logScale={logScale}
             onHoverIndex={setHoverIndex}
@@ -96,7 +96,7 @@ export function EquityScreen() {
           <DrawdownChart
             equity={equity}
             height={100}
-            color="var(--coral)"
+            color="#ff7a55"
             sharedHoverIndex={hoverIndex}
           />
         </div>
