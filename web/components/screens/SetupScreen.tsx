@@ -1,0 +1,225 @@
+"use client";
+import { useState, useCallback } from "react";
+import { useStore } from "@/store";
+import { fixtures } from "@/lib/fixtures";
+import { useSSE } from "@/hooks/useSSE";
+import { usePreview } from "@/hooks/usePreview";
+import { EquityChart } from "@/components/charts/EquityChart";
+import styles from "./SetupScreen.module.css";
+
+interface Params {
+  ticker: string;
+  timeframe: string;
+  sl_mult: number;
+  tp_mult: number;
+  active_hours: [number, number];
+  risk_per_trade: number;
+  commission: number;
+  slippage: number;
+  direction: string;
+  run_wfo: boolean;
+  run_sweep: boolean;
+  run_mc: boolean;
+}
+
+export function SetupScreen() {
+  const { activeRunId, runs, setToast } = useStore();
+  const run = runs.find((r) => r.id === activeRunId) ?? fixtures.runs[0];
+  const p = run?.params;
+
+  const [params, setParams] = useState<Params>({
+    ticker:       p?.universe?.[0] ? `${p.universe[0]}-USD` : "BTC-USD",
+    timeframe:    p?.timeframe ?? "1h",
+    sl_mult:      p?.atrStop ?? 2.0,
+    tp_mult:      p?.takeProfit ?? 5.0,
+    active_hours: [6, 22],
+    risk_per_trade: p?.riskPerTrade ?? 1.0,
+    commission:   0.0004,
+    slippage:     0.0001,
+    direction:    "ALL",
+    run_wfo:      true,
+    run_sweep:    true,
+    run_mc:       true,
+  });
+
+  const [runId, setRunId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ phase: string; pct: number } | null>(null);
+  const [running, setRunning] = useState(false);
+
+  const update = useCallback(<K extends keyof Params>(k: K, v: Params[K]) => {
+    setParams((prev) => ({ ...prev, [k]: v }));
+  }, []);
+
+  // Live preview (debounced 80ms)
+  const { result: preview, loading: previewLoading } = usePreview(params as unknown as Record<string, unknown>);
+
+  // SSE progress
+  useSSE(runId ? `/api/runs/${runId}/stream` : null, (data) => {
+    const ev = data as { phase: string; pct: number; msg?: string };
+    setProgress(ev);
+    if (ev.phase === "done") { setRunning(false); setToast("Run complete"); }
+    if (ev.phase === "error") { setRunning(false); setToast(`Error: ${ev.msg}`); }
+  });
+
+  const handleRun = async () => {
+    setRunning(true);
+    setProgress({ phase: "start", pct: 0 });
+    try {
+      const res = await fetch("/api/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ params }),
+      });
+      const data = await res.json();
+      setRunId(data.id);
+    } catch {
+      setRunning(false);
+      setToast("API not available — using fixture data");
+    }
+  };
+
+  // Simple preview equity from params (local seed, no API)
+  const previewEquity = fixtures.runs[0].equity.slice(0, 120);
+
+  const UNIVERSE_TICKERS = ["BTC", "ETH", "SOL", "ARB", "OP", "MATIC", "AVAX"];
+  const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"];
+  const DIRECTIONS = ["ALL", "LONG", "SHORT"];
+
+  return (
+    <div className={styles.grid}>
+      {/* Form — cols 1-5 */}
+      <div className={styles.panel} style={{ gridColumn: "span 5" }}>
+        <div className={styles.panelHeader}>
+          <span className={styles.panelTitle}>STRATEGY · {params.ticker}</span>
+          <span className={styles.panelSub}>⌘↵ run</span>
+        </div>
+        <div className={styles.panelBody}>
+          <div className={styles.form}>
+            <SliderRow label="SL MULT ×"       min={0.5} max={5}   step={0.1} value={params.sl_mult}      onChange={(v) => update("sl_mult", v)} />
+            <SliderRow label="TP MULT ×"       min={1}   max={10}  step={0.1} value={params.tp_mult}      onChange={(v) => update("tp_mult", v)} />
+            <SliderRow label="RISK / TRADE %"  min={0.1} max={3}   step={0.1} value={params.risk_per_trade} onChange={(v) => update("risk_per_trade", v)} />
+            <SliderRow label="HOUR START"      min={0}   max={22}  step={1}   value={params.active_hours[0]} onChange={(v) => update("active_hours", [v, params.active_hours[1]])} />
+            <SliderRow label="HOUR END"        min={1}   max={23}  step={1}   value={params.active_hours[1]} onChange={(v) => update("active_hours", [params.active_hours[0], v])} />
+
+            <div className={styles.formRow}>
+              <span className={styles.rowLabel}>TICKER</span>
+              <div className={styles.pills}>
+                {UNIVERSE_TICKERS.map((s) => {
+                  const t = `${s}-USD`;
+                  return (
+                    <button key={s} className={`${styles.pill} ${params.ticker === t ? styles.active : ""}`}
+                      onClick={() => update("ticker", t)}>{s}</button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className={styles.formRow}>
+              <span className={styles.rowLabel}>TIMEFRAME</span>
+              <div className={styles.pills}>
+                {TIMEFRAMES.map((tf) => (
+                  <button key={tf} className={`${styles.pill} ${params.timeframe === tf ? styles.active : ""}`}
+                    onClick={() => update("timeframe", tf)}>{tf}</button>
+                ))}
+              </div>
+            </div>
+
+            <div className={styles.formRow}>
+              <span className={styles.rowLabel}>DIRECTION</span>
+              <div className={styles.pills}>
+                {DIRECTIONS.map((d) => (
+                  <button key={d} className={`${styles.pill} ${params.direction === d ? styles.active : ""}`}
+                    onClick={() => update("direction", d)}>{d}</button>
+                ))}
+              </div>
+            </div>
+
+            <div className={styles.formRow}>
+              <span className={styles.rowLabel}>OPTIONS</span>
+              <div className={styles.pills}>
+                {(["WFO", "SWEEP", "MC"] as const).map((opt) => {
+                  const key = `run_${opt.toLowerCase()}` as "run_wfo" | "run_sweep" | "run_mc";
+                  return (
+                    <button key={opt} className={`${styles.pill} ${params[key] ? styles.active : ""}`}
+                      onClick={() => update(key, !params[key])}>{opt}</button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className={styles.formRow} style={{ marginTop: 4 }}>
+              <span className={styles.rowLabel}>FEES · SLIP</span>
+              <span className={styles.mono}>{(params.commission * 10000).toFixed(0)}bps · {(params.slippage * 10000).toFixed(0)}bps</span>
+            </div>
+
+            <div className={styles.actionRow}>
+              <button className={`${styles.btnPrimary} ${running ? styles.running : ""}`}
+                onClick={handleRun} disabled={running}>
+                {running ? "▶ RUNNING…" : "▶ RUN"}
+              </button>
+              <button className={styles.btn}>SAVE</button>
+              <button className={styles.btn} onClick={() => setParams({ ...params })}>RESET</button>
+            </div>
+
+            {/* SSE progress bar */}
+            {progress && (
+              <div className={styles.progressWrap}>
+                <div className={styles.progressBar} style={{ width: `${progress.pct}%` }} />
+                <span className={styles.progressLabel}>{progress.phase} · {progress.pct}%</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Live Preview — cols 6-12 */}
+      <div className={styles.panel} style={{ gridColumn: "span 7" }}>
+        <div className={styles.panelHeader}>
+          <span className={styles.panelTitle}>LIVE PREVIEW</span>
+          <span className={styles.panelSub}>{params.ticker} · {params.timeframe} · 500 bars</span>
+          {previewLoading && <span className={styles.loading}>loading…</span>}
+        </div>
+        <div className={styles.panelBody}>
+          <EquityChart
+            equity={previewEquity}
+            oosStart={null}
+            height={240}
+            color="var(--cyan)"
+            showBench={false}
+          />
+          <div className={styles.previewMetrics}>
+            <PreviewMetric label="EST SHARPE"   value={preview?.sharpe?.toFixed(2)    ?? "—"} />
+            <PreviewMetric label="EST CAGR"     value={preview?.cagr != null ? `${preview.cagr.toFixed(1)}%` : "—"} />
+            <PreviewMetric label="MAX DD"       value={preview?.max_dd != null ? `${preview.max_dd.toFixed(1)}%` : "—"} color="var(--coral)" />
+            <PreviewMetric label="TRADES"       value={String(preview?.trades ?? "—")} />
+            <PreviewMetric label="WIN%"         value={preview?.win_rate != null ? `${preview.win_rate.toFixed(1)}%` : "—"} />
+          </div>
+          <div className={styles.hint}>preview ricampionato ogni 80ms al cambio parametro</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SliderRow({ label, min, max, step, value, onChange }: {
+  label: string; min: number; max: number; step: number; value: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div className={styles.sliderRow}>
+      <span className={styles.rowLabel}>{label}</span>
+      <input type="range" min={min} max={max} step={step} value={value}
+        onChange={(e) => onChange(+e.target.value)} className={styles.range} />
+      <span className={styles.sliderVal}>{Number.isInteger(value) ? value : value.toFixed(1)}</span>
+    </div>
+  );
+}
+
+function PreviewMetric({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div className={styles.previewMetric}>
+      <div className={styles.previewMetricLabel}>{label}</div>
+      <div className={styles.previewMetricVal} style={{ color: color ?? "var(--amber)" }}>{value}</div>
+    </div>
+  );
+}

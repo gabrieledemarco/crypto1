@@ -1,0 +1,248 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border-l);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panelFull {
+  flex: 1;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  min-height: 28px;
+  flex-shrink: 0;
+}
+
+.panelTitle {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.panelSub {
+  font-size: 10px;
+  color: var(--faint);
+}
+
+/* Filter bar */
+.filterBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.searchInput {
+  background: var(--panel-3);
+  border: 1px solid var(--border-l);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 8px;
+  outline: none;
+  width: 200px;
+}
+
+.searchInput:focus {
+  border-color: var(--amber);
+}
+
+.searchInput::placeholder {
+  color: var(--faint);
+}
+
+.statusPills {
+  display: flex;
+  gap: 4px;
+}
+
+.pill {
+  background: transparent;
+  border: 1px solid var(--border-l);
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 8px;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+}
+
+.pill:hover {
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.pillActive {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.filterCount {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+
+/* Table */
+.tableWrap {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.thead {
+  display: grid;
+  grid-template-columns: 24px 1fr 140px 72px 62px 62px 62px 48px 56px 1fr 72px;
+  gap: 4px;
+  padding: 3px 8px;
+  background: var(--panel-3);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.th {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 0.04em;
+}
+
+.trow {
+  display: grid;
+  grid-template-columns: 24px 1fr 140px 72px 62px 62px 62px 48px 56px 1fr 72px;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+  cursor: pointer;
+}
+
+.trow:hover {
+  background: var(--panel-2);
+}
+
+.trowStarred {
+  border-left: 2px solid var(--amber);
+}
+
+/* Star button */
+.starBtn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+  line-height: 1;
+  color: var(--faint);
+}
+
+.starBtn:hover {
+  color: var(--amber);
+}
+
+.starBtnOn {
+  color: var(--amber);
+}
+
+/* Name / strategy */
+.name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.strategy {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Status badge */
+.badge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 1px 5px;
+  border: 1px solid;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  width: fit-content;
+}
+
+.badgeLive {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.badgeResearch {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.badgeArchived {
+  border-color: var(--faint);
+  color: var(--faint);
+}
+
+/* Metric cells */
+.metricCell {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: right;
+}
+
+/* Tags */
+.tags {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Load button */
+.loadBtn {
+  background: transparent;
+  border: 1px solid var(--border-l);
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.loadBtn:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}

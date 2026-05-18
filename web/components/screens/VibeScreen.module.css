@@ -1,0 +1,222 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 6px;
+  align-content: start;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border-l);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  min-height: 28px;
+  flex-shrink: 0;
+}
+
+.panelTitle {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.panelSub {
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.panelBody {
+  padding: 10px;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Form panel */
+.label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.assetPills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pill {
+  background: transparent;
+  border: 1px solid var(--border-l);
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.pill:hover {
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.pillActive {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.promptWrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.promptTextarea {
+  flex: 1;
+  min-height: 120px;
+  background: var(--panel-3);
+  border: 1px solid var(--border-l);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 8px;
+  resize: none;
+  outline: none;
+}
+
+.promptTextarea:focus {
+  border-color: var(--amber);
+}
+
+.promptTextarea::placeholder {
+  color: var(--faint);
+}
+
+.generateBtn {
+  background: var(--amber);
+  border: none;
+  color: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 0;
+  cursor: pointer;
+  letter-spacing: 0.06em;
+  width: 100%;
+}
+
+.generateBtn:hover {
+  opacity: 0.9;
+}
+
+.generateBtn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.hint {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--faint);
+  text-align: center;
+  letter-spacing: 0.03em;
+}
+
+/* Output panel */
+.streamBox {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--panel-3);
+  border: 1px solid var(--border-l);
+  padding: 8px;
+  height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex-shrink: 0;
+}
+
+.cursor {
+  display: inline-block;
+  width: 7px;
+  height: 12px;
+  background: var(--amber);
+  animation: blink 0.8s step-end infinite;
+  vertical-align: text-bottom;
+  margin-left: 1px;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+.emptyHint {
+  color: var(--faint);
+  font-style: italic;
+}
+
+/* Config display */
+.configTable {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.configRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.configKey {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 0.04em;
+}
+
+.configVal {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--amber);
+}
+
+.applyBtn {
+  background: transparent;
+  border: 1px solid var(--cyan);
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 16px;
+  cursor: pointer;
+  letter-spacing: 0.06em;
+  align-self: flex-end;
+}
+
+.applyBtn:hover {
+  background: var(--cyan);
+  color: var(--bg);
+}

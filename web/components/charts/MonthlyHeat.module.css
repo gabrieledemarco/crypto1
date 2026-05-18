@@ -1,0 +1,37 @@
+.root {
+  position: relative;
+}
+
+.grid {
+  display: grid;
+  gap: 2px;
+}
+
+.cell {
+  position: relative;
+  cursor: default;
+  border: 1px solid var(--border);
+  transition: border-color 0.1s;
+}
+
+.cell:hover {
+  border-color: var(--border-l);
+}
+
+.tooltip {
+  position: absolute;
+  top: -44px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel-2);
+  border: 1px solid var(--border-l);
+  padding: 4px 6px;
+  font-size: 10px;
+  white-space: nowrap;
+  z-index: 10;
+  pointer-events: none;
+  font-family: var(--font-mono);
+  color: var(--text);
+  line-height: 1.4;
+  text-align: center;
+}

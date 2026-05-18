@@ -17,3 +17,4 @@ btc_analysis/output/*.csv
 btc_analysis/output/*.png
 btc_analysis/output/*.log
 btc_analysis/output/REPORT.txt
+web/tsconfig.tsbuildinfo

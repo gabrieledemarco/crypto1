@@ -1,0 +1,21 @@
+@import "../lib/tokens.css";
+
+/* App layout */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.main {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+  min-width: 0;
+}

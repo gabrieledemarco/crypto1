@@ -1,0 +1,285 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 6px;
+  align-content: start;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border-l);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  min-height: 28px;
+  flex-shrink: 0;
+}
+
+.panelTitle {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.panelSub {
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.panelBody {
+  padding: 8px;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Asset list */
+
+.assetList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.assetRow {
+  padding: 6px 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: var(--panel-2);
+}
+
+.assetRow:hover {
+  border-color: var(--border-l);
+}
+
+.assetRowActive {
+  border-color: var(--amber) !important;
+  background: var(--panel-3);
+}
+
+.assetRowTop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.tickerChip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid;
+  padding: 1px 5px;
+  letter-spacing: 0.04em;
+}
+
+.kindBadge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--faint);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.assetRowStats {
+  display: flex;
+  gap: 10px;
+}
+
+.statItem {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--faint);
+  letter-spacing: 0.03em;
+}
+
+.statVal {
+  font-weight: 700;
+  font-size: 10px;
+}
+
+/* Fetch section */
+
+.fetchSection {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.fetchForm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fetchInput {
+  background: var(--panel-2);
+  border: 1px solid var(--border-l);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 4px 8px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.fetchInput:focus {
+  border-color: var(--amber);
+}
+
+.fetchInput::placeholder {
+  color: var(--faint);
+}
+
+.periodPills {
+  display: flex;
+  gap: 4px;
+}
+
+.pill {
+  background: transparent;
+  border: 1px solid var(--border-l);
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.pill:hover {
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.pillActive {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.fetchActions {
+  display: flex;
+  gap: 6px;
+}
+
+.btnFetch {
+  background: transparent;
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 10px;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+}
+
+.btnFetch:hover {
+  background: var(--amber);
+  color: var(--bg);
+}
+
+.btnFetch:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.btnCancel {
+  background: transparent;
+  border: 1px solid var(--border-l);
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.btnCancel:hover {
+  border-color: var(--coral);
+  color: var(--coral);
+}
+
+.fetchMsg {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--amber);
+}
+
+/* Chart */
+
+.chartWrap {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chartWrap svg {
+  width: 100%;
+  height: 100%;
+}
+
+.chartFooter {
+  display: flex;
+  gap: 16px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.chartLabel {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--faint);
+  letter-spacing: 0.04em;
+}
+
+.chartVal {
+  font-size: 10px;
+  color: var(--text);
+  font-weight: 700;
+}
+
+/* Stats grid */
+
+.statsGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.statRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.statLabel {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 0.04em;
+}
+
+.statValue {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
