@@ -72,6 +72,23 @@ _A_SLIP    = _ACFG["slippage"]
 _A_RISK    = _ACFG.get("risk_per_trade", RISK)
 
 
+def _apply_cfg_overrides(df: pd.DataFrame) -> pd.DataFrame:
+    """Override SL_dist / TP_dist / active_hours in a V_Agent dataframe with
+    the values from agent_strategy_config.json (BEST_SL, BEST_TP, BEST_HOURS).
+
+    The generated strategy function hard-codes these distances; this override
+    makes the parametric panel and any config edits actually take effect.
+    """
+    df = df.copy()
+    df["SL_dist"] = df["ATR14"] * BEST_SL
+    df["TP_dist"] = df["ATR14"] * BEST_TP
+    # Apply active_hours filter: zero out signals outside the config window
+    hour = pd.to_datetime(df.index).hour
+    time_ok = (hour >= BEST_HOURS[0]) & (hour <= BEST_HOURS[1])
+    df.loc[~time_ok, "signal"] = 0
+    return df
+
+
 # ── Version backtests ─────────────────────────────────────────────────────────
 
 def run_versions(df_ind: pd.DataFrame) -> dict:
@@ -94,7 +111,7 @@ def run_versions(df_ind: pd.DataFrame) -> dict:
     print("  V_Agent (strategia AI)...")
     try:
         agent_fn = load_agent_strategy()
-        df_a     = _apply_direction_filter(agent_fn(df_ind))
+        df_a     = _apply_cfg_overrides(_apply_direction_filter(agent_fn(df_ind)))
         res_a    = backtest_v2(df_a, INITIAL_CAPITAL, _A_RISK,
                                 commission=_A_COMM, slippage=_A_SLIP,
                                 leverage=LEVERAGE, sizing_mode=SIZING_MODE,
@@ -154,13 +171,13 @@ def run_wfo(df_ind: pd.DataFrame) -> pd.DataFrame:
         is_data  = df_ind.iloc[i : i + is_len]
         oos_data = df_ind.iloc[i + is_len : i + is_len + oos_len]
 
-        df_is  = _apply_direction_filter(agent_fn(is_data))
+        df_is  = _apply_cfg_overrides(_apply_direction_filter(agent_fn(is_data)))
         res_is = backtest_v2(df_is, INITIAL_CAPITAL, RISK, comm, slip,
                              leverage=LEVERAGE, sizing_mode=SIZING_MODE,
                              fixed_amount_usd=FIXED_AMOUNT_USD)
         m_is   = compute_metrics(res_is, INITIAL_CAPITAL)
 
-        df_os  = _apply_direction_filter(agent_fn(oos_data))
+        df_os  = _apply_cfg_overrides(_apply_direction_filter(agent_fn(oos_data)))
         res_os = backtest_v2(df_os, INITIAL_CAPITAL, RISK, comm, slip,
                              leverage=LEVERAGE, sizing_mode=SIZING_MODE,
                              fixed_amount_usd=FIXED_AMOUNT_USD)
