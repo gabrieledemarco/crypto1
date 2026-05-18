@@ -2902,6 +2902,90 @@ with tab7:
                     )
                     st.plotly_chart(_fig_eq, use_container_width=True)
 
+                st.divider()
+
+                # ── Drift Detection ───────────────────────────────────────────
+                st.subheader("📉 Drift Detection")
+                try:
+                    _drift_trades = load_trades()
+                    if _drift_trades is not None and not _drift_trades.empty and "pnl" in _drift_trades.columns:
+                        _drift_trades = _drift_trades.sort_values("entry_time").reset_index(drop=True) \
+                            if "entry_time" in _drift_trades.columns else _drift_trades.reset_index(drop=True)
+                        _drift_trades["win"] = (_drift_trades["pnl"] > 0).astype(int)
+                        _rolling_wr = _drift_trades["win"].rolling(30).mean() * 100
+                        _rolling_pnl = _drift_trades["pnl"].rolling(30).mean()
+                        _overall_wr = _drift_trades["win"].mean() * 100
+
+                        _fig_drift = make_subplots(
+                            rows=2, cols=1, shared_xaxes=True,
+                            vertical_spacing=0.08,
+                            subplot_titles=("Win rate mobile (30 trade)", "P&L medio mobile (30 trade)"),
+                        )
+
+                        # Row 1 — rolling win rate
+                        _trade_idx = np.arange(len(_drift_trades))
+                        _fig_drift.add_trace(
+                            go.Scatter(
+                                x=_trade_idx, y=_rolling_wr,
+                                mode="lines", name="Win rate %",
+                                line=dict(color=C_UP, width=2),
+                            ),
+                            row=1, col=1,
+                        )
+                        _fig_drift.add_hline(
+                            y=_overall_wr, line_dash="dash",
+                            line_color="white", opacity=0.5,
+                            annotation_text=f"Media {_overall_wr:.1f}%",
+                            row=1, col=1,
+                        )
+
+                        # Trend line on win rate (non-NaN values)
+                        _valid_mask = ~np.isnan(_rolling_wr.values)
+                        if _valid_mask.sum() >= 2:
+                            _xi = _trade_idx[_valid_mask]
+                            _yi = _rolling_wr.values[_valid_mask]
+                            _slope, _intercept = np.polyfit(_xi, _yi, 1)
+                            _trend_y = _slope * _trade_idx + _intercept
+                            _trend_color = C_DOWN if _slope < 0 else C_UP
+                            _fig_drift.add_trace(
+                                go.Scatter(
+                                    x=_trade_idx, y=_trend_y,
+                                    mode="lines", name="Trend",
+                                    line=dict(color=_trend_color, width=1.5, dash="dot"),
+                                ),
+                                row=1, col=1,
+                            )
+                        else:
+                            _slope = 0.0
+
+                        # Row 2 — rolling avg P&L
+                        _fig_drift.add_trace(
+                            go.Scatter(
+                                x=_trade_idx, y=_rolling_pnl,
+                                mode="lines", name="P&L medio",
+                                line=dict(color=C_UP, width=2),
+                            ),
+                            row=2, col=1,
+                        )
+                        _fig_drift.add_hline(
+                            y=0, line_dash="dash",
+                            line_color="white", opacity=0.4,
+                            row=2, col=1,
+                        )
+
+                        _fig_drift.update_layout(
+                            template="plotly_dark", height=400,
+                            margin=dict(l=0, r=0, t=50, b=0),
+                        )
+                        st.plotly_chart(_fig_drift, use_container_width=True)
+
+                        if _slope < -0.5:
+                            st.warning("⚠️ Win rate in declino — possibile deterioramento edge")
+                        elif _slope > 0:
+                            st.success("✅ Win rate stabile o in crescita")
+                except Exception as _drift_err:
+                    st.warning(f"Drift detection non disponibile: {_drift_err}")
+
         except Exception as _t7e:
             st.error(f"Errore analisi trade: {_t7e}")
             import traceback
