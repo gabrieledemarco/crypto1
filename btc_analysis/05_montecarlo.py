@@ -42,10 +42,11 @@ def run_bootstrap(pnl: np.ndarray, n_sims: int = N_SIMS,
     eq  = INITIAL_CAPITAL + np.cumsum(sim, axis=1)
 
     final       = eq[:, -1]
+    safe_final  = np.maximum(final, 0.01)
     sim_years   = max(sim_length / (24 * 365), 1 / 365)   # minimum 1 day to avoid absurd exponent
-    cagr_arr    = ((final / INITIAL_CAPITAL) ** (1 / sim_years) - 1) * 100
+    cagr_arr    = ((safe_final / INITIAL_CAPITAL) ** (1 / sim_years) - 1) * 100
     max_dd_arr  = np.array([
-        ((e - np.maximum.accumulate(e)) / np.maximum.accumulate(e)).min() * 100
+        ((e - np.maximum.accumulate(e)) / np.maximum.accumulate(np.maximum(e, 0.01))).min() * 100
         for e in eq
     ])
     sharpe_arr  = np.array([
@@ -97,6 +98,9 @@ def run_stress(pnl: np.ndarray) -> list:
 
 def _save_chart(bs: dict, stress_rows: list, asset: str):
     eq_mat = bs["equity_matrix"]
+    if eq_mat.shape[1] < 2:
+        print("  Skipping fan chart: sim_length < 2")
+        return
     pcts   = [1, 5, 25, 50, 75, 95, 99]
     x      = np.arange(eq_mat.shape[1])
 

@@ -244,19 +244,22 @@ def _adaptive_slippage(qty: float, ep: float, avg_vol_usd: float,
 def backtest_v2(df: pd.DataFrame,
                 initial_capital: float = 10_000,
                 risk_per_trade: float = 0.01,
-                commission: float = 0.0004,   # 0.04% Binance taker fee
-                slippage: float = 0.0001,     # floor slippage (adaptive may exceed)
+                commission: float = 0.0004,        # 0.04% Binance taker fee
+                slippage: float = 0.0001,          # floor slippage (adaptive may exceed)
                 use_adaptive_slippage: bool = True,
-                liquidity_pct: float = 0.10,  # max fraction of avg hourly volume per trade
-                use_kelly: bool = False,       # enable Kelly + drawdown-adjusted sizing
+                liquidity_pct: float = 0.10,       # max fraction of avg hourly volume per trade
+                use_kelly: bool = False,            # enable Kelly + drawdown-adjusted sizing
+                leverage: float = 1.0,             # leva finanziaria (1 = no leva, max 20)
+                sizing_mode: str = "pct_risk",     # "pct_risk" | "pct_capital" | "fixed_usd"
+                fixed_amount_usd: float = 1_000.0, # notionale fisso (solo sizing_mode="fixed_usd")
                 ) -> dict:
     """
     Backtest event-driven 1h con:
       - Stop Loss e Take Profit basati su ATR
       - Commissioni + slippage adattativo (volume × volatilità × time-of-day)
       - Liquidity constraint: qty ≤ avg_vol_usd_24h × liquidity_pct / price
-      - Position sizing: risk_per_trade % capitale / SL_dist
-      - Leverage cap: max 3× il capitale per trade
+      - Tre modalità di sizing: pct_risk (ATR-based), pct_capital (notionale %), fixed_usd
+      - Leva finanziaria: moltiplica la size base (cap a 20×)
       - Riduzione size in regime HIGH (size_mult)
       - Opzionale: Kelly fraction + drawdown-based size reduction (use_kelly=True)
     """
@@ -283,7 +286,7 @@ def backtest_v2(df: pd.DataFrame,
     avg_vol_arr  = df["avg_vol_usd_24h"].values if "avg_vol_usd_24h" in df.columns else np.full(len(df), np.nan)
     hours_arr    = np.array([t.hour for t in times])
 
-    max_leverage = 3.0
+    effective_leverage = max(1.0, min(leverage, 20.0))  # hard cap at 20×
 
     # Kelly sizing state
     _KELLY_WINDOW = 20
@@ -346,6 +349,8 @@ def backtest_v2(df: pd.DataFrame,
                     "entry_price": entry_price,
                     "exit_price": exit_price,
                     "qty": qty,
+                    "leverage": effective_leverage,
+                    "sizing_mode": sizing_mode,
                     "gross_pnl": gross_pnl,
                     "costs": entry_cost + exit_cost,
                     "pnl": pnl,
@@ -393,12 +398,22 @@ def backtest_v2(df: pd.DataFrame,
                 else:
                     _current_kelly_active = False
 
-                risk_amount = capital * effective_risk * sm
-                qty = risk_amount / sl_d
-                # Cap 1: leverage ceiling (3× capital)
-                max_qty = (capital * max_leverage) / ep
+                # ── Position sizing (3 modalità) ──────────────────────────
+                if sizing_mode == "pct_capital":
+                    # Invest effective_risk% of capital as notional (ignores SL for sizing)
+                    base_qty = (capital * effective_risk * sm) / ep if ep > 0 else 0
+                elif sizing_mode == "fixed_usd":
+                    # Fixed notional in USD (Kelly/drawdown ignored for base qty)
+                    base_qty = (fixed_amount_usd * sm) / ep if ep > 0 else 0
+                else:  # "pct_risk" — default: risk effective_risk% per trade via ATR SL
+                    risk_amount = capital * effective_risk * sm
+                    base_qty = risk_amount / sl_d if sl_d > 0 else 0
+
+                # Apply leverage, then hard-cap at leverage × capital notional
+                qty = base_qty * effective_leverage
+                max_qty = (capital * effective_leverage) / ep if ep > 0 else 0
                 qty = min(qty, max_qty)
-                # Cap 2: liquidity constraint (max liquidity_pct of avg hourly volume)
+                # Cap: liquidity constraint (max liquidity_pct of avg hourly volume)
                 avg_vol = float(avg_vol_arr[i])
                 if not np.isnan(avg_vol) and avg_vol > 0:
                     max_qty_liq = avg_vol * liquidity_pct / ep
@@ -426,11 +441,41 @@ def backtest_v2(df: pd.DataFrame,
 
         equity.append(capital)
 
+    # Forced exit on last bar if still in trade
+    if in_trade:
+        exit_price = prices[-1]
+        gross_pnl  = direction * qty * (exit_price - entry_price)
+        exit_cost  = exit_price * qty * (commission + slippage)
+        pnl        = gross_pnl - exit_cost
+        capital   += pnl
+        if direction == 1:
+            mae_r = (entry_price - mae_extreme) / sl_d_entry if sl_d_entry > 0 else 0
+            mfe_r = (mfe_extreme - entry_price) / sl_d_entry if sl_d_entry > 0 else 0
+        else:
+            mae_r = (mae_extreme - entry_price) / sl_d_entry if sl_d_entry > 0 else 0
+            mfe_r = (entry_price - mfe_extreme) / sl_d_entry if sl_d_entry > 0 else 0
+        trade_rec = {
+            "entry_time": entry_time, "exit_time": times[-1],
+            "direction": "LONG" if direction == 1 else "SHORT",
+            "entry_price": entry_price, "exit_price": exit_price,
+            "qty": qty, "gross_pnl": gross_pnl,
+            "costs": entry_cost + exit_cost, "pnl": pnl,
+            "pnl_pct": pnl / (entry_price * qty) * 100 if qty > 0 else 0,
+            "exit_reason": "EOD", "mae_r": round(mae_r, 4), "mfe_r": round(mfe_r, 4),
+        }
+        if use_kelly:
+            trade_rec["kelly_sizing_active"] = _current_kelly_active
+        trades.append(trade_rec)
+        equity[-1] = capital  # update last equity point
+
     equity_s = pd.Series(equity[1:], index=df.index)
     return {
-        "trades": pd.DataFrame(trades) if trades else pd.DataFrame(),
-        "equity": equity_s,
-        "final_capital": capital,
+        "trades":          pd.DataFrame(trades) if trades else pd.DataFrame(),
+        "equity":          equity_s,
+        "final_capital":   capital,
+        "leverage":        effective_leverage,
+        "sizing_mode":     sizing_mode,
+        "fixed_amount_usd": fixed_amount_usd,
     }
 
 
@@ -455,8 +500,12 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
          if len(losses) > 0 and losses["pnl"].sum() != 0 \
          else (999.0 if len(wins) > 0 else 0.0)
 
-    days = max((equity.index[-1] - equity.index[0]).days, 1)
-    cagr = ((result["final_capital"] / initial_capital) ** (365 / days) - 1) * 100
+    try:
+        days = max((pd.Timestamp(equity.index[-1]) - pd.Timestamp(equity.index[0])).days, 1)
+    except Exception:
+        days = max(len(equity) // 24, 1)
+    _safe_capital = max(result["final_capital"], 0.01)
+    cagr = ((_safe_capital / initial_capital) ** (365 / days) - 1) * 100
 
     ret_s = equity.pct_change().dropna()
     sharpe = ret_s.mean() / ret_s.std() * np.sqrt(24 * 365) \
