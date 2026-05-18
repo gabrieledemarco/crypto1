@@ -42,7 +42,8 @@ def run_bootstrap(pnl: np.ndarray, n_sims: int = N_SIMS,
     eq  = INITIAL_CAPITAL + np.cumsum(sim, axis=1)
 
     final       = eq[:, -1]
-    cagr_arr    = ((final / INITIAL_CAPITAL) ** (1 / max((sim_length / (24 * 365)), 0.1)) - 1) * 100
+    sim_years   = max(sim_length / (24 * 365), 1 / 365)   # minimum 1 day to avoid absurd exponent
+    cagr_arr    = ((final / INITIAL_CAPITAL) ** (1 / sim_years) - 1) * 100
     max_dd_arr  = np.array([
         ((e - np.maximum.accumulate(e)) / np.maximum.accumulate(e)).min() * 100
         for e in eq

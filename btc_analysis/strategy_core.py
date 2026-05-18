@@ -113,11 +113,12 @@ def compute_indicators_v2(df: pd.DataFrame,
     df["TR"] = df[["HL", "HC", "LC"]].max(axis=1)
     df["ATR14"] = df["TR"].ewm(span=14, adjust=False).mean()
 
-    # RSI
+    # RSI — guard against both gain and loss being zero (flat price segments)
     delta = df["Close"].diff()
     gain = delta.clip(lower=0).ewm(span=14, adjust=False).mean()
     loss = (-delta.clip(upper=0)).ewm(span=14, adjust=False).mean()
-    df["RSI14"] = 100 - 100 / (1 + gain / loss.replace(0, np.nan))
+    rs = gain / loss.replace(0, np.nan)
+    df["RSI14"] = np.where((gain == 0) & (loss == 0), 50.0, 100 - 100 / (1 + rs))
 
     # EMA
     df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
@@ -155,8 +156,10 @@ def compute_indicators_v2(df: pd.DataFrame,
             else:
                 raise ValueError(f"GARCH length mismatch: {len(h_all)} vs {len(df)}")
             df["garch_h"] = h_padded
-        except Exception:
-            df["garch_h"] = df["ret"].rolling(24).var().fillna(df["ret"].var())
+        except Exception as _garch_exc:
+            warnings.warn(f"GARCH fit failed ({_garch_exc}); using rolling variance fallback")
+            _h_fb = df["ret"].rolling(24).var().bfill().fillna(df["ret"].var())
+            df["garch_h"] = _h_fb.values  # .values avoids index mismatch
 
         regime = compute_garch_regime(df["garch_h"].values)
         df["garch_regime"] = regime
@@ -223,9 +226,14 @@ def _adaptive_slippage(qty: float, ep: float, avg_vol_usd: float,
       - volatility: sqrt(GARCH h_t) — volatilità alta → impatto maggiore
       - time-of-day: ore notturne (0-5 UTC) → liquidità ridotta, +50% slippage
     """
+    if qty <= 0 or ep <= 0:
+        return base
+    if not np.isfinite(avg_vol_usd) or avg_vol_usd <= 0:
+        return base
+    h_t = float(h_t) if np.isfinite(h_t) and h_t >= 0 else 0.0
     qty_usd = qty * ep
-    vol_impact = min(0.002, qty_usd / max(avg_vol_usd, 1.0) * 0.5)
-    sigma = float(h_t) ** 0.5 if h_t > 0 else 0.0
+    vol_impact = min(0.002, qty_usd / avg_vol_usd * 0.5)
+    sigma = h_t ** 0.5
     vol_mult = 1.0 + min(2.0, sigma * 100)
     time_mult = 1.5 if hour < 6 else 1.0
     return base + vol_impact * vol_mult * time_mult
@@ -444,7 +452,8 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
     avg_win = wins["pnl"].mean() if len(wins) > 0 else 0
     avg_loss = losses["pnl"].mean() if len(losses) > 0 else 0
     pf = wins["pnl"].sum() / abs(losses["pnl"].sum()) \
-         if len(losses) > 0 and losses["pnl"].sum() != 0 else np.inf
+         if len(losses) > 0 and losses["pnl"].sum() != 0 \
+         else (999.0 if len(wins) > 0 else 0.0)
 
     days = max((equity.index[-1] - equity.index[0]).days, 1)
     cagr = ((result["final_capital"] / initial_capital) ** (365 / days) - 1) * 100
@@ -461,7 +470,7 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
     roll_max = equity.cummax()
     dd = (equity - roll_max) / roll_max * 100
     max_dd = dd.min()
-    calmar = cagr / abs(max_dd) if max_dd != 0 else np.inf
+    calmar = cagr / abs(max_dd) if max_dd != 0 else (999.0 if cagr > 0 else 0.0)
 
     # Ulcer Index — root-mean-square of drawdown depth (captures duration too)
     ulcer_index = float(np.sqrt((dd ** 2).mean()))
