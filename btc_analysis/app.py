@@ -488,12 +488,55 @@ with st.sidebar:
         format_func=lambda v: f"{int(v * 100)}% dei trade" if v < 1.0 else ("= backtest" if v == 1.0 else f"{v:.0f}× trade"),
     )
 
+    # ── Sizing & Leva ─────────────────────────────────────────────────────────
+    st.markdown("**⚡ Sizing & Leva**")
+    _sizing_mode = st.selectbox(
+        "Modalità sizing",
+        options=["pct_risk", "pct_capital", "fixed_usd"],
+        format_func=lambda x: {
+            "pct_risk":    "% Capitale ÷ Distanza SL (ATR)",
+            "pct_capital": "% Capitale come notionale",
+            "fixed_usd":   "Importo fisso (USD)",
+        }[x],
+        key="sizing_mode",
+        help=(
+            "**% Capitale ÷ SL**: rischia X% del capitale per trade (sizing ATR-based, default).\n\n"
+            "**% Capitale notionale**: investe X% del capitale come controvalore — ignora SL per il sizing.\n\n"
+            "**Importo fisso USD**: investe sempre lo stesso importo in USD per trade."
+        ),
+    )
+    _leverage = st.slider(
+        "Leva finanziaria",
+        min_value=1.0, max_value=20.0, value=1.0, step=0.5,
+        key="leverage",
+        format="%g×",
+        help="Moltiplica la size base. 1× = nessuna leva. Attenzione: la leva amplifica sia i guadagni sia le perdite.",
+    )
+    if _leverage > 5.0:
+        st.warning(f"⚠️ Leva {_leverage:.0f}× — rischio liquidazione elevato.")
+    if _sizing_mode == "fixed_usd":
+        _fixed_amt = st.number_input(
+            "Importo fisso (USD)", min_value=10.0, max_value=float(1_000_000),
+            value=1_000.0, step=100.0, key="fixed_amount_usd",
+            help="Notionale investito per ogni trade (prima di applicare la leva).",
+        )
+    else:
+        _fixed_amt = 1_000.0
+    _lev_caption = (
+        f"Sizing: **{_sizing_mode}** · Leva: **{_leverage:.1f}×**"
+        + (f" · Importo: **${_fixed_amt:,.0f}**" if _sizing_mode == "fixed_usd" else "")
+    )
+    st.caption(_lev_caption)
+
     _env = {
         "STRATEGY_ASSET":    asset,
         "HOURLY_DAYS":       str(_tf_actual),
         "DIRECTION_FILTER":  _direction_filter,
         "MC_N_SIMS":         str(_mc_n_sims),
         "MC_SIM_MULTIPLIER": str(_mc_sim_mult),
+        "LEVERAGE":          str(_leverage),
+        "SIZING_MODE":       _sizing_mode,
+        "FIXED_AMOUNT_USD":  str(_fixed_amt),
         **_wfo_env,
     }
 
@@ -1066,6 +1109,156 @@ def load_multi_asset():
 def load_optimization():
     return pd.read_csv(f"{OUTPUT}/optimization_results.csv")
 
+@st.cache_data
+def load_price_data(ticker: str) -> pd.DataFrame:
+    """Load hourly OHLCV from CSV for the trade overlay chart."""
+    try:
+        from strategy_core import ticker_to_fname as _t2f
+        _csv = os.path.join(OUTPUT, f"{_t2f(ticker)}_hourly.csv")
+        _df  = pd.read_csv(_csv, parse_dates=["Datetime"], index_col="Datetime")
+        _df.index = pd.to_datetime(_df.index, utc=True).tz_localize(None)
+        return _df
+    except Exception:
+        return pd.DataFrame()
+
+
+def _plot_trades_on_price(
+    trades_df: pd.DataFrame,
+    price_df: pd.DataFrame,
+    chart_start=None,
+) -> "go.Figure":
+    """Plotly figure: candlestick / line price + LONG/SHORT entry & exit markers."""
+    import plotly.graph_objects as _go
+
+    # ── Price trace ──────────────────────────────────────────────────────────
+    price_plot = (
+        price_df[price_df.index >= pd.Timestamp(chart_start)]
+        if chart_start is not None and not price_df.empty else price_df
+    )
+
+    fig = _go.Figure()
+
+    _ohlcv_cols = {"Open", "High", "Low", "Close"}
+    if _ohlcv_cols.issubset(price_plot.columns) and not price_plot.empty:
+        fig.add_trace(_go.Candlestick(
+            x=price_plot.index,
+            open=price_plot["Open"],
+            high=price_plot["High"],
+            low=price_plot["Low"],
+            close=price_plot["Close"],
+            name="Prezzo",
+            increasing_line_color="#2ECC71",
+            decreasing_line_color="#E74C3C",
+            increasing_fillcolor="#2ECC71",
+            decreasing_fillcolor="#E74C3C",
+        ))
+    elif "Close" in price_plot.columns and not price_plot.empty:
+        fig.add_trace(_go.Scatter(
+            x=price_plot.index, y=price_plot["Close"],
+            mode="lines", name="Close",
+            line=dict(color="#3498DB", width=1),
+        ))
+
+    if trades_df.empty:
+        fig.update_layout(
+            height=550, template="plotly_dark",
+            title="Prezzo & Trade (nessun trade disponibile)",
+            xaxis_rangeslider_visible=False,
+        )
+        return fig
+
+    # ── Filter trades to timeframe ───────────────────────────────────────────
+    _td = trades_df.copy()
+    _td["entry_time"] = pd.to_datetime(_td["entry_time"])
+    _td["exit_time"]  = pd.to_datetime(_td["exit_time"])
+    if chart_start is not None:
+        _td = _td[_td["entry_time"] >= pd.Timestamp(chart_start)]
+
+    longs  = _td[_td["direction"] == "LONG"]
+    shorts = _td[_td["direction"] == "SHORT"]
+    wins   = _td[_td["pnl"] > 0]
+    losses = _td[_td["pnl"] <= 0]
+
+    # ── Entry markers ────────────────────────────────────────────────────────
+    if not longs.empty:
+        fig.add_trace(_go.Scatter(
+            x=longs["entry_time"], y=longs["entry_price"],
+            mode="markers",
+            marker=dict(symbol="triangle-up", color="#00E676", size=11,
+                        line=dict(width=1, color="white")),
+            name="Long Entry",
+            hovertemplate="<b>LONG Entry</b><br>%{x|%Y-%m-%d %H:%M}<br>%{y:,.2f} USD<extra></extra>",
+        ))
+    if not shorts.empty:
+        fig.add_trace(_go.Scatter(
+            x=shorts["entry_time"], y=shorts["entry_price"],
+            mode="markers",
+            marker=dict(symbol="triangle-down", color="#FF5252", size=11,
+                        line=dict(width=1, color="white")),
+            name="Short Entry",
+            hovertemplate="<b>SHORT Entry</b><br>%{x|%Y-%m-%d %H:%M}<br>%{y:,.2f} USD<extra></extra>",
+        ))
+
+    # ── Exit markers (circle: green = profit, orange = loss) ─────────────────
+    if not wins.empty:
+        fig.add_trace(_go.Scatter(
+            x=wins["exit_time"], y=wins["exit_price"],
+            mode="markers",
+            marker=dict(symbol="circle", color="#00E676", size=7,
+                        line=dict(width=1, color="white")),
+            name="Exit (Profit)",
+            hovertemplate=(
+                "<b>Exit ✅</b><br>%{x|%Y-%m-%d %H:%M}<br>%{y:,.2f} USD<extra></extra>"
+            ),
+        ))
+    if not losses.empty:
+        fig.add_trace(_go.Scatter(
+            x=losses["exit_time"], y=losses["exit_price"],
+            mode="markers",
+            marker=dict(symbol="circle", color="#FF7043", size=7,
+                        line=dict(width=1, color="white")),
+            name="Exit (Loss)",
+            hovertemplate=(
+                "<b>Exit ❌</b><br>%{x|%Y-%m-%d %H:%M}<br>%{y:,.2f} USD<extra></extra>"
+            ),
+        ))
+
+    # ── Entry→Exit lines (all in a single trace via None separators) ──────────
+    _lx, _ly = [], []
+    for _, _row in _td.iterrows():
+        _lx.extend([_row["entry_time"], _row["exit_time"], None])
+        _ly.extend([_row["entry_price"], _row["exit_price"], None])
+    if _lx:
+        fig.add_trace(_go.Scatter(
+            x=_lx, y=_ly,
+            mode="lines",
+            line=dict(color="rgba(255,255,255,0.18)", width=0.9, dash="dot"),
+            name="Durata trade",
+            hoverinfo="skip",
+        ))
+
+    # ── Layout ───────────────────────────────────────────────────────────────
+    _n_long  = len(longs)
+    _n_short = len(shorts)
+    fig.update_layout(
+        height=580,
+        template="plotly_dark",
+        title=(
+            f"Prezzo + Trade eseguiti  "
+            f"({len(_td)} trade · {_n_long}L / {_n_short}S)"
+        ),
+        xaxis_title="",
+        yaxis_title="Prezzo (USD)",
+        xaxis_rangeslider_visible=False,
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.01,
+            xanchor="right", x=1, font=dict(size=11),
+        ),
+        margin=dict(l=0, r=0, t=60, b=0),
+    )
+    fig.update_yaxes(tickprefix="$", tickformat=",.0f")
+    return fig
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1472,6 +1665,39 @@ with tab2:
                                   title=f"Win / Loss ratio{_t2_note}",
                                   margin=dict(l=0, r=0, t=40, b=0))
             st.plotly_chart(fig_pie, use_container_width=True)
+
+        # ── Grafico Prezzo + Trade ─────────────────────────────────────────────
+        st.subheader("🕯️ Prezzo & Trade eseguiti")
+        try:
+            _price_df = load_price_data(_strat_asset)
+            _fig_pt   = _plot_trades_on_price(trades, _price_df, chart_start)
+            st.plotly_chart(_fig_pt, use_container_width=True)
+
+            # Show sizing/leverage info from last backtest
+            _meta_path = os.path.join(OUTPUT, "strategy_meta.json")
+            if os.path.exists(_meta_path):
+                try:
+                    import json as _jpt
+                    _meta_pt = _jpt.load(open(_meta_path))
+                    _lev_pt  = _meta_pt.get("leverage", 1.0)
+                    _sz_pt   = _meta_pt.get("sizing_mode", "pct_risk")
+                    _sz_labels = {
+                        "pct_risk":    "% Capitale ÷ SL",
+                        "pct_capital": "% Capitale notionale",
+                        "fixed_usd":   "Importo fisso USD",
+                    }
+                    _cols_pt = st.columns(3)
+                    _cols_pt[0].metric("Modalità sizing", _sz_labels.get(_sz_pt, _sz_pt))
+                    _cols_pt[1].metric("Leva finanziaria", f"{_lev_pt:.1f}×")
+                    if _sz_pt == "fixed_usd":
+                        _fa_pt = _meta_pt.get("fixed_amount_usd", 1000.0)
+                        _cols_pt[2].metric("Importo fisso", f"${_fa_pt:,.0f}")
+                    else:
+                        _cols_pt[2].metric("Trade nel grafico", str(len(trades)))
+                except Exception:
+                    pass
+        except Exception as _pt_exc:
+            st.warning(f"Grafico trade non disponibile: {_pt_exc}")
 
         # ── Metriche di rischio avanzate ──────────────────────────────────────
         st.subheader("📊 Metriche di rischio avanzate")
