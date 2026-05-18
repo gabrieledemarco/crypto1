@@ -1611,6 +1611,53 @@ with tab2:
             )
             st.plotly_chart(fig_3d, use_container_width=True)
 
+        # ── Best params OOS validation ────────────────────────────────────────
+        try:
+            if "oos_sharpe" in optim.columns:
+                _oos_row = optim[optim["oos_sharpe"].notna()]
+                if not _oos_row.empty:
+                    st.subheader("🔎 Best params OOS validation")
+                    _oos_r = _oos_row.iloc[0]
+                    _oos_c1, _oos_c2, _oos_c3 = st.columns(3)
+                    _oos_c1.metric("IS Sharpe",  f"{float(_oos_r['sharpe_ratio']):.2f}")
+                    _oos_c2.metric("OOS Sharpe", f"{float(_oos_r['oos_sharpe']):.2f}")
+                    _deg = float(_oos_r["is_oos_degradation_pct"])
+                    _oos_c3.metric("Degradation %", f"{_deg:.1f}%",
+                                   delta=f"{-_deg:.1f}%" if _deg > 0 else f"{abs(_deg):.1f}%",
+                                   delta_color="inverse")
+                    _oos_disp = _oos_row[
+                        ["sl_mult", "tp_mult", "active_hours",
+                         "sharpe_ratio", "oos_sharpe", "is_oos_degradation_pct"]
+                    ].copy()
+                    _oos_disp.columns = [
+                        "SL mult", "TP mult", "Ore attive",
+                        "IS Sharpe", "OOS Sharpe", "Degradation %"
+                    ]
+                    st.dataframe(
+                        _oos_disp.style.format({
+                            "IS Sharpe": "{:.2f}", "OOS Sharpe": "{:.2f}",
+                            "Degradation %": "{:.1f}",
+                        }),
+                        use_container_width=True,
+                    )
+        except Exception:
+            pass
+
+        # ── Kelly sizing summary ──────────────────────────────────────────────
+        try:
+            if "kelly_sizing_active" in trades.columns and trades["kelly_sizing_active"].notna().any():
+                st.subheader("⚖️ Kelly sizing")
+                _kt = trades[trades["kelly_sizing_active"] == True]
+                _kf = trades[trades["kelly_sizing_active"] == False]
+                _k1, _k2, _k3 = st.columns(3)
+                _k1.metric("Trade con Kelly attivo", f"{len(_kt)}")
+                _k2.metric("P&L medio (Kelly on)",
+                           f"{_kt['pnl'].mean():.2f} USDT" if len(_kt) > 0 else "—")
+                _k3.metric("P&L medio (Kelly off)",
+                           f"{_kf['pnl'].mean():.2f} USDT" if len(_kf) > 0 else "—")
+        except Exception:
+            pass
+
         # ── Return Attribution by Direction & Hour ────────────────────────────
         st.subheader("📊 Attribution — P&L per direzione e ora")
 
