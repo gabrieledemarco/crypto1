@@ -1,0 +1,253 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 6px;
+  align-content: start;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border-l);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  min-height: 28px;
+  flex-shrink: 0;
+}
+
+.panelTitle {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.panelSub {
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.panelBody {
+  padding: 8px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.formRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rowLabel {
+  font-size: 10px;
+  color: var(--dim);
+  width: 100px;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.sliderRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.range {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 2px;
+  background: var(--border-l);
+  outline: none;
+  cursor: pointer;
+}
+
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  background: var(--amber);
+  cursor: pointer;
+}
+
+.range::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  background: var(--amber);
+  border: none;
+  cursor: pointer;
+}
+
+.sliderVal {
+  width: 36px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pill {
+  background: transparent;
+  border: 1px solid var(--border-l);
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.pill:hover {
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.pill.active {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.actionRow {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.btnPrimary {
+  background: transparent;
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 12px;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+}
+
+.btnPrimary:hover {
+  background: var(--amber);
+  color: var(--bg);
+}
+
+.btn {
+  background: transparent;
+  border: 1px solid var(--border-l);
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.btn:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.running {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.progressWrap {
+  position: relative;
+  height: 20px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.progressBar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: var(--amber);
+  transition: width 0.3s ease;
+}
+
+.progressLabel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  color: var(--bg);
+  padding-left: 8px;
+  font-family: var(--font-mono);
+  pointer-events: none;
+}
+
+.loading {
+  font-size: 10px;
+  color: var(--dim);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.previewMetrics {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.previewMetric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.previewMetricLabel {
+  font-size: 9px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.previewMetricVal {
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+
+.hint {
+  font-size: 10px;
+  color: var(--faint);
+  margin-top: 8px;
+  font-style: italic;
+}

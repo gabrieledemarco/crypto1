@@ -1,0 +1,156 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 6px;
+  align-content: start;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border-l);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  min-height: 28px;
+  flex-shrink: 0;
+}
+
+.panelTitle {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.panelBody {
+  padding: 8px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.heatmapWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.axisLabel {
+  font-size: 9px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  margin-top: 8px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.metricGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metricCell {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.metricLabel {
+  font-size: 10px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.metricVal {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.section {
+  margin-top: 12px;
+}
+
+.sectionLabel {
+  font-size: 9px;
+  color: var(--dim);
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 3px;
+  margin-bottom: 4px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.btn {
+  background: transparent;
+  border: 1px solid var(--border-l);
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.btn:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.pill {
+  background: transparent;
+  border: 1px solid var(--border-l);
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.pill:hover {
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.pill.active {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.warn {
+  margin-top: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--coral);
+  color: var(--coral);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.empty {
+  padding: 24px;
+  color: var(--dim);
+  font-family: var(--font-mono);
+}

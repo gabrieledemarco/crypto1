@@ -64,3 +64,23 @@ export function useRunWFO(runId: string | null) {
     staleTime: 60_000,
   });
 }
+
+// Param sweep grid
+export function useRunSweep(runId: string | null) {
+  return useQuery({
+    queryKey: ["run-sweep", runId],
+    queryFn: () => api.get<unknown[]>(`/runs/${runId}/sweep`),
+    enabled: !!runId,
+    staleTime: 60_000,
+  });
+}
+
+// Monte Carlo paths + percentiles
+export function useRunMC(runId: string | null) {
+  return useQuery({
+    queryKey: ["run-mc", runId],
+    queryFn: () => api.get<Record<string, unknown>>(`/runs/${runId}/mc`),
+    enabled: !!runId,
+    staleTime: 60_000,
+  });
+}

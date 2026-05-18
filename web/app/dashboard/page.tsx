@@ -11,6 +11,11 @@ import { Toast } from "@/components/shell/Toast";
 import { DashboardScreen } from "@/components/screens/DashboardScreen";
 import { EquityScreen } from "@/components/screens/EquityScreen";
 import { TradesScreen } from "@/components/screens/TradesScreen";
+import { SetupScreen }      from "@/components/screens/SetupScreen";
+import { SweepScreen }      from "@/components/screens/SweepScreen";
+import { MonteCarloScreen } from "@/components/screens/MonteCarloScreen";
+import { UnderwaterScreen } from "@/components/screens/UnderwaterScreen";
+import { CompareScreen }    from "@/components/screens/CompareScreen";
 import { useHotkeys } from "@/hooks/useHotkeys";
 import type { ScreenId } from "@/store";
 
@@ -22,6 +27,16 @@ function ScreenContent({ screen }: { screen: ScreenId }) {
       return <EquityScreen />;
     case "trades":
       return <TradesScreen />;
+    case "setup":
+      return <SetupScreen />;
+    case "sweep":
+      return <SweepScreen />;
+    case "mc":
+      return <MonteCarloScreen />;
+    case "underwater":
+      return <UnderwaterScreen />;
+    case "compare":
+      return <CompareScreen />;
     default:
       return (
         <div
@@ -34,7 +49,7 @@ function ScreenContent({ screen }: { screen: ScreenId }) {
           <div style={{ color: "var(--amber)", marginBottom: 8 }}>
             {screen.toUpperCase()}
           </div>
-          <div>Coming in M4/M5</div>
+          <div>Coming in M5</div>
         </div>
       );
   }
