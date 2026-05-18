@@ -132,16 +132,28 @@ def compute_indicators_v2(df: pd.DataFrame,
     df["hour"] = df.index.hour
     df["dow"] = df.index.dayofweek
 
-    df = df.dropna()
+    # Liquidity proxy: rolling 24h average USD volume
+    if "Volume" in df.columns:
+        df["vol_usd_h"] = df["Volume"] * df["Close"]
+        df["avg_vol_usd_24h"] = df["vol_usd_h"].rolling(24).mean()
+    else:
+        df["avg_vol_usd_24h"] = np.nan
+
+    df = df.dropna(subset=[c for c in df.columns if c != "avg_vol_usd_24h"])
 
     # GARCH regime
     if fit_garch and len(df) > 100:
-        log_ret = np.log(df["Close"] / df["Close"].shift(1)).dropna().values
         r_aligned = np.log(df["Close"] / df["Close"].shift(1)).fillna(0).values
         try:
             _, _, _, h_all = fit_garch11(r_aligned[1:])
-            h_padded = np.concatenate([[h_all[0]], h_all])
-            df["garch_h"] = h_padded[:len(df)]
+            # h_all has len(df)-1 elements; prepend first value to align with df
+            if len(h_all) + 1 == len(df):
+                h_padded = np.concatenate([[h_all[0]], h_all])
+            elif len(h_all) == len(df):
+                h_padded = h_all
+            else:
+                raise ValueError(f"GARCH length mismatch: {len(h_all)} vs {len(df)}")
+            df["garch_h"] = h_padded
         except Exception:
             df["garch_h"] = df["ret"].rolling(24).var().fillna(df["ret"].var())
 
@@ -200,18 +212,39 @@ def generate_signals_v2(df: pd.DataFrame,
     return df
 
 
+# ── Adaptive slippage model ───────────────────────────────────────────────────
+
+def _adaptive_slippage(qty: float, ep: float, avg_vol_usd: float,
+                       h_t: float, hour: int, base: float = 0.0001) -> float:
+    """
+    Slippage stimato come funzione di:
+      - market impact: qty_usd / avg_vol_usd (proporzionale alla % del volume)
+      - volatility: sqrt(GARCH h_t) — volatilità alta → impatto maggiore
+      - time-of-day: ore notturne (0-5 UTC) → liquidità ridotta, +50% slippage
+    """
+    qty_usd = qty * ep
+    vol_impact = min(0.002, qty_usd / max(avg_vol_usd, 1.0) * 0.5)
+    sigma = float(h_t) ** 0.5 if h_t > 0 else 0.0
+    vol_mult = 1.0 + min(2.0, sigma * 100)
+    time_mult = 1.5 if hour < 6 else 1.0
+    return base + vol_impact * vol_mult * time_mult
+
+
 # ── Backtest v2: con costi di transazione ─────────────────────────────────────
 
 def backtest_v2(df: pd.DataFrame,
                 initial_capital: float = 10_000,
                 risk_per_trade: float = 0.01,
                 commission: float = 0.0004,   # 0.04% Binance taker fee
-                slippage: float = 0.0001      # 0.01% market impact BTC/USDT
+                slippage: float = 0.0001,     # floor slippage (adaptive may exceed)
+                use_adaptive_slippage: bool = True,
+                liquidity_pct: float = 0.10,  # max fraction of avg hourly volume per trade
                 ) -> dict:
     """
     Backtest event-driven 1h con:
       - Stop Loss e Take Profit basati su ATR
-      - Commissioni e slippage su entrata + uscita
+      - Commissioni + slippage adattativo (volume × volatilità × time-of-day)
+      - Liquidity constraint: qty ≤ avg_vol_usd_24h × liquidity_pct / price
       - Position sizing: risk_per_trade % capitale / SL_dist
       - Leverage cap: max 3× il capitale per trade
       - Riduzione size in regime HIGH (size_mult)
@@ -224,19 +257,22 @@ def backtest_v2(df: pd.DataFrame,
     entry_price = direction = sl = tp = qty = sl_d_entry = 0.0
     entry_cost = 0.0
     entry_time = None
-    mae_extreme = mfe_extreme = 0.0  # track worst/best intrabar price during hold
+    entry_slip = 0.0
+    mae_extreme = mfe_extreme = 0.0
 
-    prices = df["Close"].values
-    signals = df["signal"].values
-    sl_dists = df["SL_dist"].values
-    tp_dists = df["TP_dist"].values
-    highs = df["High"].values
-    lows = df["Low"].values
-    times = df.index
-    size_mults = df["size_mult"].values if "size_mult" in df.columns else np.ones(len(df))
+    prices    = df["Close"].values
+    signals   = df["signal"].values
+    sl_dists  = df["SL_dist"].values
+    tp_dists  = df["TP_dist"].values
+    highs     = df["High"].values
+    lows      = df["Low"].values
+    times     = df.index
+    size_mults   = df["size_mult"].values if "size_mult" in df.columns else np.ones(len(df))
+    garch_h_arr  = df["garch_h"].values if "garch_h" in df.columns else np.full(len(df), 1e-6)
+    avg_vol_arr  = df["avg_vol_usd_24h"].values if "avg_vol_usd_24h" in df.columns else np.full(len(df), np.nan)
+    hours_arr    = np.array([t.hour for t in times])
 
-    cost_rate = commission + slippage  # costo per lato (entrata o uscita)
-    max_leverage = 3.0                 # cap: notionale max 3× capitale
+    max_leverage = 3.0
 
     for i in range(len(df)):
         if in_trade:
@@ -263,7 +299,14 @@ def backtest_v2(df: pd.DataFrame,
 
             if exit_price is not None:
                 gross_pnl = direction * qty * (exit_price - entry_price)
-                exit_cost = exit_price * qty * cost_rate
+                if use_adaptive_slippage:
+                    exit_slip = _adaptive_slippage(
+                        qty, exit_price,
+                        float(avg_vol_arr[i]) if not np.isnan(avg_vol_arr[i]) else exit_price * qty * 10,
+                        float(garch_h_arr[i]), int(hours_arr[i]), base=slippage)
+                else:
+                    exit_slip = slippage
+                exit_cost = exit_price * qty * (commission + exit_slip)
                 pnl = gross_pnl - exit_cost
                 capital += pnl
                 # MAE/MFE as multiples of initial SL distance (R-multiples)
@@ -299,11 +342,23 @@ def backtest_v2(df: pd.DataFrame,
             if sl_d > 0 and sm > 0:
                 risk_amount = capital * risk_per_trade * sm
                 qty = risk_amount / sl_d
-                # Cap notionale a max_leverage × capitale
+                # Cap 1: leverage ceiling (3× capital)
                 max_qty = (capital * max_leverage) / ep
                 qty = min(qty, max_qty)
+                # Cap 2: liquidity constraint (max liquidity_pct of avg hourly volume)
+                avg_vol = float(avg_vol_arr[i])
+                if not np.isnan(avg_vol) and avg_vol > 0:
+                    max_qty_liq = avg_vol * liquidity_pct / ep
+                    qty = min(qty, max_qty_liq)
 
-                entry_cost = ep * qty * cost_rate
+                if use_adaptive_slippage:
+                    entry_slip = _adaptive_slippage(
+                        qty, ep,
+                        avg_vol if not np.isnan(avg_vol) else ep * qty * 10,
+                        float(garch_h_arr[i]), int(hours_arr[i]), base=slippage)
+                else:
+                    entry_slip = slippage
+                entry_cost = ep * qty * (commission + entry_slip)
                 capital -= entry_cost
 
                 sl = ep - sl_d if direction == 1 else ep + sl_d
