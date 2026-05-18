@@ -126,24 +126,17 @@
   gap: 6px;
 }
 
-.fetchInput {
-  background: var(--panel-2);
-  border: 1px solid var(--border-l);
-  color: var(--text);
+.label {
   font-family: var(--font-mono);
-  font-size: 11px;
-  padding: 4px 8px;
-  outline: none;
-  width: 100%;
-  box-sizing: border-box;
+  font-size: 9px;
+  color: var(--dim);
+  letter-spacing: 0.04em;
 }
 
-.fetchInput:focus {
-  border-color: var(--amber);
-}
-
-.fetchInput::placeholder {
-  color: var(--faint);
+.tickerPills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .periodPills {

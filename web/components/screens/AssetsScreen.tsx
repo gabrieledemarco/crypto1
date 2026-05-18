@@ -14,12 +14,18 @@ const KIND_COLORS: Record<string, string> = {
 
 const PERIODS = ["1y", "2y", "5y"] as const;
 
+const FETCHABLE_TICKERS = [
+  "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD",
+  "ADA-USD", "AVAX-USD", "DOT-USD", "MATIC-USD", "LINK-USD",
+  "ARB-USD", "OP-USD", "ATOM-USD", "NEAR-USD", "APT-USD",
+];
+
 export function AssetsScreen() {
   const [selectedTicker, setSelectedTicker] = useState<string>(
     fixtures.assets[0].ticker
   );
   const [showFetch, setShowFetch] = useState(false);
-  const [fetchTicker, setFetchTicker] = useState("");
+  const [fetchTicker, setFetchTicker] = useState(FETCHABLE_TICKERS[0]);
   const [fetchPeriod, setFetchPeriod] = useState<string>("2y");
   const [fetching, setFetching] = useState(false);
   const [fetchMsg, setFetchMsg] = useState<string | null>(null);
@@ -64,7 +70,7 @@ export function AssetsScreen() {
   const kurt = apiStats?.kurt ?? stats.kurt;
 
   const handleFetch = async () => {
-    if (!fetchTicker.trim()) return;
+    if (!fetchTicker) return;
     setFetching(true);
     setFetchMsg(null);
     try {
@@ -78,8 +84,7 @@ export function AssetsScreen() {
         }),
       });
       if (res.ok) {
-        setFetchMsg(`Fetched ${fetchTicker.toUpperCase()} (${fetchPeriod})`);
-        setFetchTicker("");
+        setFetchMsg(`✓ ${fetchTicker} fetched (${fetchPeriod})`);
         setShowFetch(false);
       } else {
         setFetchMsg("Fetch failed — check ticker");
@@ -147,13 +152,18 @@ export function AssetsScreen() {
               </button>
             ) : (
               <div className={styles.fetchForm}>
-                <input
-                  className={styles.fetchInput}
-                  placeholder="TICKER (e.g. ETH-USD)"
-                  value={fetchTicker}
-                  onChange={(e) => setFetchTicker(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleFetch()}
-                />
+                <div className={styles.label}>TICKER</div>
+                <div className={styles.tickerPills}>
+                  {FETCHABLE_TICKERS.map((t) => (
+                    <button
+                      key={t}
+                      className={`${styles.pill} ${fetchTicker === t ? styles.pillActive : ""}`}
+                      onClick={() => setFetchTicker(t)}
+                    >
+                      {t.replace("-USD", "")}
+                    </button>
+                  ))}
+                </div>
                 <div className={styles.periodPills}>
                   {PERIODS.map((p) => (
                     <button
