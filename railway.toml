@@ -1,0 +1,20 @@
+[build]
+  builder = "dockerfile"
+
+[[services]]
+  name = "api"
+  source = "."
+  dockerfile = "Dockerfile.api"
+  [services.deploy]
+    startCommand = "uvicorn api.main:app --host 0.0.0.0 --port $PORT"
+  [services.variables]
+    PORT = "8000"
+
+[[services]]
+  name = "web"
+  source = "."
+  dockerfile = "Dockerfile.web"
+  [services.deploy]
+    startCommand = "node web/.next/standalone/server.js"
+  [services.variables]
+    PORT = "3000"

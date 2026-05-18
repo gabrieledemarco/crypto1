@@ -1,0 +1,82 @@
+/* PARETO design tokens */
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap");
+
+:root {
+  --bg:        #0c0d0a;
+  --panel:     #16170f;
+  --panel-2:   #1d1f15;
+  --panel-3:   #25271a;
+  --border:    #3a3c28;
+  --border-l:  #5a5d3a;
+  --text:      #d8dac2;
+  --dim:       #a3a78c;
+  --faint:     #7e8163;
+  --amber:     #ffb53b;
+  --amber-d:   #d18f1f;
+  --coral:     #ff7a55;
+  --green:     #6fd17a;
+  --cyan:      #5cc1ff;
+  --yellow:    #ffd84a;
+  --red:       #ff5a48;
+
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-sans: "Inter", system-ui, sans-serif;
+
+  --topbar-h:  44px;
+  --sidebar-w: 168px;
+  --statusbar-h: 22px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255,255,255,0.012) 0 1px,
+    transparent 1px 3px
+  );
+  z-index: 100;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: var(--panel); }
+::-webkit-scrollbar-thumb { background: var(--border-l); }
+
+/* Tabular numbers everywhere */
+.mono, .lbl-mono, input, select, button, td, th, code {
+  font-feature-settings: "tnum" 1;
+}
+
+/* Utilities */
+.dim { color: var(--dim); }
+.faint { color: var(--faint); }
+.amber { color: var(--amber); }
+.coral { color: var(--coral); }
+.green { color: var(--green); }
+.cyan { color: var(--cyan); }
+
+kbd {
+  display: inline-block;
+  padding: 1px 4px;
+  border: 1px solid var(--border-l);
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--dim);
+}
