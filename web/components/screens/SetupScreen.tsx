@@ -114,7 +114,7 @@ export function SetupScreen() {
 
   const previewEquity = (preview?.equity && preview.equity.length > 0)
     ? preview.equity.map((v, i) => ({ i, v, dd: 0, bench: 1, oos: false }))
-    : fixtures.runs[0].equity.slice(0, 120);
+    : [];
 
   const UNIVERSE_TICKERS = ["BTC", "ETH", "SOL", "ARB", "OP", "MATIC", "AVAX"];
   const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"];
@@ -228,13 +228,26 @@ export function SetupScreen() {
           {previewLoading && <span className={styles.loading}>loading…</span>}
         </div>
         <div className={styles.panelBody}>
-          <EquityChart
-            equity={previewEquity}
-            oosStart={null}
-            height={240}
-            color="var(--cyan)"
-            showBench={false}
-          />
+          {previewEquity.length > 0 ? (
+            <EquityChart
+              equity={previewEquity}
+              oosStart={null}
+              height={240}
+              color="var(--cyan)"
+              showBench={false}
+            />
+          ) : (
+            <div style={{
+              height: 240, display: "flex", alignItems: "center", justifyContent: "center",
+              color: "var(--faint)", fontFamily: "var(--font-mono)", fontSize: 11,
+              flexDirection: "column", gap: 6,
+            }}>
+              <div>{previewLoading ? "CALCOLO PREVIEW…" : "PREVIEW"}</div>
+              <div style={{ fontSize: 9 }}>
+                {previewLoading ? "" : "Modifica i parametri per visualizzare"}
+              </div>
+            </div>
+          )}
           <div className={styles.previewMetrics}>
             <PreviewMetric label="EST SHARPE"   value={preview?.sharpe?.toFixed(2)    ?? "—"} />
             <PreviewMetric label="EST CAGR"     value={preview?.cagr != null ? `${preview.cagr.toFixed(1)}%` : "—"} />

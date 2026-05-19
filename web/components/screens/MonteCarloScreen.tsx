@@ -74,6 +74,33 @@ export function MonteCarloScreen() {
   const pRuin   = finals.length ? finals.filter((v) => v < 0.5).length / finals.length * 100 : 0;
   const sharpe  = run?.metricsOOS?.sharpe ?? 0;
 
+  // Sharpe CI: prefer explicit API fields, fall back to bootstrap percentiles of finals
+  const mcRaw = mcQuery.data as {
+    sharpe_ci?: [number, number];
+    sharpe_lower?: number;
+    sharpe_upper?: number;
+  } | undefined;
+  const apiSharpeCI: [number, number] | null =
+    mcRaw?.sharpe_ci ??
+    (mcRaw?.sharpe_lower != null && mcRaw?.sharpe_upper != null
+      ? [mcRaw.sharpe_lower, mcRaw.sharpe_upper]
+      : null);
+
+  const sharpeCIFromBootstrap = (() => {
+    if (finals.length < 20) return null;
+    const sorted = [...finals].sort((a, b) => a - b);
+    const n = sorted.length;
+    return [sorted[Math.floor(n * 0.025)], sorted[Math.floor(n * 0.975)]] as [number, number];
+  })();
+
+  const ciSource = apiSharpeCI ?? sharpeCIFromBootstrap;
+  const ciLower = ciSource ? ciSource[0].toFixed(2) : (sharpe * 0.65).toFixed(2);
+  const ciUpper = ciSource ? ciSource[1].toFixed(2) : (sharpe * 1.35).toFixed(2);
+
+  // Significance: p_profit > 60% and sharpe > 0.3
+  // (pProfit is already in percentage units, e.g. 72 means 72%)
+  const isSignificant = pProfit > 60 && sharpe > 0.3;
+
   const fanData = {
     percentiles: pcts ?? { p5: [], p25: [], p50: [], p75: [], p95: [] },
   };
@@ -120,10 +147,10 @@ export function MonteCarloScreen() {
             <div className={styles.sectionLabel}>SHARPE · 95% CI</div>
             <div className={styles.sharpeBig}>{sharpe}</div>
             <div className={styles.sharpeCi}>
-              [{(sharpe * 0.65).toFixed(2)} — {(sharpe * 1.35).toFixed(2)}]
+              [{ciLower} — {ciUpper}]
             </div>
-            <div className={styles.sharpeSig} style={{ color: sharpe > 0.5 ? "var(--green)" : "var(--coral)" }}>
-              {sharpe > 0.5 ? "SIGNIFICATIVO" : "NON SIGNIFICATIVO"}
+            <div className={styles.sharpeSig} style={{ color: isSignificant ? "var(--green)" : "var(--coral)" }}>
+              {isSignificant ? "SIGNIFICATIVO" : "NON SIGNIFICATIVO"}
             </div>
           </div>
         </div>
