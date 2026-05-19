@@ -1,7 +1,6 @@
 "use client";
 import { useMemo, useRef, useEffect, useState } from "react";
 import { useStore } from "@/store";
-import { fixtures } from "@/lib/fixtures";
 import styles from "./CompareScreen.module.css";
 import type { Run } from "@/lib/fixtures";
 
@@ -14,8 +13,10 @@ function colorFor(id: string, idx: number) {
 
 export function CompareScreen() {
   const { compareIds, toggleCompare, runs } = useStore();
-  const allRuns = runs.length ? runs : fixtures.runs;
-  const active = allRuns.filter((r) => compareIds.includes(r.id));
+  const allRuns = runs;
+  const active = compareIds.length
+    ? allRuns.filter((r) => compareIds.includes(r.id))
+    : allRuns.slice(0, 2);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const [svgW, setSvgW] = useState(800);
@@ -42,6 +43,21 @@ export function CompareScreen() {
     const pts = run.equity.map((e, i) => xy(i, e.v, run.equity.length));
     const d = pts.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
     return <path key={run.id} d={d} fill="none" stroke={colorFor(run.id, idx)} strokeWidth={1.6} opacity={0.9} />;
+  }
+
+  if (allRuns.length === 0) {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        height: 300, flexDirection: "column", gap: 8,
+        fontFamily: "var(--font-mono)", color: "var(--faint)", fontSize: 12,
+      }}>
+        <div>NESSUN RUN</div>
+        <div style={{ fontSize: 10, color: "var(--faint)" }}>
+          Esegui una strategia in Setup per poter confrontare i run
+        </div>
+      </div>
+    );
   }
 
   // Grid lines

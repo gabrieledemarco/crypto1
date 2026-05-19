@@ -641,6 +641,19 @@ export function TradeAnalysisScreen() {
 
   const tradesQuery = useRunTrades(activeRunId || null, { limit: 500 });
 
+  const isUsingFixture = !tradesQuery.data?.trades?.length;
+
+  if (tradesQuery.isLoading) {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        height: 200, fontFamily: "var(--font-mono)", color: "var(--faint)", fontSize: 11,
+      }}>
+        CARICAMENTO TRADE…
+      </div>
+    );
+  }
+
   const rawTrades: Trade[] =
     tradesQuery.data?.trades && tradesQuery.data.trades.length > 0
       ? (tradesQuery.data.trades as Trade[])
@@ -665,6 +678,15 @@ export function TradeAnalysisScreen() {
         <div className={styles.panelHeader}>
           <span className={styles.panelTitle}>DIRECTION BREAKDOWN</span>
           <span className={styles.panelSub}>{trades.length} trades</span>
+          {isUsingFixture && (
+            <span style={{
+              fontFamily: "var(--font-mono)", fontSize: 9,
+              color: "var(--amber)", border: "1px solid var(--amber)",
+              padding: "1px 5px", letterSpacing: "0.04em",
+            }}>
+              DEMO DATA
+            </span>
+          )}
         </div>
         <div className={styles.panelBody}>
           <DirectionTable trades={trades} />

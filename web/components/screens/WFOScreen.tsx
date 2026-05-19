@@ -387,10 +387,17 @@ function OOSEquityPanel({ folds }: { folds: WFOFold[] }) {
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export function WFOScreen() {
-  const { activeRunId } = useStore();
+  const { runs, activeRunId } = useStore();
   const wfoQuery = useRunWFO(activeRunId || null);
 
-  const rawFolds = wfoQuery.data ?? [];
+  // Use API data first; fall back to wfo stored on the run object (e.g. fixture data)
+  const run = runs.find((r) => r.id === activeRunId);
+  const runWfo = (run as unknown as { wfo?: unknown[] })?.wfo;
+  const rawFolds: unknown[] =
+    wfoQuery.data && wfoQuery.data.length > 0
+      ? wfoQuery.data
+      : (runWfo ?? []);
+
   const folds: WFOFold[] = (rawFolds as unknown[]).filter(
     (r): r is WFOFold =>
       r !== null &&
@@ -399,12 +406,31 @@ export function WFOScreen() {
       "oos_sharpe" in (r as object)
   );
 
+  // Show loading indicator while fetching from API
+  if (wfoQuery.isLoading) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: 300,
+          fontFamily: "var(--font-mono)",
+          color: "var(--faint)",
+          fontSize: 11,
+        }}
+      >
+        CARICAMENTO WFO…
+      </div>
+    );
+  }
+
   if (!folds.length) {
     return (
       <div className={styles.emptyWrap}>
-        <div className={styles.emptyTitle}>WFO NOT RUN</div>
+        <div className={styles.emptyTitle}>WFO NON ESEGUITO</div>
         <div className={styles.emptyHint}>
-          Enable WFO in Setup → run strategy
+          Abilita WFO in Setup → esegui la strategia
         </div>
       </div>
     );
