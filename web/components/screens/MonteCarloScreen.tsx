@@ -39,7 +39,10 @@ export function MonteCarloScreen() {
   const ddFinals = mcData.ddFinals ?? [];
   const pcts     = mcData.percentiles;
 
-  const at = (arr: number[], q: number) => arr[Math.floor((arr.length - 1) * q)] ?? 0;
+  const at = (arr: number[], q: number) => {
+    const s = arr.slice().sort((a, b) => a - b);
+    return s[Math.floor((s.length - 1) * q)] ?? 0;
+  };
   const p5  = finals.length ? (at(finals, 0.05) - 1) * 100 : 0;
   const p50 = finals.length ? (at(finals, 0.5)  - 1) * 100 : 0;
   const p95 = finals.length ? (at(finals, 0.95) - 1) * 100 : 0;
