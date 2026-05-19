@@ -71,8 +71,10 @@ export function AssetsScreen() {
 
   // API data (falls back to fixtures)
   const { data: apiAssets } = useAssets();
-  const { data: apiBars } = useAssetBars(selectedTicker);
-  const { data: apiStats } = useAssetStats(selectedTicker);
+  // Only query bars/stats when the ticker is actually stored in the API
+  const apiTickerExists = apiAssets?.some((a) => a.ticker === selectedTicker) ?? false;
+  const { data: apiBars } = useAssetBars(apiTickerExists ? selectedTicker : null);
+  const { data: apiStats } = useAssetStats(apiTickerExists ? selectedTicker : null);
 
   // Build display list: prefer API data, fall back to fixtures
   const fixtureMap = new Map<string, Asset>(
