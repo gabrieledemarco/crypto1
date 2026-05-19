@@ -85,8 +85,9 @@ export function SetupScreen() {
     }
   };
 
-  // Simple preview equity from params (local seed, no API)
-  const previewEquity = fixtures.runs[0].equity.slice(0, 120);
+  const previewEquity = (preview?.equity && preview.equity.length > 0)
+    ? preview.equity.map((v, i) => ({ i, v, dd: 0, bench: 1, oos: false }))
+    : fixtures.runs[0].equity.slice(0, 120);
 
   const UNIVERSE_TICKERS = ["BTC", "ETH", "SOL", "ARB", "OP", "MATIC", "AVAX"];
   const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"];

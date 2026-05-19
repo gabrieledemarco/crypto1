@@ -103,12 +103,17 @@ export function AssetsScreen() {
 
   // Stats: prefer API, fall back to fixture
   const stats = fixtureAsset.stats;
-  const cagr = apiStats?.cagr ?? stats.cagr;
-  const annVol = apiStats?.ann_vol ?? stats.annVol;
-  const sharpe = apiStats?.sharpe ?? stats.sharpe;
-  const maxDD = apiStats?.max_dd ?? stats.maxDD;
-  const skew = apiStats?.skew ?? stats.skew;
-  const kurt = apiStats?.kurt ?? stats.kurt;
+  const cagr    = apiStats?.cagr != null ? apiStats.cagr / 100 : stats.cagr;
+  const annVol  = apiStats?.ann_vol != null ? apiStats.ann_vol / 100 : stats.annVol;
+  const sharpe  = apiStats?.sharpe ?? stats.sharpe;
+  const maxDD   = apiStats?.max_dd != null ? apiStats.max_dd / 100 : stats.maxDD;
+  const skew    = apiStats?.skew ?? stats.skew;
+  const kurt    = apiStats?.kurt ?? stats.kurt;
+  const sortino = apiStats?.sortino ?? stats.sortino;
+  const var95   = apiStats?.var95 ?? stats.var95;
+  const cvar95  = apiStats?.cvar95 ?? stats.cvar95;
+  const bestDay = apiStats?.best_day ?? stats.bestDay;
+  const worstDay = apiStats?.worst_day ?? stats.worstDay;
 
   const handleFetch = async () => {
     if (!fetchTicker) return;
@@ -347,14 +352,14 @@ export function AssetsScreen() {
             <StatRow label="CAGR"      value={`${(cagr * 100).toFixed(2)}%`}        color="var(--green)" />
             <StatRow label="ANN VOL"   value={`${(annVol * 100).toFixed(2)}%`}       color="var(--coral)" />
             <StatRow label="SHARPE"    value={sharpe.toFixed(3)}                      color="var(--green)" />
-            <StatRow label="SORTINO"   value={stats.sortino.toFixed(3)}              color="var(--green)" />
+            <StatRow label="SORTINO"   value={sortino.toFixed(3)}                     color="var(--green)" />
             <StatRow label="MAX DD"    value={`${(maxDD * 100).toFixed(2)}%`}        color="var(--coral)" />
             <StatRow label="SKEW"      value={skew.toFixed(4)}                        color={skew >= 0 ? "var(--green)" : "var(--coral)"} />
             <StatRow label="KURT"      value={kurt.toFixed(4)}                        color="var(--coral)" />
-            <StatRow label="VAR 95"    value={`${(stats.var95 * 100).toFixed(3)}%`}  color="var(--coral)" />
-            <StatRow label="CVAR 95"   value={`${(stats.cvar95 * 100).toFixed(3)}%`} color="var(--coral)" />
-            <StatRow label="BEST DAY"  value={`${(stats.bestDay * 100).toFixed(2)}%`} color="var(--green)" />
-            <StatRow label="WORST DAY" value={`${(stats.worstDay * 100).toFixed(2)}%`} color="var(--coral)" />
+            <StatRow label="VAR 95"    value={`${(var95 * 100).toFixed(3)}%`}        color="var(--coral)" />
+            <StatRow label="CVAR 95"   value={`${(cvar95 * 100).toFixed(3)}%`}       color="var(--coral)" />
+            <StatRow label="BEST DAY"  value={`${(bestDay * 100).toFixed(2)}%`}      color="var(--green)" />
+            <StatRow label="WORST DAY" value={`${(worstDay * 100).toFixed(2)}%`}     color="var(--coral)" />
           </div>
         </div>
       </div>

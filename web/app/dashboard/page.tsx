@@ -19,6 +19,7 @@ import { CompareScreen }    from "@/components/screens/CompareScreen";
 import { AssetsScreen }     from "@/components/screens/AssetsScreen";
 import { LibraryScreen }    from "@/components/screens/LibraryScreen";
 import { VibeScreen }       from "@/components/screens/VibeScreen";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useHotkeys } from "@/hooks/useHotkeys";
 import type { ScreenId } from "@/store";
 
@@ -98,7 +99,9 @@ export default function DashboardPage() {
       <div className="body">
         <Sidebar />
         <main className="main">
-          <ScreenContent screen={screen} />
+          <ErrorBoundary>
+            <ScreenContent screen={screen} />
+          </ErrorBoundary>
         </main>
       </div>
       <StatusBar />
