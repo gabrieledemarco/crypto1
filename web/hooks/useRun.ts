@@ -11,12 +11,17 @@ export function useRuns() {
   });
 }
 
+// Fixture run IDs (run-NNN) don't exist in the database — skip API calls for them
+function isRealRunId(id: string | null): boolean {
+  return !!id && !/^run-\d+$/.test(id);
+}
+
 // Run metadata + metrics
 export function useRun(runId: string | null) {
   return useQuery({
     queryKey: ["run", runId],
     queryFn: () => api.get<Record<string, unknown>>(`/runs/${runId}`),
-    enabled: !!runId,
+    enabled: isRealRunId(runId),
     staleTime: 60_000,
   });
 }
@@ -29,7 +34,7 @@ export function useRunEquity(runId: string | null) {
       api.get<{ i: number; ts: string; v: number; dd: number }[]>(
         `/runs/${runId}/equity`
       ),
-    enabled: !!runId,
+    enabled: isRealRunId(runId),
     staleTime: 60_000,
   });
 }
@@ -50,7 +55,7 @@ export function useRunTrades(
       api.get<{ total: number; trades: unknown[] }>(
         `/runs/${runId}/trades?${qs}`
       ),
-    enabled: !!runId,
+    enabled: isRealRunId(runId),
     staleTime: 60_000,
   });
 }
@@ -60,7 +65,7 @@ export function useRunWFO(runId: string | null) {
   return useQuery({
     queryKey: ["run-wfo", runId],
     queryFn: () => api.get<unknown[]>(`/runs/${runId}/wfo`),
-    enabled: !!runId,
+    enabled: isRealRunId(runId),
     staleTime: 60_000,
   });
 }
@@ -70,7 +75,7 @@ export function useRunSweep(runId: string | null) {
   return useQuery({
     queryKey: ["run-sweep", runId],
     queryFn: () => api.get<unknown[]>(`/runs/${runId}/sweep`),
-    enabled: !!runId,
+    enabled: isRealRunId(runId),
     staleTime: 60_000,
   });
 }
@@ -80,7 +85,7 @@ export function useRunMC(runId: string | null) {
   return useQuery({
     queryKey: ["run-mc", runId],
     queryFn: () => api.get<Record<string, unknown>>(`/runs/${runId}/mc`),
-    enabled: !!runId,
+    enabled: isRealRunId(runId),
     staleTime: 60_000,
   });
 }
