@@ -11,6 +11,7 @@ export function TradesScreen() {
   const { activeRunId, runs } = useStore();
   const [filterSide, setFilterSide] = useState("all");
   const [filterPnl, setFilterPnl] = useState("all");
+  const [filterText, setFilterText] = useState("");
   const [sortKey, setSortKey] = useState<keyof Trade>("n");
   const [sortDir, setSortDir] = useState<1 | -1>(1);
   const [cursor, setCursor] = useState(0);
@@ -37,6 +38,15 @@ export function TradesScreen() {
       if (filterSide === "short" && t.side !== "S") return false;
       if (filterPnl === "win" && t.pnl <= 0) return false;
       if (filterPnl === "loss" && t.pnl > 0) return false;
+      if (filterText) {
+        const q = filterText.toLowerCase();
+        return (
+          String(t.n).includes(q) ||
+          (t.side === "L" ? "long" : "short").includes(q) ||
+          String(t.entry).includes(q) ||
+          String(t.pnl).includes(q)
+        );
+      }
       return true;
     })
     .sort((a, b) => {
@@ -112,7 +122,34 @@ export function TradesScreen() {
             &nbsp;·&nbsp;
             <span style={{ color: "var(--coral)" }}>{losers} loss</span>
           </span>
-          <button className={styles.btn}>↓ CSV</button>
+          <button
+            className={styles.btn}
+            onClick={() => {
+              const header = "#,OPEN,SIDE,ENTRY,EXIT,R,DUR(h),P&L%";
+              const rows = trades.map((t, i) =>
+                [
+                  i + 1,
+                  new Date(t.date).toISOString().slice(0, 16),
+                  t.side === "L" ? "L" : "S",
+                  t.entry?.toFixed(2) ?? "",
+                  t.exit?.toFixed(2) ?? "",
+                  t.r?.toFixed(2) ?? "",
+                  t.durH ?? "",
+                  t.pnl ?? "",
+                ].join(",")
+              );
+              const csv = [header, ...rows].join("\n");
+              const blob = new Blob([csv], { type: "text/csv" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `trades_${Date.now()}.csv`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+          >
+            ↓ CSV
+          </button>
         </div>
 
         {/* Filter bar */}
@@ -144,6 +181,8 @@ export function TradesScreen() {
             className={styles.filterInput}
             placeholder="filter…"
             style={{ marginLeft: "auto" }}
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
           />
         </div>
 

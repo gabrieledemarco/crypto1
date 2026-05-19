@@ -142,3 +142,82 @@
   color: var(--dim);
   font-family: var(--font-mono);
 }
+
+/* ── Stress scenarios panel ───────────────────────────────────────────── */
+
+.stressGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .stressGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.stressCard {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stressCardHeader {
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+
+.stressMetrics {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stressRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.stressLabel {
+  font-size: 9px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.stressVal {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.stressDelta {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.stressEmpty {
+  padding: 16px 0;
+  color: var(--dim);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+}

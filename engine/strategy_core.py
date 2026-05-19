@@ -336,6 +336,23 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
 
     total_costs = trades["costs"].sum() if "costs" in trades.columns else 0
 
+    # Omega Ratio
+    pnl_arr = trades["pnl"].values
+    pos_sum = float(np.sum(pnl_arr[pnl_arr > 0]))
+    neg_sum = float(abs(np.sum(pnl_arr[pnl_arr <= 0])))
+    omega = round(pos_sum / neg_sum, 3) if neg_sum > 0 else 99.0
+
+    # Ulcer Index
+    equity_arr = equity.values
+    running_max = np.maximum.accumulate(equity_arr)
+    drawdowns_sq = ((equity_arr - running_max) / running_max) ** 2
+    ulcer = round(float(np.sqrt(np.mean(drawdowns_sq))) * 100, 2)
+
+    # Recovery Factor
+    net_return = float(result["final_capital"] / initial_capital - 1) * 100
+    max_dd_pct = abs(float(max_dd))
+    recovery_factor = round(net_return / max_dd_pct, 2) if max_dd_pct > 0 else 0.0
+
     return {
         "total_return_pct": total_return,
         "cagr_pct": cagr,
@@ -350,4 +367,7 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
         "sl_hits": len(trades[trades["exit_reason"] == "SL"]),
         "tp_hits": len(trades[trades["exit_reason"] == "TP"]),
         "total_costs_usd": total_costs,
+        "omega": omega,
+        "ulcer": ulcer,
+        "recovery_factor": recovery_factor,
     }

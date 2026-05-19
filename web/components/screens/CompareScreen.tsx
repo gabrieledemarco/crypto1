@@ -119,10 +119,10 @@ export function CompareScreen() {
               <div key={r.id} className={styles.trow}
                 style={{ gridTemplateColumns: "1fr repeat(6, 80px)" }}>
                 <span style={{ color: colorFor(r.id, idx), fontWeight: 700 }}>{r.name}</span>
-                <span style={{ color: "var(--green)" }}>+{r.metricsOOS?.cagr}%</span>
-                <span>{r.metricsOOS?.sharpe}</span>
-                <span>{r.metricsOOS?.sortino}</span>
-                <span style={{ color: "var(--coral)" }}>{r.metricsOOS?.maxDD}%</span>
+                <span style={{ color: "var(--green)" }}>{r.metricsOOS?.cagr != null ? `${r.metricsOOS.cagr >= 0 ? "+" : ""}${(r.metricsOOS.cagr * 100).toFixed(1)}%` : "—"}</span>
+                <span>{r.metricsOOS?.sharpe?.toFixed(2) ?? "—"}</span>
+                <span>{r.metricsOOS?.sortino?.toFixed(2) ?? "—"}</span>
+                <span style={{ color: "var(--coral)" }}>{r.metricsOOS?.maxDD != null ? `${(r.metricsOOS.maxDD * 100).toFixed(1)}%` : "—"}</span>
                 <span>{r.profitFactor}</span>
                 <span>{r.tradesCount}</span>
               </div>

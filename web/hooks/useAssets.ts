@@ -29,6 +29,11 @@ interface AssetStatsApi {
   max_dd: number;
   skew: number;
   kurt: number;
+  sortino?: number;
+  var95?: number;
+  cvar95?: number;
+  best_day?: number;
+  worst_day?: number;
 }
 
 // List assets stored in DuckDB

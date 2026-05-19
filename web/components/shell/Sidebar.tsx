@@ -30,6 +30,8 @@ const NAV_GROUPS: NavGroup[] = [
       { id: "sweep", label: "Param Sweep", icon: "⊟", key: "8" },
       { id: "underwater", label: "Underwater", icon: "↓", key: "9" },
       { id: "mc", label: "Monte Carlo", icon: "⊙", key: "0" },
+      { id: "wfo", label: "Walk-Forward", icon: "⇌", key: "g+w" },
+      { id: "analysis", label: "Trade Analysis", icon: "◉", key: "g+n" },
     ],
   },
   {

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
 import { useSSE } from "@/hooks/useSSE";
@@ -45,6 +45,33 @@ export function SetupScreen() {
   const [runId, setRunId] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ phase: string; pct: number } | null>(null);
   const [running, setRunning] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+
+  // Load saved params from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("pareto_saved_params");
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<Params>;
+        setParams((prev) => ({
+          ...prev,
+          ...(parsed.ticker !== undefined && { ticker: parsed.ticker }),
+          ...(parsed.timeframe !== undefined && { timeframe: parsed.timeframe }),
+          ...(parsed.sl_mult !== undefined && { sl_mult: parsed.sl_mult }),
+          ...(parsed.tp_mult !== undefined && { tp_mult: parsed.tp_mult }),
+          ...(parsed.active_hours !== undefined && { active_hours: parsed.active_hours }),
+          ...(parsed.risk_per_trade !== undefined && { risk_per_trade: parsed.risk_per_trade }),
+          ...(parsed.commission !== undefined && { commission: parsed.commission }),
+          ...(parsed.slippage !== undefined && { slippage: parsed.slippage }),
+          ...(parsed.direction !== undefined && { direction: parsed.direction }),
+          ...(parsed.run_wfo !== undefined && { run_wfo: parsed.run_wfo }),
+          ...(parsed.run_sweep !== undefined && { run_sweep: parsed.run_sweep }),
+          ...(parsed.run_mc !== undefined && { run_mc: parsed.run_mc }),
+        }));
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const update = useCallback(<K extends keyof Params>(k: K, v: Params[K]) => {
     setParams((prev) => ({ ...prev, [k]: v }));
@@ -85,8 +112,9 @@ export function SetupScreen() {
     }
   };
 
-  // Simple preview equity from params (local seed, no API)
-  const previewEquity = fixtures.runs[0].equity.slice(0, 120);
+  const previewEquity = (preview?.equity && preview.equity.length > 0)
+    ? preview.equity.map((v, i) => ({ i, v, dd: 0, bench: 1, oos: false }))
+    : fixtures.runs[0].equity.slice(0, 120);
 
   const UNIVERSE_TICKERS = ["BTC", "ETH", "SOL", "ARB", "OP", "MATIC", "AVAX"];
   const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"];
@@ -164,7 +192,20 @@ export function SetupScreen() {
                 onClick={handleRun} disabled={running}>
                 {running ? "▶ RUNNING…" : "▶ RUN"}
               </button>
-              <button className={styles.btn}>SAVE</button>
+              <button
+                className={styles.btn}
+                onClick={() => {
+                  localStorage.setItem("pareto_saved_params", JSON.stringify(params));
+                  if (typeof setToast === "function") {
+                    setToast("Params saved");
+                  } else {
+                    setSavedFlash(true);
+                    setTimeout(() => setSavedFlash(false), 1500);
+                  }
+                }}
+              >
+                {savedFlash ? "SAVED ✓" : "SAVE"}
+              </button>
               <button className={styles.btn} onClick={() => setParams({ ...params })}>RESET</button>
             </div>
 

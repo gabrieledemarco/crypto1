@@ -14,6 +14,8 @@ const SCREEN_LETTERS: Record<string, ScreenId> = {
   u: "underwater",
   m: "mc",
   c: "compare",
+  w: "wfo",
+  n: "analysis",
 };
 const SCREEN_NUMS: Record<number, ScreenId> = {
   1: "dashboard",

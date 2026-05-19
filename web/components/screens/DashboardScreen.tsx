@@ -107,6 +107,32 @@ export function DashboardScreen() {
                 ["Win%", run.winRate, run.winRate, null],
                 ["PF", run.profitFactor, run.profitFactor, null],
                 ["Trades", run.tradesCount, run.tradesCount, null],
+                [
+                  "Omega",
+                  metricsIS?.omega != null ? metricsIS.omega.toFixed(2) : "—",
+                  metricsOOS?.omega != null ? metricsOOS.omega.toFixed(2) : "—",
+                  metricsOOS?.omega != null && metricsOOS.omega > 1
+                    ? "var(--green)"
+                    : null,
+                ],
+                [
+                  "Ulcer",
+                  metricsIS?.ulcer != null ? `${metricsIS.ulcer.toFixed(1)}%` : "—",
+                  metricsOOS?.ulcer != null ? `${metricsOOS.ulcer.toFixed(1)}%` : "—",
+                  "var(--coral)",
+                ],
+                [
+                  "Recov",
+                  metricsIS?.recoveryFactor != null
+                    ? metricsIS.recoveryFactor.toFixed(1)
+                    : "—",
+                  metricsOOS?.recoveryFactor != null
+                    ? metricsOOS.recoveryFactor.toFixed(1)
+                    : "—",
+                  metricsOOS?.recoveryFactor != null && metricsOOS.recoveryFactor > 1
+                    ? "var(--green)"
+                    : null,
+                ],
               ] as [string, unknown, unknown, string | null][]
             ).map(([label, isVal, oosVal, color], i) => (
               <div key={i} className={styles.metricPair}>
