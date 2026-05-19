@@ -10,12 +10,23 @@ interface Bar {
   v?: number;
 }
 
+export interface TradeMarker {
+  entryTs: number;
+  entryPrice: number;
+  exitTs: number;
+  exitPrice: number;
+  side: "L" | "S";
+  win: boolean;
+}
+
 interface Props {
   bars: Bar[];
   width?: number;
   height?: number;
   showEMA20?: boolean;
   showEMA50?: boolean;
+  markers?: TradeMarker[];
+  maxBars?: number;
 }
 
 function computeEMA(prices: number[], period: number): number[] {
@@ -32,6 +43,8 @@ export function CandlestickChart({
   height = 240,
   showEMA20 = true,
   showEMA50 = false,
+  markers,
+  maxBars = 120,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [svgWidth, setSvgWidth] = useState(480);
@@ -44,7 +57,21 @@ export function CandlestickChart({
     return () => ro.disconnect();
   }, []);
 
-  const visible = bars.slice(-120);
+  const visible = bars.slice(-maxBars);
+
+  // Bar timestamps for marker alignment
+  const barTsMs: number[] = visible.map((b) => {
+    if (!b.ts) return 0;
+    try { return new Date(b.ts).getTime(); } catch { return 0; }
+  });
+  const findBarIdx = (tsMs: number): number => {
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < barTsMs.length; i++) {
+      const d = Math.abs(barTsMs[i] - tsMs);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  };
 
   if (visible.length === 0) {
     return (
@@ -206,6 +233,33 @@ export function CandlestickChart({
             opacity={0.85}
           />
         )}
+
+        {/* Trade markers */}
+        {markers && markers.map((m, mi) => {
+          const ei = findBarIdx(m.entryTs);
+          const xi = findBarIdx(m.exitTs);
+          const ex = padL + ei * candleW + candleW / 2;
+          const xx = padL + xi * candleW + candleW / 2;
+          const ey = py(m.entryPrice);
+          const exy = py(m.exitPrice);
+          const entryColor = m.side === "L" ? "#ffb53b" : "#3dd6f5";
+          const exitColor = m.win ? "#6fd17a" : "#ff7a55";
+          const s = 5;
+          const entryPts = m.side === "L"
+            ? `${ex},${ey - s} ${ex + s},${ey + s} ${ex - s},${ey + s}`
+            : `${ex},${ey + s} ${ex + s},${ey - s} ${ex - s},${ey - s}`;
+          return (
+            <g key={mi} opacity={0.9}>
+              <line x1={ex} y1={ey} x2={xx} y2={exy}
+                stroke={exitColor} strokeWidth={0.7} opacity={0.2} strokeDasharray="2,2" />
+              <polygon points={entryPts} fill={entryColor} />
+              <polygon
+                points={`${xx},${exy - s} ${xx + s},${exy} ${xx},${exy + s} ${xx - s},${exy}`}
+                fill={exitColor}
+              />
+            </g>
+          );
+        })}
 
         {/* Y-axis labels */}
         {yLabelValues.map((v, i) => (

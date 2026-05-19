@@ -12,13 +12,12 @@ interface AssetListItem {
 }
 
 interface Bar {
-  i: number;
+  ts?: string;
   o: number;
   h: number;
   l: number;
   c: number;
   v: number;
-  r: number;
 }
 
 interface AssetStatsApi {
