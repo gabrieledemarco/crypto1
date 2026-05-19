@@ -8,6 +8,8 @@ import { Sparkline } from "@/components/charts/Sparkline";
 import styles from "./UnderwaterScreen.module.css";
 import type { EquityPoint, DDPeriod } from "@/lib/fixtures";
 
+const DD_THRESHOLD = 0.005; // 0.5% — minimum depth to count as a drawdown period
+
 function computeDdPeriods(equity: EquityPoint[]): DDPeriod[] {
   if (equity.length < 2) return [];
   const periods: DDPeriod[] = [];
@@ -19,7 +21,7 @@ function computeDdPeriods(equity: EquityPoint[]): DDPeriod[] {
     const v = equity[i].v;
     if (!inDD) {
       if (v >= peak) { peak = v; peakIdx = i; troughV = v; troughIdx = i; }
-      else if ((peak - v) / peak > 0.005) { inDD = true; troughV = v; troughIdx = i; }
+      else if ((peak - v) / peak > DD_THRESHOLD) { inDD = true; troughV = v; troughIdx = i; }
     } else {
       if (v < troughV) { troughV = v; troughIdx = i; }
       if (v >= peak * 0.998) {
@@ -51,6 +53,7 @@ export function UnderwaterScreen() {
   const equityQuery = useRunEquity(activeRunId || null);
 
   const usingApiEquity = equityQuery.data && equityQuery.data.length > 0;
+  const hasRealEquity = usingApiEquity;
   const equity: EquityPoint[] = usingApiEquity
     ? equityQuery.data!.map((e: {i:number;v:number;dd:number;ts?:string}) => ({
         i: e.i, v: e.v, dd: e.dd, ts: e.ts, bench: 1, oos: false,
@@ -82,6 +85,7 @@ export function UnderwaterScreen() {
       <div className={styles.panel} style={{ gridColumn: "span 7" }}>
         <div className={styles.panelHeader}>
           <span className={styles.panelTitle}>TOP 5 DRAWDOWNS</span>
+          {!hasRealEquity && <span style={{fontFamily:"var(--font-mono)",fontSize:9,color:"var(--amber)",border:"1px solid var(--amber)",padding:"1px 4px"}}>DEMO</span>}
         </div>
         <div className={styles.panelBody}>
           <div className={styles.table}>

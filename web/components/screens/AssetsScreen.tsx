@@ -292,106 +292,131 @@ export function AssetsScreen() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      {/* Top row: ticker list | series detail | chart | stats */}
+      {/* Top row: asset list + price chart + stats */}
       <div className={styles.grid}>
-
-        {/* Col A — Ticker list — span 2 */}
-        <div className={styles.panel} style={{ gridColumn: "span 2" }}>
+        {/* Left: asset list — span 4 */}
+        <div className={styles.panel} style={{ gridColumn: "span 4" }}>
           <div className={styles.panelHeader}>
             <span className={styles.panelTitle}>ASSETS</span>
-            <span className={styles.panelSub}>{groupedAssets.length}</span>
+            <span className={styles.panelSub}>
+              {groupedAssets.length > 0
+                ? `${groupedAssets.length} ticker · ${apiAssets?.length ?? 0} serie`
+                : "nessun asset scaricato"}
+            </span>
           </div>
-          <div className={styles.panelBody} style={{ padding: "4px 0", gap: 0 }}>
+          <div className={styles.panelBody}>
             <div className={styles.assetList}>
+              {/* API assets grouped by ticker */}
               {groupedAssets.length > 0
                 ? groupedAssets.map(({ ticker, series }) => {
                     const kind = getKind(ticker);
-                    const isActive = ticker === selectedTicker;
+                    const isActiveTicker = ticker === selectedTicker;
                     return (
-                      <div
-                        key={ticker}
-                        className={`${styles.tickerRow} ${isActive ? styles.tickerRowActive : ""}`}
-                        onClick={() => {
-                          setSelectedTicker(ticker);
-                          setShowFetch(false);
-                          if (!isActive) setViewInterval(series[0].interval);
-                        }}
-                      >
-                        <span
-                          className={styles.tickerChip}
-                          style={{
-                            borderColor: KIND_COLORS[kind] ?? "var(--border-l)",
-                            color: KIND_COLORS[kind] ?? "var(--text)",
-                            fontSize: 10,
-                          }}
+                      <div key={ticker} className={styles.assetGroup}>
+                        {/* Ticker header */}
+                        <div
+                          className={`${styles.assetGroupHeader} ${isActiveTicker ? styles.assetGroupHeaderActive : ""}`}
+                          onClick={() => selectSeries(ticker, series[0].interval)}
                         >
-                          {ticker}
-                        </span>
-                        <span className={styles.tickerKind}>{kind}</span>
-                        <span className={styles.tickerTfCount}>{series.length}</span>
+                          <span
+                            className={styles.tickerChip}
+                            style={{
+                              borderColor: KIND_COLORS[kind] ?? "var(--border-l)",
+                              color: KIND_COLORS[kind] ?? "var(--text)",
+                            }}
+                          >
+                            {ticker}
+                          </span>
+                          <span className={styles.kindBadge}>{kind}</span>
+                          <span className={styles.seriesCount}>
+                            {series.length} TF
+                          </span>
+                        </div>
+                        {/* Series rows */}
+                        {series.map((s) => {
+                          const isActive =
+                            isActiveTicker && viewInterval === s.interval;
+                          return (
+                            <div
+                              key={s.interval}
+                              className={`${styles.seriesRow} ${isActive ? styles.seriesRowActive : ""}`}
+                              onClick={() => selectSeries(ticker, s.interval)}
+                            >
+                              <span className={styles.seriesInterval}>
+                                {s.interval}
+                              </span>
+                              <span className={styles.seriesDates}>
+                                {fmtDate(s.start)} → {fmtDate(s.end)}
+                              </span>
+                              <span className={styles.seriesBars}>
+                                {s.bars.toLocaleString()}
+                              </span>
+                            </div>
+                          );
+                        })}
                       </div>
                     );
                   })
-                : fixtures.assets.map((asset) => {
+                : /* Fixture fallback when nothing downloaded */
+                  fixtures.assets.map((asset) => {
+                    const s = asset.stats;
+                    const isSelected = asset.ticker === selectedTicker;
                     const kind = getKind(asset.ticker);
-                    const isActive = asset.ticker === selectedTicker;
                     return (
                       <div
                         key={asset.ticker}
-                        className={`${styles.tickerRow} ${isActive ? styles.tickerRowActive : ""}`}
+                        className={`${styles.assetRow} ${isSelected ? styles.assetRowActive : ""}`}
                         onClick={() => setSelectedTicker(asset.ticker)}
                       >
-                        <span
-                          className={styles.tickerChip}
-                          style={{
-                            borderColor: KIND_COLORS[kind] ?? "var(--border-l)",
-                            color: KIND_COLORS[kind] ?? "var(--text)",
-                            fontSize: 10,
-                          }}
-                        >
-                          {asset.ticker}
-                        </span>
-                        <span className={styles.tickerKind}>{kind}</span>
-                        <span className={styles.demoTag}>DEMO</span>
+                        <div className={styles.assetRowTop}>
+                          <span
+                            className={styles.tickerChip}
+                            style={{
+                              borderColor: KIND_COLORS[kind] ?? "var(--border-l)",
+                              color: KIND_COLORS[kind] ?? "var(--text)",
+                            }}
+                          >
+                            {asset.ticker}
+                          </span>
+                          <span className={styles.kindBadge}>{kind}</span>
+                          <span className={styles.seriesCount}>DEMO</span>
+                        </div>
+                        <div className={styles.assetRowStats}>
+                          <span className={styles.statItem}>
+                            CAGR{" "}
+                            <span className={styles.statVal} style={{ color: "var(--green)" }}>
+                              {(s.cagr * 100).toFixed(1)}%
+                            </span>
+                          </span>
+                          <span className={styles.statItem}>
+                            SHP{" "}
+                            <span className={styles.statVal} style={{ color: "var(--amber)" }}>
+                              {s.sharpe.toFixed(2)}
+                            </span>
+                          </span>
+                        </div>
                       </div>
                     );
                   })}
             </div>
-            {/* Fetch trigger at bottom */}
-            <div style={{ padding: "6px 8px", borderTop: "1px solid var(--border)", flexShrink: 0 }}>
-              <button
-                className={styles.btnFetch}
-                style={{ width: "100%" }}
-                onClick={() => {
-                  setShowFetch(true);
-                  setFetchTicker("");
-                  setSearchVal("");
-                  setTimeout(() => inputRef.current?.focus(), 50);
-                }}
-              >
-                + FETCH
-              </button>
-            </div>
-          </div>
-        </div>
 
-        {/* Col B — Series detail / Fetch form — span 3 */}
-        <div className={styles.panel} style={{ gridColumn: "span 3" }}>
-          {showFetch ? (
-            <>
-              <div className={styles.panelHeader}>
-                <span className={styles.panelTitle}>FETCH SERIE</span>
+            {/* Fetch form */}
+            <div className={styles.fetchSection}>
+              {!showFetch ? (
                 <button
-                  className={styles.btnCancel}
-                  style={{ marginLeft: "auto" }}
-                  onClick={() => { setShowFetch(false); setFetchMsg(null); }}
+                  className={styles.btnFetch}
+                  onClick={() => {
+                    setShowFetch(true);
+                    setTimeout(() => inputRef.current?.focus(), 50);
+                  }}
                 >
-                  ✕
+                  + FETCH
                 </button>
-              </div>
-              <div className={styles.panelBody}>
+              ) : (
                 <div className={styles.fetchForm}>
-                  <div className={styles.label}>TICKER</div>
+                  <div className={styles.label}>CERCA TICKER</div>
+
+                  {/* Autocomplete */}
                   <div className={styles.searchWrap} ref={searchRef}>
                     <input
                       ref={inputRef}
@@ -409,8 +434,9 @@ export function AssetsScreen() {
                       onFocus={() => setDropOpen(true)}
                       onKeyDown={(e) => {
                         if (e.key === "Escape") setDropOpen(false);
-                        if (e.key === "Enter" && suggestions.length > 0)
+                        if (e.key === "Enter" && suggestions.length > 0) {
                           selectTicker(suggestions[0]);
+                        }
                       }}
                     />
                     {dropOpen && suggestions.length > 0 && (
@@ -419,7 +445,10 @@ export function AssetsScreen() {
                           <button
                             key={t}
                             className={`${styles.dropItem} ${fetchTicker === t ? styles.dropItemActive : ""}`}
-                            onMouseDown={(e) => { e.preventDefault(); selectTicker(t); }}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              selectTicker(t);
+                            }}
                           >
                             {t}
                           </button>
@@ -428,6 +457,7 @@ export function AssetsScreen() {
                     )}
                   </div>
 
+                  {/* Timeframe pills */}
                   <div className={styles.label}>TIMEFRAME</div>
                   <div className={styles.periodPills}>
                     {FETCH_TIMEFRAMES.map((tf) => (
@@ -441,9 +471,15 @@ export function AssetsScreen() {
                     ))}
                   </div>
 
-                  <div className={styles.label}>
+                  {/* Auto-period info */}
+                  <div className={styles.label} style={{ marginTop: 2 }}>
                     PERIODO AUTO:{" "}
-                    <span style={{ color: "var(--amber)", fontWeight: 700 }}>{autoPeriod}</span>
+                    <span style={{ color: "var(--amber)", fontWeight: 700 }}>
+                      {autoPeriod}
+                    </span>
+                    <span style={{ marginLeft: 6, opacity: 0.6 }}>
+                      (max disponibile per {fetchInterval})
+                    </span>
                   </div>
 
                   <div className={styles.fetchActions}>
@@ -452,75 +488,33 @@ export function AssetsScreen() {
                       onClick={handleFetch}
                       disabled={fetching || !fetchTicker}
                     >
-                      {fetching ? "SCARICANDO…" : `FETCH${fetchTicker ? ` ${fetchTicker}` : ""}`}
+                      {fetching
+                        ? "SCARICANDO…"
+                        : `FETCH${fetchTicker ? ` ${fetchTicker}` : ""}`}
+                    </button>
+                    <button
+                      className={styles.btnCancel}
+                      onClick={() => {
+                        setShowFetch(false);
+                        setFetchMsg(null);
+                        setFetchTicker("");
+                        setSearchVal("");
+                      }}
+                    >
+                      CANCEL
                     </button>
                   </div>
-                  {fetchMsg && <div className={styles.fetchMsg}>{fetchMsg}</div>}
+                  {fetchMsg && (
+                    <div className={styles.fetchMsg}>{fetchMsg}</div>
+                  )}
                 </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className={styles.panelHeader}>
-                <span className={styles.panelTitle}>SERIE</span>
-                {selectedTicker && (
-                  <span
-                    className={styles.tickerChip}
-                    style={{
-                      borderColor: KIND_COLORS[getKind(selectedTicker)] ?? "var(--border-l)",
-                      color: KIND_COLORS[getKind(selectedTicker)] ?? "var(--text)",
-                      fontSize: 10,
-                    }}
-                  >
-                    {selectedTicker}
-                  </span>
-                )}
-                <span className={styles.panelSub} style={{ marginLeft: "auto" }}>
-                  {(groupedAssets.find(g => g.ticker === selectedTicker)?.series.length ?? 0)} disponibili
-                </span>
-              </div>
-              <div className={styles.panelBody} style={{ padding: 0, gap: 0 }}>
-                {(() => {
-                  const group = groupedAssets.find(g => g.ticker === selectedTicker);
-                  if (!group) {
-                    return (
-                      <div className={styles.seriesEmptyState}>
-                        {groupedAssets.length === 0
-                          ? "Nessun asset scaricato.\nClicca + FETCH per iniziare."
-                          : "← Seleziona un asset"}
-                      </div>
-                    );
-                  }
-                  return group.series.map((s) => {
-                    const isActive = viewInterval === s.interval;
-                    return (
-                      <div
-                        key={s.interval}
-                        className={`${styles.seriesDetailRow} ${isActive ? styles.seriesDetailRowActive : ""}`}
-                        onClick={() => setViewInterval(s.interval)}
-                      >
-                        <div className={styles.seriesDetailTop}>
-                          <span className={styles.seriesDetailInterval}>{s.interval}</span>
-                          <span className={styles.seriesDetailBars}>
-                            {s.bars.toLocaleString()} bar
-                          </span>
-                        </div>
-                        <div className={styles.seriesDetailDates}>
-                          <span>{fmtDate(s.start)}</span>
-                          <span style={{ color: "var(--faint)", margin: "0 4px" }}>→</span>
-                          <span>{fmtDate(s.end)}</span>
-                        </div>
-                      </div>
-                    );
-                  });
-                })()}
-              </div>
-            </>
-          )}
+              )}
+            </div>
+          </div>
         </div>
 
-        {/* Col C — candlestick chart — span 4 */}
-        <div className={styles.panel} style={{ gridColumn: "span 4" }}>
+        {/* Middle: candlestick chart — span 5 */}
+        <div className={styles.panel} style={{ gridColumn: "span 5" }}>
           <div className={styles.panelHeader}>
             <span className={styles.panelTitle}>
               {selectedTicker} · PRICE · {viewInterval.toUpperCase()}

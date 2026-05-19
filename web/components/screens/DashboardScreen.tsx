@@ -46,6 +46,10 @@ export function DashboardScreen() {
   const metricsIS = run?.metricsIS;
   const metricsOOS = run?.metricsOOS;
 
+  const hasRealEquity = !!(equityQuery.data && equityQuery.data.length > 0);
+  const showMonthlyWarning = !hasRealEquity && monthly.length > 0;
+  const showDDWarning = !hasRealEquity && run?.ddPeriods && run.ddPeriods.length > 0;
+
   if (!run) return <div className={styles.empty}>No run selected</div>;
 
   return (
@@ -107,6 +111,32 @@ export function DashboardScreen() {
                 ["Win%", run.winRate, run.winRate, null],
                 ["PF", run.profitFactor, run.profitFactor, null],
                 ["Trades", run.tradesCount, run.tradesCount, null],
+                [
+                  "Omega",
+                  metricsIS?.omega != null ? metricsIS.omega.toFixed(2) : "—",
+                  metricsOOS?.omega != null ? metricsOOS.omega.toFixed(2) : "—",
+                  metricsOOS?.omega != null && metricsOOS.omega > 1
+                    ? "var(--green)"
+                    : null,
+                ],
+                [
+                  "Ulcer",
+                  metricsIS?.ulcer != null ? `${metricsIS.ulcer.toFixed(1)}%` : "—",
+                  metricsOOS?.ulcer != null ? `${metricsOOS.ulcer.toFixed(1)}%` : "—",
+                  "var(--coral)",
+                ],
+                [
+                  "Recov",
+                  metricsIS?.recoveryFactor != null
+                    ? metricsIS.recoveryFactor.toFixed(1)
+                    : "—",
+                  metricsOOS?.recoveryFactor != null
+                    ? metricsOOS.recoveryFactor.toFixed(1)
+                    : "—",
+                  metricsOOS?.recoveryFactor != null && metricsOOS.recoveryFactor > 1
+                    ? "var(--green)"
+                    : null,
+                ],
               ] as [string, unknown, unknown, string | null][]
             ).map(([label, isVal, oosVal, color], i) => (
               <div key={i} className={styles.metricPair}>
@@ -131,6 +161,15 @@ export function DashboardScreen() {
         <div className={styles.panelHeader}>
           <span className={styles.panelTitle}>MONTHLY P&L</span>
           <span className={styles.panelSub}>24 months</span>
+          {showMonthlyWarning && (
+            <span style={{
+              fontFamily: "var(--font-mono)", fontSize: 9,
+              color: "var(--amber)", border: "1px solid currentColor",
+              padding: "1px 4px",
+            }}>
+              DEMO
+            </span>
+          )}
         </div>
         <div className={styles.panelBody}>
           <MonthlyHeat monthly={monthly} cellSize={22} />
@@ -213,6 +252,15 @@ export function DashboardScreen() {
       <div className={styles.panel} style={{ gridColumn: "span 4" }}>
         <div className={styles.panelHeader}>
           <span className={styles.panelTitle}>DD TOP 3</span>
+          {showDDWarning && (
+            <span style={{
+              fontFamily: "var(--font-mono)", fontSize: 9,
+              color: "var(--amber)", border: "1px solid currentColor",
+              padding: "1px 4px",
+            }}>
+              DEMO
+            </span>
+          )}
         </div>
         <div className={styles.panelBody}>
           <div className={styles.table}>

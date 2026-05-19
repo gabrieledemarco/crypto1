@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
-import { useRunEquity } from "@/hooks/useRun";
+import { useRunEquity, isRealRunId } from "@/hooks/useRun";
 import { EquityChart } from "@/components/charts/EquityChart";
 import { DrawdownChart } from "@/components/charts/DrawdownChart";
 import styles from "./EquityScreen.module.css";
@@ -16,6 +16,7 @@ export function EquityScreen() {
 
   const equityQuery = useRunEquity(activeRunId || null);
   const run = runs.find((r) => r.id === activeRunId) ?? fixtures.runs[0];
+  const isFixtureRun = !isRealRunId(activeRunId);
 
   const equity: EquityPoint[] =
     equityQuery.data && equityQuery.data.length > 0
@@ -43,6 +44,26 @@ export function EquityScreen() {
     ["PF", run?.profitFactor, run?.profitFactor, null],
     ["WIN%", run?.winRate, run?.winRate, null],
     ["TRADES", run?.tradesCount, run?.tradesCount, null],
+    [
+      "OMEGA",
+      IS?.omega != null ? IS.omega.toFixed(2) : "—",
+      OOS?.omega != null ? OOS.omega.toFixed(2) : "—",
+      OOS?.omega != null && OOS.omega > 1 ? "var(--green)" : null,
+    ],
+    [
+      "ULCER",
+      IS?.ulcer != null ? `${IS.ulcer.toFixed(1)}%` : "—",
+      OOS?.ulcer != null ? `${OOS.ulcer.toFixed(1)}%` : "—",
+      "var(--coral)",
+    ],
+    [
+      "RECOV",
+      IS?.recoveryFactor != null ? IS.recoveryFactor.toFixed(1) : "—",
+      OOS?.recoveryFactor != null ? OOS.recoveryFactor.toFixed(1) : "—",
+      OOS?.recoveryFactor != null && OOS.recoveryFactor > 1
+        ? "var(--green)"
+        : null,
+    ],
   ];
 
   return (
@@ -52,6 +73,15 @@ export function EquityScreen() {
         <div className={styles.panelHeader}>
           <span className={styles.panelTitle}>EQUITY · IS / OOS</span>
           <span style={{ flex: 1 }} />
+          {isFixtureRun && (
+            <span style={{
+              fontFamily:"var(--font-mono)", fontSize:9,
+              color:"var(--amber)", border:"1px solid var(--amber)",
+              padding:"1px 5px", marginLeft:"auto",
+            }}>
+              DEMO DATA
+            </span>
+          )}
           <button
             className={`${styles.pill} ${logScale ? styles.active : ""}`}
             onClick={() => setLogScale(!logScale)}

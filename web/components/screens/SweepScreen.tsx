@@ -1,39 +1,64 @@
 "use client";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
 import { useRunSweep } from "@/hooks/useRun";
 import { HeatmapGrid } from "@/components/charts/HeatmapGrid";
 import styles from "./SweepScreen.module.css";
 
-const SL_RANGE = [1.0, 1.5, 2.0, 2.5, 3.0];
-const TP_RANGE = [2.0, 3.0, 4.0, 5.0, 7.0];
+const FALLBACK_SL_RANGE = [1.0, 1.5, 2.0, 2.5, 3.0];
+const FALLBACK_TP_RANGE = [2.0, 3.0, 4.0, 5.0, 7.0];
+
+type SweepRecord = { sl_mult: number; tp_mult: number; sharpe_ratio?: number; cagr?: number; max_dd?: number };
 
 export function SweepScreen() {
   const { activeRunId, runs } = useStore();
   const run = runs.find((r) => r.id === activeRunId) ?? fixtures.runs[0];
   const sweepQuery = useRunSweep(activeRunId || null);
 
-  // Use API sweep (flat array of {sl_mult, tp_mult, sharpe_ratio…}) or fixture grid
-  // Fixture grid is number[][], API returns records — handle both
-  const fixtureGrid: number[][] = run?.sweep ?? [];
-  let grid: number[][] = fixtureGrid;
-
-  if (sweepQuery.data && Array.isArray(sweepQuery.data) && sweepQuery.data.length > 0) {
-    const apiRows = sweepQuery.data as { sl_mult: number; tp_mult: number; sharpe_ratio: number }[];
-    const r1 = (n: number) => Math.round(n * 10) / 10;
-    // Build 5×5 grid from SL_RANGE × TP_RANGE — use rounded comparison to avoid float precision issues
-    const newGrid: number[][] = SL_RANGE.map((sl) =>
-      TP_RANGE.map((tp) => {
-        const found = apiRows.find((r) => r1(r.sl_mult) === sl && r1(r.tp_mult) === tp);
-        return found?.sharpe_ratio ?? 0;
-      })
-    );
-    grid = newGrid;
-  }
-
   const [sel, setSel] = useState<[number, number]>([2, 3]);
   const [metric, setMetric] = useState("Sharpe");
+
+  // Determine if we have API flat-array data or fixture grid data
+  const apiRecords = useMemo<SweepRecord[] | null>(() => {
+    if (sweepQuery.data && Array.isArray(sweepQuery.data) && sweepQuery.data.length > 0) {
+      const first = (sweepQuery.data as unknown[])[0];
+      if (first && typeof first === "object" && "sl_mult" in (first as object)) {
+        return sweepQuery.data as SweepRecord[];
+      }
+    }
+    return null;
+  }, [sweepQuery.data]);
+
+  // Derive unique sorted SL/TP ranges from API data; fall back to hardcoded constants
+  const SL_RANGE = useMemo<number[]>(() => {
+    if (!apiRecords) return FALLBACK_SL_RANGE;
+    const vals = [...new Set(apiRecords.map((p) => p.sl_mult))].sort((a, b) => a - b);
+    return vals.length > 0 ? vals : FALLBACK_SL_RANGE;
+  }, [apiRecords]);
+
+  const TP_RANGE = useMemo<number[]>(() => {
+    if (!apiRecords) return FALLBACK_TP_RANGE;
+    const vals = [...new Set(apiRecords.map((p) => p.tp_mult))].sort((a, b) => a - b);
+    return vals.length > 0 ? vals : FALLBACK_TP_RANGE;
+  }, [apiRecords]);
+
+  // Build the grid — API path uses dynamic ranges; fixture path uses raw number[][]
+  const grid = useMemo<number[][]>(() => {
+    if (apiRecords) {
+      const r1 = (n: number) => Math.round(n * 10) / 10;
+      return SL_RANGE.map((sl) =>
+        TP_RANGE.map((tp) => {
+          const found = apiRecords.find((p) => r1(p.sl_mult) === r1(sl) && r1(p.tp_mult) === r1(tp));
+          if (!found) return 0;
+          if (metric === "Sharpe") return found.sharpe_ratio ?? 0;
+          if (metric === "CAGR")   return found.cagr ?? 0;
+          return found.max_dd ?? 0;
+        })
+      );
+    }
+    return (run?.sweep ?? []) as number[][];
+  }, [apiRecords, SL_RANGE, TP_RANGE, metric, run?.sweep]);
 
   if (!grid.length) return <div className={styles.empty}>No sweep data</div>;
 
@@ -59,8 +84,9 @@ export function SweepScreen() {
   let bestVal = -Infinity;
   grid.forEach((row, r) => row.forEach((v, c) => { if (v > bestVal) { bestVal = v; best = [r, c]; } }));
 
-  const yLabels = SL_RANGE.slice(0, rows).map(String);
-  const xLabels = TP_RANGE.slice(0, cols).map(String);
+  // Axis labels: use derived ranges for API data, fallback ranges sliced for fixture grids
+  const yLabels = (apiRecords ? SL_RANGE : FALLBACK_SL_RANGE.slice(0, rows)).map((v) => v.toFixed(1));
+  const xLabels = (apiRecords ? TP_RANGE : FALLBACK_TP_RANGE.slice(0, cols)).map((v) => v.toFixed(1));
 
   return (
     <div className={styles.grid}>
@@ -100,8 +126,8 @@ export function SweepScreen() {
         </div>
         <div className={styles.panelBody}>
           <div className={styles.metricGrid}>
-            <MetricCell label="SL MULT"  value={String(SL_RANGE[sel[0]] ?? sel[0])} color="var(--cyan)" />
-            <MetricCell label="TP MULT"  value={String(TP_RANGE[sel[1]] ?? sel[1])} color="var(--cyan)" />
+            <MetricCell label="SL MULT"  value={SL_RANGE[sel[0]] != null ? SL_RANGE[sel[0]].toFixed(1) : String(sel[0])} color="var(--cyan)" />
+            <MetricCell label="TP MULT"  value={TP_RANGE[sel[1]] != null ? TP_RANGE[sel[1]].toFixed(1) : String(sel[1])} color="var(--cyan)" />
             <MetricCell label={metric}   value={selVal.toFixed(2)} color="var(--amber)" big />
             <MetricCell label="vs BEST"  value={(selVal - bestVal).toFixed(2)}
               color={selVal >= bestVal ? "var(--green)" : "var(--coral)"} />
@@ -119,7 +145,7 @@ export function SweepScreen() {
           <div className={styles.section}>
             <div className={styles.sectionLabel}>BEST PLATEAU</div>
             <div className={styles.mono} style={{ marginTop: 4 }}>
-              SL {SL_RANGE[best[0]]} · TP {TP_RANGE[best[1]]} ·{" "}
+              SL {SL_RANGE[best[0]] != null ? SL_RANGE[best[0]].toFixed(1) : best[0]} · TP {TP_RANGE[best[1]] != null ? TP_RANGE[best[1]].toFixed(1) : best[1]} ·{" "}
               <b style={{ color: "var(--amber)" }}>{bestVal.toFixed(2)}</b>
             </div>
             <button className={styles.btn} style={{ marginTop: 8 }} onClick={() => setSel(best)}>JUMP →</button>

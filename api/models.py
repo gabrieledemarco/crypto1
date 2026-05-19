@@ -26,6 +26,7 @@ class AssetFetch(BaseModel):
     ticker: str
     source: str = "yfinance"
     period: str = "2y"
+    interval: str = "1d"
 
 
 class StrategyCreate(BaseModel):

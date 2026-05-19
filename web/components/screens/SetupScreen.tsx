@@ -1,7 +1,8 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
+import type { Run, RunMetrics } from "@/lib/fixtures";
 import { useSSE } from "@/hooks/useSSE";
 import { usePreview } from "@/hooks/usePreview";
 import { EquityChart } from "@/components/charts/EquityChart";
@@ -45,6 +46,33 @@ export function SetupScreen() {
   const [runId, setRunId] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ phase: string; pct: number } | null>(null);
   const [running, setRunning] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+
+  // Load saved params from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("pareto_saved_params");
+      if (saved) {
+        const parsed = JSON.parse(saved) as Partial<Params>;
+        setParams((prev) => ({
+          ...prev,
+          ...(parsed.ticker !== undefined && { ticker: parsed.ticker }),
+          ...(parsed.timeframe !== undefined && { timeframe: parsed.timeframe }),
+          ...(parsed.sl_mult !== undefined && { sl_mult: parsed.sl_mult }),
+          ...(parsed.tp_mult !== undefined && { tp_mult: parsed.tp_mult }),
+          ...(parsed.active_hours !== undefined && { active_hours: parsed.active_hours }),
+          ...(parsed.risk_per_trade !== undefined && { risk_per_trade: parsed.risk_per_trade }),
+          ...(parsed.commission !== undefined && { commission: parsed.commission }),
+          ...(parsed.slippage !== undefined && { slippage: parsed.slippage }),
+          ...(parsed.direction !== undefined && { direction: parsed.direction }),
+          ...(parsed.run_wfo !== undefined && { run_wfo: parsed.run_wfo }),
+          ...(parsed.run_sweep !== undefined && { run_sweep: parsed.run_sweep }),
+          ...(parsed.run_mc !== undefined && { run_mc: parsed.run_mc }),
+        }));
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const update = useCallback(<K extends keyof Params>(k: K, v: Params[K]) => {
     setParams((prev) => ({ ...prev, [k]: v }));
@@ -57,7 +85,68 @@ export function SetupScreen() {
   useSSE(runId ? `/api/runs/${runId}/stream` : null, (data) => {
     const ev = data as { phase: string; pct: number; msg?: string };
     setProgress(ev);
-    if (ev.phase === "done") { setRunning(false); setToast("Run complete"); }
+    if (ev.phase === "done") {
+      setRunning(false);
+      setToast("Run complete");
+      if (runId) {
+        // Immediately set activeRunId so React Query hooks fire and DEMO badges clear
+        useStore.getState().setRun(runId);
+        // Async: fetch run metadata and add a real Run to the store
+        fetch(`/api/runs/${runId}`)
+          .then((r) => r.json())
+          .then((apiRun: Record<string, unknown>) => {
+            const versionMetrics = apiRun.metrics as Record<string, Record<string, number>> | undefined;
+            const best = versionMetrics ? Object.values(versionMetrics)[0] : undefined;
+            const emptyM: RunMetrics = { sharpe: 0, sortino: 0, cagr: 0, maxDD: 0, calmar: 0, finalReturn: 0 };
+            const realM: RunMetrics = best ? {
+              sharpe: best.sharpe_ratio ?? 0,
+              sortino: 0,
+              cagr: best.cagr_pct ?? 0,
+              maxDD: best.max_drawdown_pct ?? 0,
+              calmar: best.calmar_ratio ?? 0,
+              finalReturn: best.total_return_pct ?? 0,
+              omega: best.omega,
+              ulcer: best.ulcer,
+              recoveryFactor: best.recovery_factor,
+            } : emptyM;
+            const newRun: Run = {
+              id: runId,
+              name: (apiRun.name as string) ?? `${params.ticker} · ${params.timeframe}`,
+              strategy: params.ticker,
+              color: "#ffb53b",
+              equity: [],
+              oosStart: 0,
+              trades: [],
+              params: {
+                fastMA: 20, slowMA: 80,
+                atrStop: params.sl_mult,
+                takeProfit: params.tp_mult,
+                riskPerTrade: params.risk_per_trade,
+                fees: params.commission,
+                slippage: params.slippage,
+                funding: false,
+                universe: [params.ticker.replace(/-USD$/, "")],
+                timeframe: params.timeframe,
+              },
+              dates: { isStart: "", isEnd: "", oosStart: "", oosEnd: "" },
+              metricsIS: realM,
+              metricsOOS: realM,
+              ddPeriods: [],
+              sweep: [],
+              mc: { paths: [], percentiles: { p5: [], p25: [], p50: [], p75: [], p95: [] }, finals: [], ddFinals: [] },
+              winRate: best?.win_rate_pct ?? 0,
+              profitFactor: best?.profit_factor ?? 0,
+              tradesCount: best?.n_trades ?? 0,
+              avgDur: 0,
+              exposure: 0,
+              monthly: [],
+            };
+            const { runs: cur } = useStore.getState();
+            useStore.getState().setRuns([...cur, newRun]);
+          })
+          .catch(() => { /* store update is best-effort */ });
+      }
+    }
     if (ev.phase === "error") { setRunning(false); setToast(`Error: ${ev.msg}`); }
   });
 
@@ -87,7 +176,7 @@ export function SetupScreen() {
 
   const previewEquity = (preview?.equity && preview.equity.length > 0)
     ? preview.equity.map((v, i) => ({ i, v, dd: 0, bench: 1, oos: false }))
-    : fixtures.runs[0].equity.slice(0, 120);
+    : [];
 
   const UNIVERSE_TICKERS = ["BTC", "ETH", "SOL", "ARB", "OP", "MATIC", "AVAX"];
   const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"];
@@ -165,7 +254,20 @@ export function SetupScreen() {
                 onClick={handleRun} disabled={running}>
                 {running ? "▶ RUNNING…" : "▶ RUN"}
               </button>
-              <button className={styles.btn}>SAVE</button>
+              <button
+                className={styles.btn}
+                onClick={() => {
+                  localStorage.setItem("pareto_saved_params", JSON.stringify(params));
+                  if (typeof setToast === "function") {
+                    setToast("Params saved");
+                  } else {
+                    setSavedFlash(true);
+                    setTimeout(() => setSavedFlash(false), 1500);
+                  }
+                }}
+              >
+                {savedFlash ? "SAVED ✓" : "SAVE"}
+              </button>
               <button className={styles.btn} onClick={() => setParams({ ...params })}>RESET</button>
             </div>
 
@@ -188,13 +290,26 @@ export function SetupScreen() {
           {previewLoading && <span className={styles.loading}>loading…</span>}
         </div>
         <div className={styles.panelBody}>
-          <EquityChart
-            equity={previewEquity}
-            oosStart={null}
-            height={240}
-            color="var(--cyan)"
-            showBench={false}
-          />
+          {previewEquity.length > 0 ? (
+            <EquityChart
+              equity={previewEquity}
+              oosStart={null}
+              height={240}
+              color="var(--cyan)"
+              showBench={false}
+            />
+          ) : (
+            <div style={{
+              height: 240, display: "flex", alignItems: "center", justifyContent: "center",
+              color: "var(--faint)", fontFamily: "var(--font-mono)", fontSize: 11,
+              flexDirection: "column", gap: 6,
+            }}>
+              <div>{previewLoading ? "CALCOLO PREVIEW…" : "PREVIEW"}</div>
+              <div style={{ fontSize: 9 }}>
+                {previewLoading ? "" : "Modifica i parametri per visualizzare"}
+              </div>
+            </div>
+          )}
           <div className={styles.previewMetrics}>
             <PreviewMetric label="EST SHARPE"   value={preview?.sharpe?.toFixed(2)    ?? "—"} />
             <PreviewMetric label="EST CAGR"     value={preview?.cagr != null ? `${preview.cagr.toFixed(1)}%` : "—"} />

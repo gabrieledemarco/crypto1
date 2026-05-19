@@ -40,6 +40,9 @@ export interface RunMetrics {
   maxDD: number;
   calmar: number;
   finalReturn: number;
+  omega?: number;
+  ulcer?: number;
+  recoveryFactor?: number;
 }
 
 export interface Run {

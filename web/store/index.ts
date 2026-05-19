@@ -12,7 +12,9 @@ export type ScreenId =
   | "sweep"
   | "underwater"
   | "mc"
-  | "compare";
+  | "compare"
+  | "wfo"
+  | "analysis";
 
 interface Store {
   runs: Run[];
