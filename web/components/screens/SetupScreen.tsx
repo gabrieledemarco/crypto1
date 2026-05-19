@@ -2,6 +2,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
+import type { Run, RunMetrics } from "@/lib/fixtures";
 import { useSSE } from "@/hooks/useSSE";
 import { usePreview } from "@/hooks/usePreview";
 import { EquityChart } from "@/components/charts/EquityChart";
@@ -84,7 +85,68 @@ export function SetupScreen() {
   useSSE(runId ? `/api/runs/${runId}/stream` : null, (data) => {
     const ev = data as { phase: string; pct: number; msg?: string };
     setProgress(ev);
-    if (ev.phase === "done") { setRunning(false); setToast("Run complete"); }
+    if (ev.phase === "done") {
+      setRunning(false);
+      setToast("Run complete");
+      if (runId) {
+        // Immediately set activeRunId so React Query hooks fire and DEMO badges clear
+        useStore.getState().setRun(runId);
+        // Async: fetch run metadata and add a real Run to the store
+        fetch(`/api/runs/${runId}`)
+          .then((r) => r.json())
+          .then((apiRun: Record<string, unknown>) => {
+            const versionMetrics = apiRun.metrics as Record<string, Record<string, number>> | undefined;
+            const best = versionMetrics ? Object.values(versionMetrics)[0] : undefined;
+            const emptyM: RunMetrics = { sharpe: 0, sortino: 0, cagr: 0, maxDD: 0, calmar: 0, finalReturn: 0 };
+            const realM: RunMetrics = best ? {
+              sharpe: best.sharpe_ratio ?? 0,
+              sortino: 0,
+              cagr: best.cagr_pct ?? 0,
+              maxDD: best.max_drawdown_pct ?? 0,
+              calmar: best.calmar_ratio ?? 0,
+              finalReturn: best.total_return_pct ?? 0,
+              omega: best.omega,
+              ulcer: best.ulcer,
+              recoveryFactor: best.recovery_factor,
+            } : emptyM;
+            const newRun: Run = {
+              id: runId,
+              name: (apiRun.name as string) ?? `${params.ticker} · ${params.timeframe}`,
+              strategy: params.ticker,
+              color: "#ffb53b",
+              equity: [],
+              oosStart: 0,
+              trades: [],
+              params: {
+                fastMA: 20, slowMA: 80,
+                atrStop: params.sl_mult,
+                takeProfit: params.tp_mult,
+                riskPerTrade: params.risk_per_trade,
+                fees: params.commission,
+                slippage: params.slippage,
+                funding: false,
+                universe: [params.ticker.replace(/-USD$/, "")],
+                timeframe: params.timeframe,
+              },
+              dates: { isStart: "", isEnd: "", oosStart: "", oosEnd: "" },
+              metricsIS: realM,
+              metricsOOS: realM,
+              ddPeriods: [],
+              sweep: [],
+              mc: { paths: [], percentiles: { p5: [], p25: [], p50: [], p75: [], p95: [] }, finals: [], ddFinals: [] },
+              winRate: best?.win_rate_pct ?? 0,
+              profitFactor: best?.profit_factor ?? 0,
+              tradesCount: best?.n_trades ?? 0,
+              avgDur: 0,
+              exposure: 0,
+              monthly: [],
+            };
+            const { runs: cur } = useStore.getState();
+            useStore.getState().setRuns([...cur, newRun]);
+          })
+          .catch(() => { /* store update is best-effort */ });
+      }
+    }
     if (ev.phase === "error") { setRunning(false); setToast(`Error: ${ev.msg}`); }
   });
 

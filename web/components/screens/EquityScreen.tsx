@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
-import { useRunEquity } from "@/hooks/useRun";
+import { useRunEquity, isRealRunId } from "@/hooks/useRun";
 import { EquityChart } from "@/components/charts/EquityChart";
 import { DrawdownChart } from "@/components/charts/DrawdownChart";
 import styles from "./EquityScreen.module.css";
@@ -16,7 +16,7 @@ export function EquityScreen() {
 
   const equityQuery = useRunEquity(activeRunId || null);
   const run = runs.find((r) => r.id === activeRunId) ?? fixtures.runs[0];
-  const isFixtureRun = !runs.find((r) => r.id === activeRunId);
+  const isFixtureRun = !isRealRunId(activeRunId);
 
   const equity: EquityPoint[] =
     equityQuery.data && equityQuery.data.length > 0
