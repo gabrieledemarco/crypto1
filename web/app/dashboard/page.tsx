@@ -19,6 +19,8 @@ import { CompareScreen }    from "@/components/screens/CompareScreen";
 import { AssetsScreen }     from "@/components/screens/AssetsScreen";
 import { LibraryScreen }    from "@/components/screens/LibraryScreen";
 import { VibeScreen }       from "@/components/screens/VibeScreen";
+import { WFOScreen }        from "@/components/screens/WFOScreen";
+import { TradeAnalysisScreen } from "@/components/screens/TradeAnalysisScreen";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useHotkeys } from "@/hooks/useHotkeys";
 import type { ScreenId } from "@/store";
@@ -41,6 +43,10 @@ function ScreenContent({ screen }: { screen: ScreenId }) {
       return <UnderwaterScreen />;
     case "compare":
       return <CompareScreen />;
+    case "wfo":
+      return <WFOScreen />;
+    case "analysis":
+      return <TradeAnalysisScreen />;
     case "assets":
       return <AssetsScreen />;
     case "library":
