@@ -47,7 +47,7 @@ export function useRuns() {
 }
 
 // Fixture run IDs (run-NNN) don't exist in the database — skip API calls for them
-function isRealRunId(id: string | null): boolean {
+export function isRealRunId(id: string | null): boolean {
   return !!id && !/^run-\d+$/.test(id);
 }
 
