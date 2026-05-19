@@ -1,6 +1,41 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import type { Trade } from "@/lib/fixtures";
+
+// API trade shape from the engine serializer
+interface ApiTrade {
+  entry_time: string;
+  exit_time: string;
+  direction: "LONG" | "SHORT";
+  entry_price: number;
+  exit_price: number;
+  qty: number;
+  pnl: number;
+  exit_reason?: string;
+}
+
+// Map the API trade shape to the frontend Trade type so all components work uniformly
+function normalizeApiTrade(t: ApiTrade, n: number): Trade {
+  const entryMs = new Date(t.entry_time).getTime();
+  const exitMs  = new Date(t.exit_time).getTime();
+  const durH = Number.isFinite(entryMs) && Number.isFinite(exitMs)
+    ? Math.round((exitMs - entryMs) / 3_600_000)
+    : 0;
+  const r = t.entry_price > 0 ? Math.round((t.pnl / t.entry_price) * 1000) / 10 : 0;
+  return {
+    n,
+    idx: n,
+    date: entryMs || 0,
+    side: t.direction === "LONG" ? "L" : "S",
+    entry: t.entry_price,
+    exit: t.exit_price,
+    r,
+    durH,
+    pnl: Math.round(t.pnl * 100) / 100,
+    equity: 0,
+  };
+}
 
 // List all runs
 export function useRuns() {
@@ -51,10 +86,15 @@ export function useRunTrades(
   if (params?.limit) qs.set("limit", String(params.limit ?? 100));
   return useQuery({
     queryKey: ["run-trades", runId, params],
-    queryFn: () =>
-      api.get<{ total: number; trades: unknown[] }>(
+    queryFn: async () => {
+      const res = await api.get<{ total: number; trades: ApiTrade[] }>(
         `/runs/${runId}/trades?${qs}`
-      ),
+      );
+      return {
+        total: res.total,
+        trades: res.trades.map((t, i) => normalizeApiTrade(t, i + 1)),
+      };
+    },
     enabled: isRealRunId(runId),
     staleTime: 60_000,
   });

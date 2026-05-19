@@ -21,10 +21,11 @@ export function SweepScreen() {
 
   if (sweepQuery.data && Array.isArray(sweepQuery.data) && sweepQuery.data.length > 0) {
     const apiRows = sweepQuery.data as { sl_mult: number; tp_mult: number; sharpe_ratio: number }[];
-    // Build 5×5 grid from SL_RANGE × TP_RANGE
+    const r1 = (n: number) => Math.round(n * 10) / 10;
+    // Build 5×5 grid from SL_RANGE × TP_RANGE — use rounded comparison to avoid float precision issues
     const newGrid: number[][] = SL_RANGE.map((sl) =>
       TP_RANGE.map((tp) => {
-        const found = apiRows.find((r) => r.sl_mult === sl && r.tp_mult === tp);
+        const found = apiRows.find((r) => r1(r.sl_mult) === sl && r1(r.tp_mult) === tp);
         return found?.sharpe_ratio ?? 0;
       })
     );

@@ -12,7 +12,7 @@ function apiBase() {
 type Ctx = { params: { path: string[] } };
 
 async function proxy(req: NextRequest, { params }: Ctx) {
-  const upstream = `${apiBase()}/${params.path.join("/")}`;
+  const upstream = `${apiBase()}/${params.path.join("/")}${req.nextUrl.search}`;
 
   const init: RequestInit = {
     method: req.method,
