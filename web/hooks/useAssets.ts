@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 interface AssetListItem {
   ticker: string;
   source: string;
+  interval: string;
   start: string;
   end: string;
   bars: number;
@@ -46,24 +47,26 @@ export function useAssets() {
   });
 }
 
-// OHLCV bars for a single ticker
-export function useAssetBars(ticker: string | null) {
+// OHLCV bars for a single ticker (optionally filtered by interval)
+export function useAssetBars(ticker: string | null, interval = "1d") {
   return useQuery({
-    queryKey: ["asset-bars", ticker],
-    queryFn: () => api.get<Bar[]>(`/assets/${ticker}/bars`),
+    queryKey: ["asset-bars", ticker, interval],
+    queryFn: () => api.get<Bar[]>(`/assets/${ticker}/bars?interval=${interval}&limit=2000`),
     enabled: !!ticker,
     staleTime: 60_000,
     retry: false,
   });
 }
 
-// Quant stats for a single ticker
-export function useAssetStats(ticker: string | null) {
+// Quant stats for a single ticker (optionally for a specific interval)
+export function useAssetStats(ticker: string | null, interval = "1d") {
   return useQuery({
-    queryKey: ["asset-stats", ticker],
-    queryFn: () => api.get<AssetStatsApi>(`/assets/${ticker}/stats`),
+    queryKey: ["asset-stats", ticker, interval],
+    queryFn: () => api.get<AssetStatsApi>(`/assets/${ticker}/stats?interval=${interval}`),
     enabled: !!ticker,
     staleTime: 60_000,
     retry: false,
   });
 }
+
+export type { AssetListItem, AssetStatsApi, Bar };

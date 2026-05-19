@@ -4,16 +4,31 @@ import { fixtures } from "@/lib/fixtures";
 import { useAssets, useAssetBars, useAssetStats } from "@/hooks/useAssets";
 import { CandlestickChart } from "@/components/charts/CandlestickChart";
 import { Histogram } from "@/components/charts/Histogram";
+import { QQPlot }  from "@/components/charts/QQPlot";
+import { ACFPlot } from "@/components/charts/ACFPlot";
 import type { Asset } from "@/lib/fixtures";
 import styles from "./AssetsScreen.module.css";
 
 const KIND_COLORS: Record<string, string> = {
-  spot: "var(--cyan)",
-  perp: "var(--amber)",
-  index: "var(--green)",
+  spot:      "var(--cyan)",
+  perp:      "var(--amber)",
+  index:     "var(--green)",
+  forex:     "var(--green)",
+  stock:     "var(--text)",
+  commodity: "var(--amber)",
+  crypto:    "var(--cyan)",
 };
 
-const PERIODS = ["1y", "2y", "5y"] as const;
+function getKind(ticker: string): string {
+  if (ticker.endsWith("=X")) return "forex";
+  if (ticker.endsWith("=F")) return "commodity";
+  if (ticker.startsWith("^"))  return "index";
+  if (ticker.endsWith("-USD") || ticker.endsWith("-USDT")) return "crypto";
+  return "stock";
+}
+
+const PERIODS    = ["3mo", "6mo", "1y", "2y", "5y", "max"] as const;
+const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d", "1wk"]  as const;
 
 const ALL_TICKERS = [
   // Crypto — large cap
@@ -37,6 +52,14 @@ const ALL_TICKERS = [
   "MSTR", "RIOT", "MARA", "CLSK", "HUT",
   // ETF
   "SPY", "QQQ", "GLD", "SLV", "USO", "VTI", "IWM", "TLT",
+  // Forex (Yahoo Finance format)
+  "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCAD=X",
+  "USDCHF=X", "NZDUSD=X", "EURGBP=X", "EURJPY=X", "GBPJPY=X",
+  "USDMXN=X", "USDBRL=X", "USDCNY=X", "USDINR=X", "USDZAR=X",
+  // Commodities (Yahoo Finance futures format)
+  "GC=F", "SI=F", "CL=F", "NG=F", "BZ=F", "ZW=F", "ZC=F", "ZS=F",
+  // Indices
+  "^GSPC", "^IXIC", "^DJI", "^VIX", "^FTSE", "^N225", "^HSI", "^STOXX50E",
 ];
 
 // ─── Statistical helpers ───────────────────────────────────────────────────
@@ -91,6 +114,8 @@ export function AssetsScreen() {
   const [fetchMsg, setFetchMsg] = useState<string | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [fetchInterval, setFetchInterval] = useState<string>("1d");
+  const [viewInterval,  setViewInterval]  = useState<string>("1d");
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -114,8 +139,8 @@ export function AssetsScreen() {
   // Only query bars/stats when the ticker is actually stored in the API
   const apiTickerExists =
     apiAssets?.some((a) => a.ticker === selectedTicker) ?? false;
-  const { data: apiBars } = useAssetBars(apiTickerExists ? selectedTicker : null);
-  const { data: apiStats } = useAssetStats(apiTickerExists ? selectedTicker : null);
+  const { data: apiBars }  = useAssetBars(apiTickerExists ? selectedTicker : null, viewInterval);
+  const { data: apiStats } = useAssetStats(apiTickerExists ? selectedTicker : null, viewInterval);
 
   // Build display list: prefer API data, fall back to fixtures
   const fixtureMap = new Map<string, Asset>(
@@ -200,10 +225,11 @@ export function AssetsScreen() {
           ticker: fetchTicker,
           source: "yfinance",
           period: fetchPeriod,
+          interval: fetchInterval,
         }),
       });
       if (res.ok) {
-        setFetchMsg(`✓ ${fetchTicker} scaricato (${fetchPeriod})`);
+        setFetchMsg(`✓ ${fetchTicker} (${fetchPeriod}, ${fetchInterval}) scaricato`);
         setShowFetch(false);
         setFetchTicker("");
         setSearchVal("");
@@ -242,6 +268,7 @@ export function AssetsScreen() {
                 const fx = fixtureMap.get(asset.ticker) ?? asset;
                 const s = fx.stats;
                 const isSelected = asset.ticker === selectedTicker;
+                const kind = getKind(asset.ticker);
                 return (
                   <div
                     key={asset.ticker}
@@ -253,13 +280,13 @@ export function AssetsScreen() {
                         className={styles.tickerChip}
                         style={{
                           borderColor:
-                            KIND_COLORS[asset.kind] ?? "var(--border-l)",
-                          color: KIND_COLORS[asset.kind] ?? "var(--text)",
+                            KIND_COLORS[kind] ?? "var(--border-l)",
+                          color: KIND_COLORS[kind] ?? "var(--text)",
                         }}
                       >
                         {asset.ticker}
                       </span>
-                      <span className={styles.kindBadge}>{asset.kind}</span>
+                      <span className={styles.kindBadge}>{kind}</span>
                     </div>
                     <div className={styles.assetRowStats}>
                       <span className={styles.statItem}>
@@ -366,6 +393,20 @@ export function AssetsScreen() {
                     ))}
                   </div>
 
+                  {/* Timeframe pills */}
+                  <div className={styles.label}>TIMEFRAME</div>
+                  <div className={styles.periodPills}>
+                    {TIMEFRAMES.map((tf) => (
+                      <button
+                        key={tf}
+                        className={`${styles.pill} ${fetchInterval === tf ? styles.pillActive : ""}`}
+                        onClick={() => setFetchInterval(tf)}
+                      >
+                        {tf}
+                      </button>
+                    ))}
+                  </div>
+
                   <div className={styles.fetchActions}>
                     <button
                       className={styles.btnFetch}
@@ -401,9 +442,21 @@ export function AssetsScreen() {
         <div className={styles.panel} style={{ gridColumn: "span 5" }}>
           <div className={styles.panelHeader}>
             <span className={styles.panelTitle}>
-              {selectedTicker} · PRICE
+              {selectedTicker} · PRICE · {viewInterval.toUpperCase()}
             </span>
-            <span className={styles.panelSub}>last 120 bars</span>
+            <span className={styles.panelSub}>last {Math.min(bars.length, 120)} bars</span>
+            <div style={{ display: "flex", gap: 3, marginLeft: "auto" }}>
+              {TIMEFRAMES.map((tf) => (
+                <button
+                  key={tf}
+                  className={`${styles.pill} ${viewInterval === tf ? styles.pillActive : ""}`}
+                  style={{ padding: "1px 5px", fontSize: 9 }}
+                  onClick={() => setViewInterval(tf)}
+                >
+                  {tf}
+                </button>
+              ))}
+            </div>
           </div>
           <div className={styles.panelBody}>
             <div className={styles.chartWrap}>
@@ -581,6 +634,46 @@ export function AssetsScreen() {
           </div>
         </div>
       </div>
+
+      {/* Second analysis row: QQ Plot + ACF + Standardized Residuals */}
+      {logReturns.length >= 10 && (
+        <div className={styles.analysisRow}>
+
+          {/* QQ Plot — span 4 */}
+          <div className={styles.analysisPanel} style={{ gridColumn: "span 4" }}>
+            <div className={styles.analysisPanelHeader}>
+              <span className={styles.analysisPanelTitle}>Q-Q PLOT</span>
+              <span className={styles.panelSub}>vs normal</span>
+            </div>
+            <div className={styles.analysisPanelBody}>
+              <QQPlot data={logReturns} height={160} color="#5cc1ff" />
+            </div>
+          </div>
+
+          {/* ACF Plot — span 4 */}
+          <div className={styles.analysisPanel} style={{ gridColumn: "span 4" }}>
+            <div className={styles.analysisPanelHeader}>
+              <span className={styles.analysisPanelTitle}>AUTOCORRELATION (ACF)</span>
+              <span className={styles.panelSub}>lags 1–30</span>
+            </div>
+            <div className={styles.analysisPanelBody}>
+              <ACFPlot data={logReturns} maxLag={30} height={160} color="#ffb53b" />
+            </div>
+          </div>
+
+          {/* Standardized Residuals — span 4 */}
+          <div className={styles.analysisPanel} style={{ gridColumn: "span 4" }}>
+            <div className={styles.analysisPanelHeader}>
+              <span className={styles.analysisPanelTitle}>STD RESIDUALS</span>
+              <span className={styles.panelSub}>±2σ reference</span>
+            </div>
+            <div className={styles.analysisPanelBody}>
+              <StdResidualsChart returns={logReturns} height={160} />
+            </div>
+          </div>
+
+        </div>
+      )}
     </div>
   );
 }
@@ -603,6 +696,74 @@ function StatRow({
       >
         {value}
       </span>
+    </div>
+  );
+}
+
+function StdResidualsChart({ returns, height = 160 }: { returns: number[]; height: number }) {
+  const n = returns.length;
+  if (n < 4) return null;
+  const mean = returns.reduce((a, b) => a + b, 0) / n;
+  const std  = Math.sqrt(returns.reduce((a, b) => a + (b - mean) ** 2, 0) / n) || 1;
+  const z    = returns.map((r) => (r - mean) / std);
+  const maxAbs = Math.max(3, ...z.map(Math.abs));
+
+  const padL = 32, padR = 8, padT = 8, padB = 20;
+  const W = 300, H = height;
+  const w = W - padL - padR, h = H - padT - padB;
+
+  const cx = (i: number) => padL + (i / (n - 1)) * w;
+  const cy = (v: number) => padT + h / 2 - (v / maxAbs) * (h / 2);
+
+  const outliers  = z.filter((v) => Math.abs(v) > 2).length;
+  const pctOut    = ((outliers / n) * 100).toFixed(1);
+
+  return (
+    <div>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        style={{ width: "100%", height, display: "block" }}
+      >
+        {/* grid lines */}
+        {[-2, 0, 2].map((level) => (
+          <line
+            key={level}
+            x1={padL} y1={cy(level)} x2={W - padR} y2={cy(level)}
+            stroke={level === 0 ? "#ffb53b" : "#ff7a55"}
+            strokeWidth={level === 0 ? 0.8 : 0.5}
+            strokeDasharray={level === 0 ? undefined : "3 3"}
+          />
+        ))}
+        {/* y-axis labels */}
+        {[-2, 0, 2].map((level) => (
+          <text
+            key={level}
+            x={padL - 4} y={cy(level) + 3}
+            textAnchor="end"
+            fontFamily="var(--font-mono)" fontSize={8}
+            fill="var(--faint)"
+          >
+            {level}σ
+          </text>
+        ))}
+        {/* dots */}
+        {z.map((v, i) => (
+          <circle
+            key={i}
+            cx={cx(i)} cy={cy(v)} r={1.5}
+            fill={Math.abs(v) > 2 ? "#ff7a55" : "#5cc1ff"}
+            opacity={0.65}
+          />
+        ))}
+      </svg>
+      <div style={{
+        fontFamily: "var(--font-mono)", fontSize: 9,
+        color: "var(--faint)", paddingTop: 2,
+      }}>
+        outliers &gt;2σ: <span style={{ color: outliers / n > 0.05 ? "var(--coral)" : "var(--green)" }}>
+          {outliers} ({pctOut}%)
+        </span>
+      </div>
     </div>
   );
 }

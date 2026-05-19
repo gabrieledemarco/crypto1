@@ -26,8 +26,15 @@ def list_assets():
         "SELECT ticker, source, MIN(ts) as start, MAX(ts) as end, COUNT(*) as bars "
         "FROM assets GROUP BY ticker, source ORDER BY ticker"
     ).fetchall()
-    return [{"ticker": r[0], "source": r[1], "start": str(r[2]), "end": str(r[3]), "bars": r[4]}
-            for r in rows]
+    result = []
+    for r in rows:
+        source = r[1]
+        interval = source.split(":")[-1] if ":" in source else "1d"
+        result.append({
+            "ticker": r[0], "source": r[1], "interval": interval,
+            "start": str(r[2]), "end": str(r[3]), "bars": r[4]
+        })
+    return result
 
 
 @router.post("/fetch")
@@ -40,6 +47,7 @@ def fetch_asset(body: AssetFetch):
         raise HTTPException(400, f"Fetch failed: {exc}")
 
     conn = get_conn()
+    source_key = f"{body.source}:{body.interval}"
     # Upsert bars
     inserted = 0
     for ts, row in df.iterrows():
@@ -47,25 +55,35 @@ def fetch_asset(body: AssetFetch):
             conn.execute(
                 "INSERT OR IGNORE INTO assets (ticker, source, ts, open, high, low, close, volume) "
                 "VALUES (?,?,?,?,?,?,?,?)",
-                [body.ticker, body.source, ts,
+                [body.ticker, source_key, ts,
                  float(row["Open"]), float(row["High"]), float(row["Low"]),
                  float(row["Close"]), float(row["Volume"])]
             )
             inserted += 1
         except Exception:
             pass
-    return {"ticker": body.ticker, "bars": inserted, "source": body.source}
+    return {"ticker": body.ticker, "bars": inserted, "source": source_key}
 
 
 @router.get("/{ticker}/bars")
-def get_bars(ticker: str, limit: int = 1000):
+def get_bars(ticker: str, limit: int = 1000, interval: str = "1d"):
+    source_key = f"yfinance:{interval}"
     conn = get_conn()
-    rows = conn.execute(
-        "SELECT ts, open, high, low, close, volume FROM assets WHERE ticker=? ORDER BY ts DESC LIMIT ?",
-        [ticker, limit]
-    ).fetchall()
+    # backward compat: 1d also matches legacy source="yfinance"
+    if interval == "1d":
+        rows = conn.execute(
+            "SELECT ts, open, high, low, close, volume FROM assets "
+            "WHERE ticker=? AND (source=? OR source=?) ORDER BY ts DESC LIMIT ?",
+            [ticker, source_key, "yfinance", limit]
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT ts, open, high, low, close, volume FROM assets "
+            "WHERE ticker=? AND source=? ORDER BY ts DESC LIMIT ?",
+            [ticker, source_key, limit]
+        ).fetchall()
     if not rows:
-        raise HTTPException(404, f"No bars for {ticker}")
+        raise HTTPException(404, f"No bars for {ticker} @ {interval}")
     result = list(reversed([
         {"ts": str(r[0]), "o": r[1], "h": r[2], "l": r[3], "c": r[4], "v": r[5]}
         for r in rows
@@ -74,12 +92,26 @@ def get_bars(ticker: str, limit: int = 1000):
 
 
 @router.get("/{ticker}/stats")
-def get_stats(ticker: str):
+def get_stats(ticker: str, interval: str = "1d"):
+    BARS_PER_YEAR = {
+        "1m": 60*24*365, "5m": 12*24*365, "15m": 4*24*365,
+        "30m": 2*24*365, "1h": 24*365, "4h": 6*365,
+        "1d": 365, "1wk": 52, "1mo": 12,
+    }
+    ann_factor = BARS_PER_YEAR.get(interval, 365)
+    source_key = f"yfinance:{interval}"
     conn = get_conn()
-    rows = conn.execute(
-        "SELECT ts, close FROM assets WHERE ticker=? ORDER BY ts",
-        [ticker]
-    ).fetchall()
+    # backward compat: 1d also matches legacy source="yfinance"
+    if interval == "1d":
+        rows = conn.execute(
+            "SELECT ts, close FROM assets WHERE ticker=? AND (source=? OR source=?) ORDER BY ts",
+            [ticker, source_key, "yfinance"]
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT ts, close FROM assets WHERE ticker=? AND source=? ORDER BY ts",
+            [ticker, source_key]
+        ).fetchall()
     if not rows:
         raise HTTPException(404, f"No data for {ticker}")
 
@@ -90,11 +122,11 @@ def get_stats(ticker: str):
 
     mean = float(rets.mean())
     std  = float(rets.std())
-    sharpe = (mean / std * np.sqrt(24 * 365)) if std > 0 else 0
+    sharpe = (mean / std * np.sqrt(ann_factor)) if std > 0 else 0
     # CAGR
     total_ret = closes[-1] / closes[0]
     n_hours   = len(closes)
-    cagr      = (total_ret ** (24 * 365 / n_hours) - 1) * 100
+    cagr      = (total_ret ** (ann_factor / n_hours) - 1) * 100
     # MaxDD
     peak_arr = np.maximum.accumulate(closes)
     dd_arr   = (closes - peak_arr) / peak_arr * 100
@@ -130,7 +162,7 @@ def get_stats(ticker: str):
         "ticker": ticker,
         "bars": len(rows),
         "cagr": round(float(cagr), 2),
-        "ann_vol": round(float(std * np.sqrt(24 * 365) * 100), 2),
+        "ann_vol": round(float(std * np.sqrt(ann_factor) * 100), 2),
         "sharpe": round(float(sharpe), 3),
         "max_dd": round(float(max_dd), 2),
         "skew": round(float(skew), 3),
