@@ -44,7 +44,7 @@ export function EquityChart({
   useEffect(() => {
     if (!containerRef.current) return;
     const chart = createChart(containerRef.current, {
-      width: containerRef.current.clientWidth,
+      autoSize: true,
       height,
       layout: {
         background: { color: "transparent" },
@@ -82,6 +82,7 @@ export function EquityChart({
       value: ((_e.v / baseVal) - 1) * 100, // percent return
     }));
     mainSeries.setData(data);
+    chart.timeScale().fitContent();
 
     // Benchmark (dashed)
     benchRef.current = null;
@@ -134,18 +135,10 @@ export function EquityChart({
       });
     }
 
-    // Resize observer
-    const ro = new ResizeObserver(() => {
-      if (containerRef.current)
-        chart.applyOptions({ width: containerRef.current.clientWidth });
-    });
-    ro.observe(containerRef.current);
-
     chartRef.current = chart;
     seriesRef.current = mainSeries;
 
     return () => {
-      ro.disconnect();
       chart.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

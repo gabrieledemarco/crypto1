@@ -11,6 +11,7 @@ export function TradesScreen() {
   const { activeRunId, runs } = useStore();
   const [filterSide, setFilterSide] = useState("all");
   const [filterPnl, setFilterPnl] = useState("all");
+  const [filterText, setFilterText] = useState("");
   const [sortKey, setSortKey] = useState<keyof Trade>("n");
   const [sortDir, setSortDir] = useState<1 | -1>(1);
   const [cursor, setCursor] = useState(0);
@@ -37,6 +38,15 @@ export function TradesScreen() {
       if (filterSide === "short" && t.side !== "S") return false;
       if (filterPnl === "win" && t.pnl <= 0) return false;
       if (filterPnl === "loss" && t.pnl > 0) return false;
+      if (filterText) {
+        const q = filterText.toLowerCase();
+        return (
+          String(t.n).includes(q) ||
+          (t.side === "L" ? "long" : "short").includes(q) ||
+          String(t.entry).includes(q) ||
+          String(t.pnl).includes(q)
+        );
+      }
       return true;
     })
     .sort((a, b) => {
@@ -144,6 +154,8 @@ export function TradesScreen() {
             className={styles.filterInput}
             placeholder="filter…"
             style={{ marginLeft: "auto" }}
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
           />
         </div>
 

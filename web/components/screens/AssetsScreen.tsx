@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { fixtures } from "@/lib/fixtures";
 import { useAssets, useAssetBars, useAssetStats } from "@/hooks/useAssets";
 import { Sparkline } from "@/components/charts/Sparkline";
@@ -14,20 +14,67 @@ const KIND_COLORS: Record<string, string> = {
 
 const PERIODS = ["1y", "2y", "5y"] as const;
 
+const ALL_TICKERS = [
+  // Crypto — large cap
+  "BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "XRP-USD",
+  "ADA-USD", "AVAX-USD", "DOGE-USD", "TRX-USD", "DOT-USD",
+  "MATIC-USD", "LINK-USD", "SHIB-USD", "LTC-USD", "BCH-USD",
+  "UNI-USD", "ATOM-USD", "XLM-USD", "ALGO-USD", "VET-USD",
+  "HBAR-USD", "ICP-USD", "NEAR-USD", "FIL-USD", "AAVE-USD",
+  "GRT-USD", "MKR-USD", "COMP-USD", "SNX-USD", "CRV-USD",
+  "ARB-USD", "OP-USD", "APT-USD", "SUI-USD", "INJ-USD",
+  "IMX-USD", "LDO-USD", "RPL-USD", "RNDR-USD", "FTM-USD",
+  "SAND-USD", "MANA-USD", "AXS-USD", "ENJ-USD", "CHZ-USD",
+  "STX-USD", "TIA-USD", "SEI-USD", "WLD-USD", "JTO-USD",
+  "DYDX-USD", "GMX-USD", "RUNE-USD", "ROSE-USD", "ONE-USD",
+  "EGLD-USD", "THETA-USD", "ZEC-USD", "DASH-USD", "ETC-USD",
+  "XMR-USD", "EOS-USD", "NEO-USD", "IOTA-USD", "WAVES-USD",
+  // US Equities
+  "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA",
+  "BRK-B", "JPM", "V", "MA", "NFLX", "DIS", "PYPL",
+  "AMD", "INTC", "QCOM", "AVGO", "CRM", "ORCL", "COIN",
+  "MSTR", "RIOT", "MARA", "CLSK", "HUT",
+  // ETF
+  "SPY", "QQQ", "GLD", "SLV", "USO", "VTI", "IWM", "TLT",
+];
+
 export function AssetsScreen() {
   const [selectedTicker, setSelectedTicker] = useState<string>(
     fixtures.assets[0].ticker
   );
   const [showFetch, setShowFetch] = useState(false);
-  const [fetchTicker, setFetchTicker] = useState("");
+  const [fetchTicker, setFetchTicker] = useState<string>("");
+  const [searchVal, setSearchVal] = useState("");
+  const [dropOpen, setDropOpen] = useState(false);
   const [fetchPeriod, setFetchPeriod] = useState<string>("2y");
   const [fetching, setFetching] = useState(false);
   const [fetchMsg, setFetchMsg] = useState<string | null>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setDropOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const suggestions = searchVal.length > 0
+    ? ALL_TICKERS.filter(t =>
+        t.toLowerCase().includes(searchVal.toLowerCase())
+      ).slice(0, 10)
+    : ALL_TICKERS.slice(0, 10);
 
   // API data (falls back to fixtures)
   const { data: apiAssets } = useAssets();
-  const { data: apiBars } = useAssetBars(selectedTicker);
-  const { data: apiStats } = useAssetStats(selectedTicker);
+  // Only query bars/stats when the ticker is actually stored in the API
+  const apiTickerExists = apiAssets?.some((a) => a.ticker === selectedTicker) ?? false;
+  const { data: apiBars } = useAssetBars(apiTickerExists ? selectedTicker : null);
+  const { data: apiStats } = useAssetStats(apiTickerExists ? selectedTicker : null);
 
   // Build display list: prefer API data, fall back to fixtures
   const fixtureMap = new Map<string, Asset>(
@@ -56,15 +103,20 @@ export function AssetsScreen() {
 
   // Stats: prefer API, fall back to fixture
   const stats = fixtureAsset.stats;
-  const cagr = apiStats?.cagr ?? stats.cagr;
-  const annVol = apiStats?.ann_vol ?? stats.annVol;
-  const sharpe = apiStats?.sharpe ?? stats.sharpe;
-  const maxDD = apiStats?.max_dd ?? stats.maxDD;
-  const skew = apiStats?.skew ?? stats.skew;
-  const kurt = apiStats?.kurt ?? stats.kurt;
+  const cagr    = apiStats?.cagr != null ? apiStats.cagr / 100 : stats.cagr;
+  const annVol  = apiStats?.ann_vol != null ? apiStats.ann_vol / 100 : stats.annVol;
+  const sharpe  = apiStats?.sharpe ?? stats.sharpe;
+  const maxDD   = apiStats?.max_dd != null ? apiStats.max_dd / 100 : stats.maxDD;
+  const skew    = apiStats?.skew ?? stats.skew;
+  const kurt    = apiStats?.kurt ?? stats.kurt;
+  const sortino = apiStats?.sortino ?? stats.sortino;
+  const var95   = apiStats?.var95 ?? stats.var95;
+  const cvar95  = apiStats?.cvar95 ?? stats.cvar95;
+  const bestDay = apiStats?.best_day ?? stats.bestDay;
+  const worstDay = apiStats?.worst_day ?? stats.worstDay;
 
   const handleFetch = async () => {
-    if (!fetchTicker.trim()) return;
+    if (!fetchTicker) return;
     setFetching(true);
     setFetchMsg(null);
     try {
@@ -72,23 +124,31 @@ export function AssetsScreen() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ticker: fetchTicker.trim().toUpperCase(),
+          ticker: fetchTicker,
           source: "yfinance",
           period: fetchPeriod,
         }),
       });
       if (res.ok) {
-        setFetchMsg(`Fetched ${fetchTicker.toUpperCase()} (${fetchPeriod})`);
-        setFetchTicker("");
+        setFetchMsg(`✓ ${fetchTicker} scaricato (${fetchPeriod})`);
         setShowFetch(false);
+        setFetchTicker("");
+        setSearchVal("");
       } else {
-        setFetchMsg("Fetch failed — check ticker");
+        const err = await res.json().catch(() => ({}));
+        setFetchMsg(`Errore: ${err.detail ?? res.status}`);
       }
     } catch {
-      setFetchMsg("API unavailable");
+      setFetchMsg("API non raggiungibile");
     } finally {
       setFetching(false);
     }
+  };
+
+  const selectTicker = (t: string) => {
+    setFetchTicker(t);
+    setSearchVal(t);
+    setDropOpen(false);
   };
 
   return (
@@ -141,19 +201,60 @@ export function AssetsScreen() {
             {!showFetch ? (
               <button
                 className={styles.btnFetch}
-                onClick={() => setShowFetch(true)}
+                onClick={() => {
+                  setShowFetch(true);
+                  setTimeout(() => inputRef.current?.focus(), 50);
+                }}
               >
                 + FETCH
               </button>
             ) : (
               <div className={styles.fetchForm}>
-                <input
-                  className={styles.fetchInput}
-                  placeholder="TICKER (e.g. ETH-USD)"
-                  value={fetchTicker}
-                  onChange={(e) => setFetchTicker(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleFetch()}
-                />
+                <div className={styles.label}>CERCA TICKER</div>
+
+                {/* Autocomplete */}
+                <div className={styles.searchWrap} ref={searchRef}>
+                  <input
+                    ref={inputRef}
+                    className={styles.searchInput}
+                    placeholder="es. BTC, ETH, AAPL…"
+                    value={searchVal}
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(e) => {
+                      const v = e.target.value.toUpperCase();
+                      setSearchVal(v);
+                      setFetchTicker("");
+                      setDropOpen(true);
+                    }}
+                    onFocus={() => setDropOpen(true)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") setDropOpen(false);
+                      if (e.key === "Enter" && suggestions.length > 0) {
+                        selectTicker(suggestions[0]);
+                      }
+                    }}
+                  />
+                  {dropOpen && suggestions.length > 0 && (
+                    <div className={styles.dropdown}>
+                      {suggestions.map((t) => (
+                        <button
+                          key={t}
+                          className={`${styles.dropItem} ${fetchTicker === t ? styles.dropItemActive : ""}`}
+                          onMouseDown={(e) => {
+                            e.preventDefault(); // avoid blur before click
+                            selectTicker(t);
+                          }}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Period pills */}
+                <div className={styles.label}>PERIODO</div>
                 <div className={styles.periodPills}>
                   {PERIODS.map((p) => (
                     <button
@@ -165,17 +266,23 @@ export function AssetsScreen() {
                     </button>
                   ))}
                 </div>
+
                 <div className={styles.fetchActions}>
                   <button
                     className={styles.btnFetch}
                     onClick={handleFetch}
-                    disabled={fetching}
+                    disabled={fetching || !fetchTicker}
                   >
-                    {fetching ? "FETCHING…" : "FETCH"}
+                    {fetching ? "SCARICANDO…" : `FETCH${fetchTicker ? ` ${fetchTicker}` : ""}`}
                   </button>
                   <button
                     className={styles.btnCancel}
-                    onClick={() => { setShowFetch(false); setFetchMsg(null); }}
+                    onClick={() => {
+                      setShowFetch(false);
+                      setFetchMsg(null);
+                      setFetchTicker("");
+                      setSearchVal("");
+                    }}
                   >
                     CANCEL
                   </button>
@@ -203,7 +310,7 @@ export function AssetsScreen() {
               data={closePrices}
               width={480}
               height={240}
-              color="var(--amber)"
+              color="#ffb53b"
             />
           </div>
           <div className={styles.chartFooter}>
@@ -222,13 +329,13 @@ export function AssetsScreen() {
             <span className={styles.chartLabel}>
               HIGH{" "}
               <span className={styles.chartVal} style={{ color: "var(--green)" }}>
-                {Math.max(...closePrices).toLocaleString()}
+                {closePrices.length > 0 ? Math.max(...closePrices).toLocaleString() : "—"}
               </span>
             </span>
             <span className={styles.chartLabel}>
               LOW{" "}
               <span className={styles.chartVal} style={{ color: "var(--coral)" }}>
-                {Math.min(...closePrices).toLocaleString()}
+                {closePrices.length > 0 ? Math.min(...closePrices).toLocaleString() : "—"}
               </span>
             </span>
           </div>
@@ -245,14 +352,14 @@ export function AssetsScreen() {
             <StatRow label="CAGR"      value={`${(cagr * 100).toFixed(2)}%`}        color="var(--green)" />
             <StatRow label="ANN VOL"   value={`${(annVol * 100).toFixed(2)}%`}       color="var(--coral)" />
             <StatRow label="SHARPE"    value={sharpe.toFixed(3)}                      color="var(--green)" />
-            <StatRow label="SORTINO"   value={stats.sortino.toFixed(3)}              color="var(--green)" />
+            <StatRow label="SORTINO"   value={sortino.toFixed(3)}                     color="var(--green)" />
             <StatRow label="MAX DD"    value={`${(maxDD * 100).toFixed(2)}%`}        color="var(--coral)" />
             <StatRow label="SKEW"      value={skew.toFixed(4)}                        color={skew >= 0 ? "var(--green)" : "var(--coral)"} />
             <StatRow label="KURT"      value={kurt.toFixed(4)}                        color="var(--coral)" />
-            <StatRow label="VAR 95"    value={`${(stats.var95 * 100).toFixed(3)}%`}  color="var(--coral)" />
-            <StatRow label="CVAR 95"   value={`${(stats.cvar95 * 100).toFixed(3)}%`} color="var(--coral)" />
-            <StatRow label="BEST DAY"  value={`${(stats.bestDay * 100).toFixed(2)}%`} color="var(--green)" />
-            <StatRow label="WORST DAY" value={`${(stats.worstDay * 100).toFixed(2)}%`} color="var(--coral)" />
+            <StatRow label="VAR 95"    value={`${(var95 * 100).toFixed(3)}%`}        color="var(--coral)" />
+            <StatRow label="CVAR 95"   value={`${(cvar95 * 100).toFixed(3)}%`}       color="var(--coral)" />
+            <StatRow label="BEST DAY"  value={`${(bestDay * 100).toFixed(2)}%`}      color="var(--green)" />
+            <StatRow label="WORST DAY" value={`${(worstDay * 100).toFixed(2)}%`}     color="var(--coral)" />
           </div>
         </div>
       </div>

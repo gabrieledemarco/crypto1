@@ -373,6 +373,13 @@ def _sync_preview(df, params: dict) -> dict:
     df_s = _apply_direction_filter(df_s, params.get("direction", "ALL"))
     res  = backtest_v2(df_s, INITIAL_CAPITAL, risk, commission=comm, slippage=slip)
     m    = compute_metrics(res, INITIAL_CAPITAL)
+    # Sample equity curve (max 120 points) for preview chart
+    eq_series = res.get("equity")
+    equity_sample: list = []
+    if eq_series is not None and len(eq_series) > 0:
+        eq_vals = (eq_series / INITIAL_CAPITAL).tolist()
+        step = max(1, len(eq_vals) // 120)
+        equity_sample = [round(float(v), 4) for v in eq_vals[::step][:120]]
     return {
         "sharpe":   round(m.get("sharpe_ratio", 0), 3),
         "cagr":     round(m.get("cagr_pct", 0), 1),
@@ -380,4 +387,5 @@ def _sync_preview(df, params: dict) -> dict:
         "trades":   m.get("n_trades", 0),
         "win_rate": round(m.get("win_rate_pct", 0), 1),
         "exposure": 0,
+        "equity":   equity_sample,
     }

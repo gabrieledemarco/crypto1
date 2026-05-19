@@ -70,16 +70,24 @@ export function SetupScreen() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ params }),
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        throw new Error(err.detail ?? `HTTP ${res.status}`);
+      }
       const data = await res.json();
       setRunId(data.id);
-    } catch {
+    } catch (e: unknown) {
       setRunning(false);
-      setToast("API not available — using fixture data");
+      const msg = e instanceof Error ? e.message : "unknown error";
+      setToast(msg.includes("fetch") || msg.includes("Failed")
+        ? "API not reachable — check NEXT_PUBLIC_API_URL"
+        : `Run failed: ${msg}`);
     }
   };
 
-  // Simple preview equity from params (local seed, no API)
-  const previewEquity = fixtures.runs[0].equity.slice(0, 120);
+  const previewEquity = (preview?.equity && preview.equity.length > 0)
+    ? preview.equity.map((v, i) => ({ i, v, dd: 0, bench: 1, oos: false }))
+    : fixtures.runs[0].equity.slice(0, 120);
 
   const UNIVERSE_TICKERS = ["BTC", "ETH", "SOL", "ARB", "OP", "MATIC", "AVAX"];
   const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"];

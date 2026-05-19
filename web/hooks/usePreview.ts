@@ -9,6 +9,7 @@ export interface PreviewResult {
   trades: number;
   win_rate: number;
   exposure: number;
+  equity?: number[];
 }
 
 export function usePreview(params: Record<string, unknown> | null, delay = 80) {

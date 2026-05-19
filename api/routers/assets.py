@@ -105,6 +105,27 @@ def get_stats(ticker: str):
     skew = m3 / (std**3) if std > 0 else 0
     kurt = m4 / (std**4) - 3 if std > 0 else 0
 
+    # Daily aggregation for sortino, var95, cvar95, best_day, worst_day
+    day_closes: dict = {}
+    for ts, c in rows:
+        day = str(ts)[:10]
+        day_closes[day] = float(c)
+    daily_vals = np.array([v for _, v in sorted(day_closes.items())])
+    daily_rets = np.diff(np.log(daily_vals)) if len(daily_vals) > 1 else np.array([])
+
+    if len(daily_rets) > 1:
+        neg_rets = daily_rets[daily_rets < 0]
+        down_std = float(neg_rets.std()) if len(neg_rets) > 1 else 0
+        daily_mean = float(daily_rets.mean())
+        sortino   = float(daily_mean * 252 / (down_std * np.sqrt(252))) if down_std > 0 else 0
+        var95     = float(np.percentile(daily_rets, 5))
+        mask      = daily_rets <= np.percentile(daily_rets, 5)
+        cvar95    = float(daily_rets[mask].mean()) if mask.any() else var95
+        best_day  = float(daily_rets.max())
+        worst_day = float(daily_rets.min())
+    else:
+        sortino = var95 = cvar95 = best_day = worst_day = 0.0
+
     return {
         "ticker": ticker,
         "bars": len(rows),
@@ -114,4 +135,9 @@ def get_stats(ticker: str):
         "max_dd": round(float(max_dd), 2),
         "skew": round(float(skew), 3),
         "kurt": round(float(kurt), 3),
+        "sortino":   round(sortino, 3),
+        "var95":     round(var95, 4),
+        "cvar95":    round(cvar95, 4),
+        "best_day":  round(best_day, 4),
+        "worst_day": round(worst_day, 4),
     }

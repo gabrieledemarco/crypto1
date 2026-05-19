@@ -8,18 +8,58 @@ import { Sparkline } from "@/components/charts/Sparkline";
 import styles from "./UnderwaterScreen.module.css";
 import type { EquityPoint, DDPeriod } from "@/lib/fixtures";
 
+function computeDdPeriods(equity: EquityPoint[]): DDPeriod[] {
+  if (equity.length < 2) return [];
+  const periods: DDPeriod[] = [];
+  let peak = equity[0].v, peakIdx = 0;
+  let troughV = equity[0].v, troughIdx = 0;
+  let inDD = false;
+
+  for (let i = 1; i < equity.length; i++) {
+    const v = equity[i].v;
+    if (!inDD) {
+      if (v >= peak) { peak = v; peakIdx = i; troughV = v; troughIdx = i; }
+      else if ((peak - v) / peak > 0.005) { inDD = true; troughV = v; troughIdx = i; }
+    } else {
+      if (v < troughV) { troughV = v; troughIdx = i; }
+      if (v >= peak * 0.998) {
+        periods.push({
+          start: peakIdx, trough: troughIdx, end: i,
+          depth: (troughV - peak) / peak,
+          length: troughIdx - peakIdx,
+          recovery: i - troughIdx,
+          ongoing: false,
+        });
+        inDD = false; peak = v; peakIdx = i; troughV = v; troughIdx = i;
+      }
+    }
+  }
+  if (inDD) {
+    periods.push({
+      start: peakIdx, trough: troughIdx, end: equity.length - 1,
+      depth: (troughV - peak) / peak,
+      length: troughIdx - peakIdx,
+      recovery: 0, ongoing: true,
+    });
+  }
+  return periods.sort((a, b) => a.depth - b.depth);
+}
+
 export function UnderwaterScreen() {
   const { activeRunId, runs } = useStore();
   const run = runs.find((r) => r.id === activeRunId) ?? fixtures.runs[0];
   const equityQuery = useRunEquity(activeRunId || null);
 
-  const equity: EquityPoint[] = (equityQuery.data && equityQuery.data.length > 0)
-    ? equityQuery.data.map((e: {i:number;v:number;dd:number;ts?:string}, idx: number) => ({
+  const usingApiEquity = equityQuery.data && equityQuery.data.length > 0;
+  const equity: EquityPoint[] = usingApiEquity
+    ? equityQuery.data!.map((e: {i:number;v:number;dd:number;ts?:string}) => ({
         i: e.i, v: e.v, dd: e.dd, ts: e.ts, bench: 1, oos: false,
       }))
     : (run?.equity ?? []);
 
-  const ddPeriods: DDPeriod[] = run?.ddPeriods ?? [];
+  const ddPeriods: DDPeriod[] = usingApiEquity
+    ? computeDdPeriods(equity)
+    : (run?.ddPeriods ?? []);
   const ddDepths = ddPeriods.map((d) => d.depth * 100);
   const medianDD = ddDepths.length ? ddDepths[Math.floor(ddDepths.length / 2)] : 0;
   const meanRec  = ddPeriods.length
