@@ -122,7 +122,34 @@ export function TradesScreen() {
             &nbsp;·&nbsp;
             <span style={{ color: "var(--coral)" }}>{losers} loss</span>
           </span>
-          <button className={styles.btn}>↓ CSV</button>
+          <button
+            className={styles.btn}
+            onClick={() => {
+              const header = "#,OPEN,SIDE,ENTRY,EXIT,R,DUR(h),P&L%";
+              const rows = trades.map((t, i) =>
+                [
+                  i + 1,
+                  new Date(t.date).toISOString().slice(0, 16),
+                  t.side === "L" ? "L" : "S",
+                  t.entry?.toFixed(2) ?? "",
+                  t.exit?.toFixed(2) ?? "",
+                  t.r?.toFixed(2) ?? "",
+                  t.durH ?? "",
+                  t.pnl ?? "",
+                ].join(",")
+              );
+              const csv = [header, ...rows].join("\n");
+              const blob = new Blob([csv], { type: "text/csv" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `trades_${Date.now()}.csv`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+          >
+            ↓ CSV
+          </button>
         </div>
 
         {/* Filter bar */}

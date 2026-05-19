@@ -334,3 +334,83 @@
   font-size: 11px;
   font-weight: 700;
 }
+
+/* Analysis section */
+
+.analysisRow {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 6px;
+}
+
+.analysisPanel {
+  background: var(--panel);
+  border: 1px solid var(--border-l);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.analysisPanelHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  min-height: 24px;
+  flex-shrink: 0;
+}
+
+.analysisPanelTitle {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--dim);
+  font-family: var(--font-mono);
+}
+
+.analysisPanelBody {
+  padding: 8px;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Advanced stats in analysis panel */
+
+.advStatsGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.advStatRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.advStatLabel {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 0.04em;
+}
+
+.advStatVal {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.advStatBadge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  border: 1px solid currentColor;
+  opacity: 0.85;
+}

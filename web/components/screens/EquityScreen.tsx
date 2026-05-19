@@ -43,6 +43,26 @@ export function EquityScreen() {
     ["PF", run?.profitFactor, run?.profitFactor, null],
     ["WIN%", run?.winRate, run?.winRate, null],
     ["TRADES", run?.tradesCount, run?.tradesCount, null],
+    [
+      "OMEGA",
+      IS?.omega != null ? IS.omega.toFixed(2) : "—",
+      OOS?.omega != null ? OOS.omega.toFixed(2) : "—",
+      OOS?.omega != null && OOS.omega > 1 ? "var(--green)" : null,
+    ],
+    [
+      "ULCER",
+      IS?.ulcer != null ? `${IS.ulcer.toFixed(1)}%` : "—",
+      OOS?.ulcer != null ? `${OOS.ulcer.toFixed(1)}%` : "—",
+      "var(--coral)",
+    ],
+    [
+      "RECOV",
+      IS?.recoveryFactor != null ? IS.recoveryFactor.toFixed(1) : "—",
+      OOS?.recoveryFactor != null ? OOS.recoveryFactor.toFixed(1) : "—",
+      OOS?.recoveryFactor != null && OOS.recoveryFactor > 1
+        ? "var(--green)"
+        : null,
+    ],
   ];
 
   return (
