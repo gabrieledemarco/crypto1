@@ -6,6 +6,25 @@ import { FanChart } from "@/components/charts/FanChart";
 import { Histogram } from "@/components/charts/Histogram";
 import styles from "./MonteCarloScreen.module.css";
 
+interface StressScenario {
+  scenario: string;
+  final_cap_usd: number;
+  total_return_pct: number;
+  max_drawdown_pct: number;
+}
+
+// Human-readable labels matched against scenario strings from the engine
+const SCENARIO_LABELS: Record<string, string> = {
+  "Worst 10% trade risampling": "Worst 10% Trades",
+  "Drawdown consecutivo ×3":    "3× Drawdown",
+  "Commissioni raddoppiate":    "Double Fees",
+  "50% meno trade":             "50% Fewer Trades",
+};
+
+function humanLabel(raw: string): string {
+  return SCENARIO_LABELS[raw] ?? raw;
+}
+
 export function MonteCarloScreen() {
   const { activeRunId, runs } = useStore();
   const run = runs.find((r) => r.id === activeRunId) ?? fixtures.runs[0];
@@ -14,6 +33,7 @@ export function MonteCarloScreen() {
   // Normalise MC data — API shape vs fixture shape differ
   const fixtMC = run?.mc;
   let mcData = fixtMC;
+  let stressData: StressScenario[] | null = null;
 
   if (mcQuery.data && typeof mcQuery.data === "object") {
     const d = mcQuery.data as {
@@ -22,6 +42,7 @@ export function MonteCarloScreen() {
       dd_finals?: number[];
       p_profit?: number;
       p_ruin?: number;
+      stress?: StressScenario[];
     };
     if (d.percentiles) {
       mcData = {
@@ -30,6 +51,9 @@ export function MonteCarloScreen() {
         ddFinals: d.dd_finals ?? [],
         paths: [],
       };
+    }
+    if (Array.isArray(d.stress) && d.stress.length > 0) {
+      stressData = d.stress as StressScenario[];
     }
   }
 
@@ -124,6 +148,60 @@ export function MonteCarloScreen() {
         <div className={styles.panelBody}>
           <Histogram data={ddFinals.map((v) => v)} bins={24} height={150}
             color="#ff7a55" fmt={(v) => v.toFixed(0) + "%"} />
+        </div>
+      </div>
+
+      {/* Stress scenarios — full width */}
+      <div className={styles.panel} style={{ gridColumn: "span 12" }}>
+        <div className={styles.panelHeader}>
+          <span className={styles.panelTitle}>STRESS SCENARIOS</span>
+          <span className={styles.panelSub}>baseline: p50 median return {p50.toFixed(1)}%</span>
+        </div>
+        <div className={styles.panelBody}>
+          {stressData && stressData.length > 0 ? (
+            <div className={styles.stressGrid}>
+              {stressData.map((s) => {
+                const delta = s.total_return_pct - p50;
+                const deltaSign = delta >= 0 ? "+" : "";
+                const deltaColor = delta < 0 ? "var(--coral)" : "var(--green)";
+                return (
+                  <div key={s.scenario} className={styles.stressCard}>
+                    <div className={styles.stressCardHeader}>
+                      {humanLabel(s.scenario)}
+                    </div>
+                    <div className={styles.stressMetrics}>
+                      <div className={styles.stressRow}>
+                        <span className={styles.stressLabel}>Return</span>
+                        <span className={styles.stressVal}
+                          style={{ color: s.total_return_pct >= 0 ? "var(--green)" : "var(--coral)" }}>
+                          {s.total_return_pct.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className={styles.stressRow}>
+                        <span className={styles.stressLabel}>Max DD</span>
+                        <span className={styles.stressVal} style={{ color: "var(--coral)" }}>
+                          {s.max_drawdown_pct.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className={styles.stressRow}>
+                        <span className={styles.stressLabel}>Final</span>
+                        <span className={styles.stressVal}>
+                          ${s.final_cap_usd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                        </span>
+                      </div>
+                    </div>
+                    <div className={styles.stressDelta} style={{ color: deltaColor }}>
+                      {deltaSign}{delta.toFixed(1)}% vs median
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className={styles.stressEmpty}>
+              Run a strategy to see stress test results
+            </div>
+          )}
         </div>
       </div>
     </div>
