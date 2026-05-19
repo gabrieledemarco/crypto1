@@ -12,6 +12,11 @@ btc_analysis/output/api_keys.json
 # Claude Code session data
 .claude/
 
+# Ruflo runtime data (memory, logs, sessions, daemon state — not source)
+.claude-flow/
+.swarm/
+ruvector.db
+
 # Output data (large files)
 btc_analysis/output/*.csv
 btc_analysis/output/*.png
