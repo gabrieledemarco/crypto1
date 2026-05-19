@@ -1,7 +1,9 @@
 "use client";
 import { useState, useRef, useEffect, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { fixtures } from "@/lib/fixtures";
 import { useAssets, useAssetBars, useAssetStats } from "@/hooks/useAssets";
+import type { AssetListItem } from "@/hooks/useAssets";
 import { CandlestickChart } from "@/components/charts/CandlestickChart";
 import { Histogram } from "@/components/charts/Histogram";
 import { QQPlot }  from "@/components/charts/QQPlot";
@@ -27,8 +29,23 @@ function getKind(ticker: string): string {
   return "stock";
 }
 
-const PERIODS    = ["3mo", "6mo", "1y", "2y", "5y", "max"] as const;
-const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d", "1wk"]  as const;
+// Max period yfinance can return per interval
+const YF_MAX_PERIOD: Record<string, string> = {
+  "1m":  "7d",
+  "5m":  "60d",
+  "15m": "60d",
+  "30m": "60d",
+  "1h":  "2y",
+  "4h":  "2y",
+  "1d":  "max",
+  "1wk": "max",
+  "1mo": "max",
+};
+
+const FETCH_TIMEFRAMES = ["5m", "15m", "1h", "1d", "1wk"] as const;
+const VIEW_TIMEFRAMES  = ["5m", "15m", "1h", "4h", "1d", "1wk"] as const;
+
+const INTERVAL_ORDER = ["1m","5m","15m","30m","1h","4h","1d","1wk","1mo"];
 
 const ALL_TICKERS = [
   // Crypto — large cap
@@ -99,23 +116,28 @@ function jarqueBera(returns: number[]): { stat: number; isNormal: boolean } {
   return { stat: jb, isNormal: jb < 5.99 };
 }
 
+function fmtDate(ts: string): string {
+  return ts.slice(0, 10);
+}
+
 // ─── Component ────────────────────────────────────────────────────────────
 
 export function AssetsScreen() {
+  const qc = useQueryClient();
   const [selectedTicker, setSelectedTicker] = useState<string>(
     fixtures.assets[0].ticker
   );
+  const [viewInterval, setViewInterval] = useState<string>("1d");
+
   const [showFetch, setShowFetch] = useState(false);
   const [fetchTicker, setFetchTicker] = useState<string>("");
   const [searchVal, setSearchVal] = useState("");
   const [dropOpen, setDropOpen] = useState(false);
-  const [fetchPeriod, setFetchPeriod] = useState<string>("2y");
+  const [fetchInterval, setFetchInterval] = useState<string>("1d");
   const [fetching, setFetching] = useState(false);
   const [fetchMsg, setFetchMsg] = useState<string | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [fetchInterval, setFetchInterval] = useState<string>("1d");
-  const [viewInterval,  setViewInterval]  = useState<string>("1d");
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -134,53 +156,56 @@ export function AssetsScreen() {
       ).slice(0, 10)
     : ALL_TICKERS.slice(0, 10);
 
-  // API data (falls back to fixtures)
+  // API data
   const { data: apiAssets } = useAssets();
-  // Only query bars/stats when the ticker is actually stored in the API
-  const apiTickerExists =
-    apiAssets?.some((a) => a.ticker === selectedTicker) ?? false;
-  const { data: apiBars }  = useAssetBars(apiTickerExists ? selectedTicker : null, viewInterval);
-  const { data: apiStats } = useAssetStats(apiTickerExists ? selectedTicker : null, viewInterval);
 
-  // Build display list: prefer API data, fall back to fixtures
+  // Group flat list by ticker, sorted by interval order
+  const groupedAssets = useMemo(() => {
+    if (!apiAssets) return [];
+    const map = new Map<string, AssetListItem[]>();
+    apiAssets.forEach((item) => {
+      if (!map.has(item.ticker)) map.set(item.ticker, []);
+      map.get(item.ticker)!.push(item);
+    });
+    return Array.from(map.entries()).map(([ticker, series]) => ({
+      ticker,
+      series: [...series].sort(
+        (a, b) => INTERVAL_ORDER.indexOf(a.interval) - INTERVAL_ORDER.indexOf(b.interval)
+      ),
+    }));
+  }, [apiAssets]);
+
+  // Query bars/stats only when selected series exists in API
+  const apiSeriesExists =
+    apiAssets?.some(
+      (a) => a.ticker === selectedTicker && a.interval === viewInterval
+    ) ?? false;
+
+  const { data: apiBars }  = useAssetBars(apiSeriesExists ? selectedTicker : null, viewInterval);
+  const { data: apiStats } = useAssetStats(apiSeriesExists ? selectedTicker : null, viewInterval);
+
+  // Fixture fallback
   const fixtureMap = new Map<string, Asset>(
     fixtures.assets.map((a) => [a.ticker, a])
   );
-
-  const displayAssets: Asset[] = apiAssets
-    ? apiAssets.map(
-        (a) =>
-          fixtureMap.get(a.ticker) ?? {
-            name: a.ticker,
-            ticker: a.ticker,
-            kind: "spot",
-            bars: [],
-            basePrice: 0,
-            stats: fixtures.assets[0].stats,
-          }
-      )
-    : fixtures.assets;
-
-  // Selected asset from fixtures
   const fixtureAsset = fixtureMap.get(selectedTicker) ?? fixtures.assets[0];
 
-  // Bars: prefer API, fall back to fixture
   const bars =
     apiBars && apiBars.length > 0 ? apiBars : fixtureAsset.bars;
 
   // Stats: prefer API, fall back to fixture
-  const stats = fixtureAsset.stats;
-  const cagr    = apiStats?.cagr    != null ? apiStats.cagr    / 100 : stats.cagr;
-  const annVol  = apiStats?.ann_vol != null ? apiStats.ann_vol / 100 : stats.annVol;
-  const sharpe  = apiStats?.sharpe  ?? stats.sharpe;
-  const maxDD   = apiStats?.max_dd  != null ? apiStats.max_dd  / 100 : stats.maxDD;
-  const skew    = apiStats?.skew    ?? stats.skew;
-  const kurt    = apiStats?.kurt    ?? stats.kurt;
-  const sortino = apiStats?.sortino ?? stats.sortino;
-  const var95   = apiStats?.var95   ?? stats.var95;
-  const cvar95  = apiStats?.cvar95  ?? stats.cvar95;
-  const bestDay  = apiStats?.best_day  ?? stats.bestDay;
-  const worstDay = apiStats?.worst_day ?? stats.worstDay;
+  const fstats = fixtureAsset.stats;
+  const cagr    = apiStats?.cagr    != null ? apiStats.cagr    / 100 : fstats.cagr;
+  const annVol  = apiStats?.ann_vol != null ? apiStats.ann_vol / 100 : fstats.annVol;
+  const sharpe  = apiStats?.sharpe  ?? fstats.sharpe;
+  const maxDD   = apiStats?.max_dd  != null ? apiStats.max_dd  / 100 : fstats.maxDD;
+  const skew    = apiStats?.skew    ?? fstats.skew;
+  const kurt    = apiStats?.kurt    ?? fstats.kurt;
+  const sortino = apiStats?.sortino ?? fstats.sortino;
+  const var95   = apiStats?.var95   ?? fstats.var95;
+  const cvar95  = apiStats?.cvar95  ?? fstats.cvar95;
+  const bestDay  = apiStats?.best_day  ?? fstats.bestDay;
+  const worstDay = apiStats?.worst_day ?? fstats.worstDay;
 
   // ─── Analysis computations ──────────────────────────────────────────────
 
@@ -213,6 +238,9 @@ export function AssetsScreen() {
 
   // ─── Fetch handler ──────────────────────────────────────────────────────
 
+  // Period is always the max available for the chosen interval
+  const autoPeriod = YF_MAX_PERIOD[fetchInterval] ?? "max";
+
   const handleFetch = async () => {
     if (!fetchTicker) return;
     setFetching(true);
@@ -224,12 +252,17 @@ export function AssetsScreen() {
         body: JSON.stringify({
           ticker: fetchTicker,
           source: "yfinance",
-          period: fetchPeriod,
+          period: autoPeriod,
           interval: fetchInterval,
         }),
       });
       if (res.ok) {
-        setFetchMsg(`✓ ${fetchTicker} (${fetchPeriod}, ${fetchInterval}) scaricato`);
+        const data = await res.json();
+        setFetchMsg(`✓ ${fetchTicker} (${fetchInterval}, ${autoPeriod}) — ${data.bars} bar`);
+        // Refresh asset list and select the new series
+        qc.invalidateQueries({ queryKey: ["assets"] });
+        setSelectedTicker(fetchTicker);
+        setViewInterval(fetchInterval);
         setShowFetch(false);
         setFetchTicker("");
         setSearchVal("");
@@ -250,6 +283,11 @@ export function AssetsScreen() {
     setDropOpen(false);
   };
 
+  const selectSeries = (ticker: string, interval: string) => {
+    setSelectedTicker(ticker);
+    setViewInterval(interval);
+  };
+
   // ─── Render ─────────────────────────────────────────────────────────────
 
   return (
@@ -260,66 +298,106 @@ export function AssetsScreen() {
         <div className={styles.panel} style={{ gridColumn: "span 4" }}>
           <div className={styles.panelHeader}>
             <span className={styles.panelTitle}>ASSETS</span>
-            <span className={styles.panelSub}>{displayAssets.length} tracked</span>
+            <span className={styles.panelSub}>
+              {groupedAssets.length > 0
+                ? `${groupedAssets.length} ticker · ${apiAssets?.length ?? 0} serie`
+                : "nessun asset scaricato"}
+            </span>
           </div>
           <div className={styles.panelBody}>
             <div className={styles.assetList}>
-              {displayAssets.map((asset) => {
-                const fx = fixtureMap.get(asset.ticker) ?? asset;
-                const s = fx.stats;
-                const isSelected = asset.ticker === selectedTicker;
-                const kind = getKind(asset.ticker);
-                return (
-                  <div
-                    key={asset.ticker}
-                    className={`${styles.assetRow} ${isSelected ? styles.assetRowActive : ""}`}
-                    onClick={() => setSelectedTicker(asset.ticker)}
-                  >
-                    <div className={styles.assetRowTop}>
-                      <span
-                        className={styles.tickerChip}
-                        style={{
-                          borderColor:
-                            KIND_COLORS[kind] ?? "var(--border-l)",
-                          color: KIND_COLORS[kind] ?? "var(--text)",
-                        }}
+              {/* API assets grouped by ticker */}
+              {groupedAssets.length > 0
+                ? groupedAssets.map(({ ticker, series }) => {
+                    const kind = getKind(ticker);
+                    const isActiveTicker = ticker === selectedTicker;
+                    return (
+                      <div key={ticker} className={styles.assetGroup}>
+                        {/* Ticker header */}
+                        <div
+                          className={`${styles.assetGroupHeader} ${isActiveTicker ? styles.assetGroupHeaderActive : ""}`}
+                          onClick={() => selectSeries(ticker, series[0].interval)}
+                        >
+                          <span
+                            className={styles.tickerChip}
+                            style={{
+                              borderColor: KIND_COLORS[kind] ?? "var(--border-l)",
+                              color: KIND_COLORS[kind] ?? "var(--text)",
+                            }}
+                          >
+                            {ticker}
+                          </span>
+                          <span className={styles.kindBadge}>{kind}</span>
+                          <span className={styles.seriesCount}>
+                            {series.length} TF
+                          </span>
+                        </div>
+                        {/* Series rows */}
+                        {series.map((s) => {
+                          const isActive =
+                            isActiveTicker && viewInterval === s.interval;
+                          return (
+                            <div
+                              key={s.interval}
+                              className={`${styles.seriesRow} ${isActive ? styles.seriesRowActive : ""}`}
+                              onClick={() => selectSeries(ticker, s.interval)}
+                            >
+                              <span className={styles.seriesInterval}>
+                                {s.interval}
+                              </span>
+                              <span className={styles.seriesDates}>
+                                {fmtDate(s.start)} → {fmtDate(s.end)}
+                              </span>
+                              <span className={styles.seriesBars}>
+                                {s.bars.toLocaleString()}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })
+                : /* Fixture fallback when nothing downloaded */
+                  fixtures.assets.map((asset) => {
+                    const s = asset.stats;
+                    const isSelected = asset.ticker === selectedTicker;
+                    const kind = getKind(asset.ticker);
+                    return (
+                      <div
+                        key={asset.ticker}
+                        className={`${styles.assetRow} ${isSelected ? styles.assetRowActive : ""}`}
+                        onClick={() => setSelectedTicker(asset.ticker)}
                       >
-                        {asset.ticker}
-                      </span>
-                      <span className={styles.kindBadge}>{kind}</span>
-                    </div>
-                    <div className={styles.assetRowStats}>
-                      <span className={styles.statItem}>
-                        CAGR{" "}
-                        <span
-                          className={styles.statVal}
-                          style={{ color: "var(--green)" }}
-                        >
-                          {(s.cagr * 100).toFixed(1)}%
-                        </span>
-                      </span>
-                      <span className={styles.statItem}>
-                        SHP{" "}
-                        <span
-                          className={styles.statVal}
-                          style={{ color: "var(--amber)" }}
-                        >
-                          {s.sharpe.toFixed(2)}
-                        </span>
-                      </span>
-                      <span className={styles.statItem}>
-                        VOL{" "}
-                        <span
-                          className={styles.statVal}
-                          style={{ color: "var(--coral)" }}
-                        >
-                          {(s.annVol * 100).toFixed(0)}%
-                        </span>
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
+                        <div className={styles.assetRowTop}>
+                          <span
+                            className={styles.tickerChip}
+                            style={{
+                              borderColor: KIND_COLORS[kind] ?? "var(--border-l)",
+                              color: KIND_COLORS[kind] ?? "var(--text)",
+                            }}
+                          >
+                            {asset.ticker}
+                          </span>
+                          <span className={styles.kindBadge}>{kind}</span>
+                          <span className={styles.seriesCount}>DEMO</span>
+                        </div>
+                        <div className={styles.assetRowStats}>
+                          <span className={styles.statItem}>
+                            CAGR{" "}
+                            <span className={styles.statVal} style={{ color: "var(--green)" }}>
+                              {(s.cagr * 100).toFixed(1)}%
+                            </span>
+                          </span>
+                          <span className={styles.statItem}>
+                            SHP{" "}
+                            <span className={styles.statVal} style={{ color: "var(--amber)" }}>
+                              {s.sharpe.toFixed(2)}
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
             </div>
 
             {/* Fetch form */}
@@ -343,7 +421,7 @@ export function AssetsScreen() {
                     <input
                       ref={inputRef}
                       className={styles.searchInput}
-                      placeholder="es. BTC, ETH, AAPL…"
+                      placeholder="es. BTC-USD, AAPL, EURUSD=X…"
                       value={searchVal}
                       autoComplete="off"
                       spellCheck={false}
@@ -379,24 +457,10 @@ export function AssetsScreen() {
                     )}
                   </div>
 
-                  {/* Period pills */}
-                  <div className={styles.label}>PERIODO</div>
-                  <div className={styles.periodPills}>
-                    {PERIODS.map((p) => (
-                      <button
-                        key={p}
-                        className={`${styles.pill} ${fetchPeriod === p ? styles.pillActive : ""}`}
-                        onClick={() => setFetchPeriod(p)}
-                      >
-                        {p}
-                      </button>
-                    ))}
-                  </div>
-
                   {/* Timeframe pills */}
                   <div className={styles.label}>TIMEFRAME</div>
                   <div className={styles.periodPills}>
-                    {TIMEFRAMES.map((tf) => (
+                    {FETCH_TIMEFRAMES.map((tf) => (
                       <button
                         key={tf}
                         className={`${styles.pill} ${fetchInterval === tf ? styles.pillActive : ""}`}
@@ -405,6 +469,17 @@ export function AssetsScreen() {
                         {tf}
                       </button>
                     ))}
+                  </div>
+
+                  {/* Auto-period info */}
+                  <div className={styles.label} style={{ marginTop: 2 }}>
+                    PERIODO AUTO:{" "}
+                    <span style={{ color: "var(--amber)", fontWeight: 700 }}>
+                      {autoPeriod}
+                    </span>
+                    <span style={{ marginLeft: 6, opacity: 0.6 }}>
+                      (max disponibile per {fetchInterval})
+                    </span>
                   </div>
 
                   <div className={styles.fetchActions}>
@@ -446,7 +521,7 @@ export function AssetsScreen() {
             </span>
             <span className={styles.panelSub}>last {Math.min(bars.length, 120)} bars</span>
             <div style={{ display: "flex", gap: 3, marginLeft: "auto" }}>
-              {TIMEFRAMES.map((tf) => (
+              {VIEW_TIMEFRAMES.map((tf) => (
                 <button
                   key={tf}
                   className={`${styles.pill} ${viewInterval === tf ? styles.pillActive : ""}`}
@@ -498,10 +573,7 @@ export function AssetsScreen() {
               </span>
               <span className={styles.chartLabel}>
                 HIGH{" "}
-                <span
-                  className={styles.chartVal}
-                  style={{ color: "var(--green)" }}
-                >
+                <span className={styles.chartVal} style={{ color: "var(--green)" }}>
                   {bars.length > 0
                     ? Math.max(...bars.slice(-365).map((b) => b.h)).toLocaleString()
                     : "—"}
@@ -509,10 +581,7 @@ export function AssetsScreen() {
               </span>
               <span className={styles.chartLabel}>
                 LOW{" "}
-                <span
-                  className={styles.chartVal}
-                  style={{ color: "var(--coral)" }}
-                >
+                <span className={styles.chartVal} style={{ color: "var(--coral)" }}>
                   {bars.length > 0
                     ? Math.min(...bars.slice(-365).map((b) => b.l)).toLocaleString()
                     : "—"}
@@ -526,6 +595,7 @@ export function AssetsScreen() {
         <div className={styles.panel} style={{ gridColumn: "span 3" }}>
           <div className={styles.panelHeader}>
             <span className={styles.panelTitle}>STATS · {selectedTicker}</span>
+            <span className={styles.panelSub}>{viewInterval}</span>
           </div>
           <div className={styles.panelBody}>
             <div className={styles.statsGrid}>
@@ -724,7 +794,6 @@ function StdResidualsChart({ returns, height = 160 }: { returns: number[]; heigh
         viewBox={`0 0 ${W} ${H}`}
         style={{ width: "100%", height, display: "block" }}
       >
-        {/* grid lines */}
         {[-2, 0, 2].map((level) => (
           <line
             key={level}
@@ -734,7 +803,6 @@ function StdResidualsChart({ returns, height = 160 }: { returns: number[]; heigh
             strokeDasharray={level === 0 ? undefined : "3 3"}
           />
         ))}
-        {/* y-axis labels */}
         {[-2, 0, 2].map((level) => (
           <text
             key={level}
@@ -746,7 +814,6 @@ function StdResidualsChart({ returns, height = 160 }: { returns: number[]; heigh
             {level}σ
           </text>
         ))}
-        {/* dots */}
         {z.map((v, i) => (
           <circle
             key={i}

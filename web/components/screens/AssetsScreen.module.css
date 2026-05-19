@@ -55,6 +55,82 @@
   flex: 1;
 }
 
+/* Grouped: ticker header + series sub-rows */
+
+.assetGroup {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 2px;
+}
+
+.assetGroupHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: var(--panel-2);
+}
+
+.assetGroupHeader:hover {
+  border-color: var(--border-l);
+}
+
+.assetGroupHeaderActive {
+  border-color: var(--border);
+}
+
+.seriesCount {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--faint);
+  margin-left: auto;
+  letter-spacing: 0.04em;
+}
+
+.seriesRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px 3px 18px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.seriesRow:hover {
+  background: var(--panel-3);
+}
+
+.seriesRowActive {
+  border-left-color: var(--amber);
+  background: var(--panel-3);
+}
+
+.seriesInterval {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--amber);
+  min-width: 28px;
+}
+
+.seriesDates {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--dim);
+  flex: 1;
+  letter-spacing: 0.02em;
+}
+
+.seriesBars {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--faint);
+}
+
 .assetRow {
   padding: 6px 8px;
   cursor: pointer;
