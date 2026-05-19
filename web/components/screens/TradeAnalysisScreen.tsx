@@ -633,6 +633,52 @@ function DriftChart({ trades }: { trades: Trade[] }) {
   );
 }
 
+// ─── Reusable panels (accepts trades directly, no data fetching) ─────────────
+
+export function TradeAnalysisPanels({ trades }: { trades: Trade[] }) {
+  if (trades.length === 0) return null;
+  return (
+    <div className={styles.grid}>
+      <div className={styles.panel} style={{ gridColumn: "span 12" }}>
+        <div className={styles.panelHeader}>
+          <span className={styles.panelTitle}>DIRECTION BREAKDOWN</span>
+          <span className={styles.panelSub}>{trades.length} trades</span>
+        </div>
+        <div className={styles.panelBody}><DirectionTable trades={trades} /></div>
+      </div>
+      <div className={styles.panel} style={{ gridColumn: "span 8" }}>
+        <div className={styles.panelHeader}>
+          <span className={styles.panelTitle}>HOURLY WIN-RATE HEATMAP</span>
+          <span className={styles.panelSub}>UTC hour × side</span>
+        </div>
+        <div className={styles.panelBody} style={{ overflowY: "auto" }}>
+          <HourlyHeatmap trades={trades} />
+        </div>
+      </div>
+      <div className={styles.panel} style={{ gridColumn: "span 4" }}>
+        <div className={styles.panelHeader}>
+          <span className={styles.panelTitle}>P&L DISTRIBUTION</span>
+          <span className={styles.panelSub}>50 bins</span>
+        </div>
+        <div className={styles.panelBody}><PnlHistogram trades={trades} /></div>
+      </div>
+      <div className={styles.panel} style={{ gridColumn: "span 6" }}>
+        <div className={styles.panelHeader}>
+          <span className={styles.panelTitle}>STREAK ANALYSIS</span>
+        </div>
+        <div className={styles.panelBody}><StreakPanel trades={trades} /></div>
+      </div>
+      <div className={styles.panel} style={{ gridColumn: "span 6" }}>
+        <div className={styles.panelHeader}>
+          <span className={styles.panelTitle}>DRIFT DETECTION</span>
+          <span className={styles.panelSub}>rolling 30-trade win rate</span>
+        </div>
+        <div className={styles.panelBody}><DriftChart trades={trades} /></div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main screen ─────────────────────────────────────────────────────────────
 
 export function TradeAnalysisScreen() {
