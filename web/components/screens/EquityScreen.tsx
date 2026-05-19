@@ -16,6 +16,7 @@ export function EquityScreen() {
 
   const equityQuery = useRunEquity(activeRunId || null);
   const run = runs.find((r) => r.id === activeRunId) ?? fixtures.runs[0];
+  const isFixtureRun = !runs.find((r) => r.id === activeRunId);
 
   const equity: EquityPoint[] =
     equityQuery.data && equityQuery.data.length > 0
@@ -72,6 +73,15 @@ export function EquityScreen() {
         <div className={styles.panelHeader}>
           <span className={styles.panelTitle}>EQUITY · IS / OOS</span>
           <span style={{ flex: 1 }} />
+          {isFixtureRun && (
+            <span style={{
+              fontFamily:"var(--font-mono)", fontSize:9,
+              color:"var(--amber)", border:"1px solid var(--amber)",
+              padding:"1px 5px", marginLeft:"auto",
+            }}>
+              DEMO DATA
+            </span>
+          )}
           <button
             className={`${styles.pill} ${logScale ? styles.active : ""}`}
             onClick={() => setLogScale(!logScale)}

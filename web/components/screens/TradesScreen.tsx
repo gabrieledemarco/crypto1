@@ -249,6 +249,8 @@ export function TradesScreen() {
                 {t.pnl > 0 ? "+" : ""}
                 {t.pnl}
               </span>
+              {/* trade.equity is the per-trade equity path (from API or fixture)
+                  This is intentionally per-trade, not the global equity curve */}
               <Sparkline
                 data={equity
                   .slice(Math.max(0, t.idx - 5), t.idx + 2)
