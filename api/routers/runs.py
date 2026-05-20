@@ -101,6 +101,20 @@ def list_runs(strategy_id: Optional[str] = Query(None)):
     return result
 
 
+@router.delete("")
+def delete_unlinked_runs():
+    """Delete all runs that have no strategy_id (cleanup)."""
+    conn = get_conn()
+    ids = [r[0] for r in conn.execute(
+        "SELECT id FROM runs WHERE strategy_id IS NULL OR strategy_id = ''"
+    ).fetchall()]
+    if ids:
+        placeholders = ",".join(["?" for _ in ids])
+        conn.execute(f"DELETE FROM run_results WHERE run_id IN ({placeholders})", ids)
+        conn.execute(f"DELETE FROM runs WHERE id IN ({placeholders})", ids)
+    return {"deleted": len(ids), "ids": ids}
+
+
 @router.delete("/{run_id}")
 def delete_run(run_id: str):
     conn = get_conn()

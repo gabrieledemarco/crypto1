@@ -36,11 +36,12 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # Migrate: add strategy_id if missing (existing DB)
-    try:
+    # Migrate existing DB: add strategy_id only if the column is truly missing
+    existing_cols = {row[0] for row in conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='runs'"
+    ).fetchall()}
+    if "strategy_id" not in existing_cols:
         conn.execute("ALTER TABLE runs ADD COLUMN strategy_id TEXT")
-    except Exception:
-        pass
     conn.execute("""
         CREATE TABLE IF NOT EXISTS run_results (
             run_id    TEXT PRIMARY KEY,
