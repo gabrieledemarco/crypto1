@@ -18,8 +18,10 @@ export function LibraryScreen() {
 
   const { data: apiLibrary } = useLibrary();
   const starMutation = useStarStrategy();
-  const { data: runList, isLoading: runsLoading } = useRunList(selectedEntry?.id ?? null);
+  const { data: runList, isLoading: runsLoading } = useRunList(selectedEntry?.id);
   const deleteMutation = useDeleteRun();
+
+  const displayRuns: RunListItem[] = runList ?? [];
 
   const entries: LibraryEntry[] =
     apiLibrary && apiLibrary.length > 0
@@ -65,8 +67,6 @@ export function LibraryScreen() {
       onError: () => setToast("Delete failed"),
     });
   };
-
-  const displayRuns: RunListItem[] = runList ?? [];
 
   return (
     <div className={styles.wrapper}>
@@ -189,7 +189,7 @@ export function LibraryScreen() {
               <div className={styles.emptyMsg}>Loading…</div>
             ) : displayRuns.length === 0 ? (
               <div className={styles.emptyMsg}>
-                Nessun run per questa strategia. Clicca <strong>LOAD →</strong> per caricarla in Setup, poi avvia un backtest.
+                Nessun run. Avvia un backtest da Setup dopo aver cliccato <strong>LOAD →</strong> su questa strategia.
               </div>
             ) : (
               <>

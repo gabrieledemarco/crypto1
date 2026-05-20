@@ -65,23 +65,39 @@ export function useRuns() {
   });
 }
 
-// List runs with full metrics + date range. Pass strategyId to filter.
+// List runs with full metrics + date range, optionally filtered by strategy
 export function useRunList(strategyId?: string | null) {
-  const path = strategyId ? `/runs?strategy_id=${encodeURIComponent(strategyId)}` : "/runs";
+  const path = strategyId
+    ? `/runs?strategy_id=${encodeURIComponent(strategyId)}`
+    : "/runs";
   return useQuery({
     queryKey: ["run-list", strategyId ?? null],
     queryFn: () => api.get<RunListItem[]>(path),
+    enabled: strategyId !== undefined,
     staleTime: 15_000,
     retry: false,
   });
 }
 
-// Delete a run by id
+// Delete a single run by id
 export function useDeleteRun() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (runId: string) =>
       api.delete<{ deleted: string }>(`/runs/${runId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["run-list"] });
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
+    },
+  });
+}
+
+// Delete all runs with no strategy_id
+export function useDeleteUnlinkedRuns() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.delete<{ deleted: number; ids: string[] }>("/runs"),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["run-list"] });
       queryClient.invalidateQueries({ queryKey: ["runs"] });
