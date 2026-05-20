@@ -11,14 +11,14 @@ import type { RunListItem } from "@/hooks/useRun";
 type StatusFilter = "ALL" | "live" | "research" | "archived";
 
 export function LibraryScreen() {
-  const { goto, setToast } = useStore();
+  const { goto, setToast, setActiveStrategy } = useStore();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [selectedEntry, setSelectedEntry] = useState<LibraryEntry | null>(null);
 
   const { data: apiLibrary } = useLibrary();
   const starMutation = useStarStrategy();
-  const { data: runList, isLoading: runsLoading } = useRunList();
+  const { data: runList, isLoading: runsLoading } = useRunList(selectedEntry?.id ?? null);
   const deleteMutation = useDeleteRun();
 
   const entries: LibraryEntry[] =
@@ -49,7 +49,8 @@ export function LibraryScreen() {
 
   const handleLoad = (e: React.MouseEvent, entry: LibraryEntry) => {
     e.stopPropagation();
-    setToast(`Loaded "${entry.name}" → Setup`);
+    setActiveStrategy(entry.id);
+    setToast(`"${entry.name}" loaded → Setup`);
     goto("setup");
   };
 
@@ -65,7 +66,6 @@ export function LibraryScreen() {
     });
   };
 
-  // Show all runs (or filter by ticker matching strategy name if applicable)
   const displayRuns: RunListItem[] = runList ?? [];
 
   return (
@@ -130,9 +130,7 @@ export function LibraryScreen() {
               </button>
 
               <span className={styles.name}>{entry.name}</span>
-
               <span className={styles.strategy}>{entry.strategy}</span>
-
               <StatusBadge status={entry.status} />
 
               <span
@@ -142,19 +140,13 @@ export function LibraryScreen() {
                 {entry.metrics.sharpe.toFixed(2)}
               </span>
 
-              <span
-                className={styles.metricCell}
-                style={{ color: "var(--green)" }}
-              >
+              <span className={styles.metricCell} style={{ color: "var(--green)" }}>
                 {entry.metrics.cagr >= 1
-                  ? `${(entry.metrics.cagr).toFixed(1)}%`
+                  ? `${entry.metrics.cagr.toFixed(1)}%`
                   : `${(entry.metrics.cagr * 100).toFixed(1)}%`}
               </span>
 
-              <span
-                className={styles.metricCell}
-                style={{ color: "var(--coral)" }}
-              >
+              <span className={styles.metricCell} style={{ color: "var(--coral)" }}>
                 {entry.metrics.maxDD <= -1
                   ? `${entry.metrics.maxDD.toFixed(1)}%`
                   : `${(entry.metrics.maxDD * 100).toFixed(1)}%`}
@@ -165,12 +157,12 @@ export function LibraryScreen() {
               </span>
 
               <span className={styles.metricCell}>{entry.metrics.trades}</span>
-
               <span className={styles.tags}>{entry.tags.join(", ")}</span>
 
               <button
                 className={styles.loadBtn}
                 onClick={(e) => handleLoad(e, entry)}
+                title="Load in Setup and link runs to this strategy"
               >
                 LOAD →
               </button>
@@ -179,40 +171,40 @@ export function LibraryScreen() {
         </div>
       </div>
 
-      {/* ── Run history panel (shown when a strategy is selected) ── */}
+      {/* ── Run history panel ── */}
       {selectedEntry && (
         <div className={`${styles.panel} ${styles.runPanel}`}>
           <div className={styles.panelHeader}>
             <span className={styles.panelTitle}>RUN HISTORY</span>
             <span className={styles.panelSub}>
-              {selectedEntry.name} · {displayRuns.length} run{displayRuns.length !== 1 ? "s" : ""}
+              {selectedEntry.name}
+              {displayRuns.length > 0 && ` · ${displayRuns.length} run${displayRuns.length !== 1 ? "s" : ""}`}
             </span>
             <span style={{ flex: 1 }} />
-            <button
-              className={styles.closeBtn}
-              onClick={() => setSelectedEntry(null)}
-            >
-              ✕
-            </button>
+            <button className={styles.closeBtn} onClick={() => setSelectedEntry(null)}>✕</button>
           </div>
 
           <div className={styles.tableWrap}>
             {runsLoading ? (
               <div className={styles.emptyMsg}>Loading…</div>
             ) : displayRuns.length === 0 ? (
-              <div className={styles.emptyMsg}>No runs found. Run a backtest from Setup.</div>
+              <div className={styles.emptyMsg}>
+                Nessun run per questa strategia. Clicca <strong>LOAD →</strong> per caricarla in Setup, poi avvia un backtest.
+              </div>
             ) : (
               <>
                 <div className={styles.runThead}>
                   <span className={styles.th}>NAME</span>
                   <span className={styles.th}>ASSET</span>
+                  <span className={styles.th}>TF</span>
                   <span className={styles.th}>START</span>
                   <span className={styles.th}>END</span>
-                  <span className={styles.th}>TF</span>
                   <span className={styles.th}>SHARPE</span>
                   <span className={styles.th}>CAGR%</span>
                   <span className={styles.th}>MAXDD%</span>
                   <span className={styles.th}>PF</span>
+                  <span className={styles.th}>TRADES</span>
+                  <span className={styles.th}>WIN%</span>
                   <span className={styles.th}>PARAMS</span>
                   <span className={styles.th}></span>
                 </div>
@@ -245,16 +237,19 @@ function RunRow({
   const params = run.params as Record<string, unknown>;
   const paramStr = Object.entries(params)
     .filter(([k]) => !["ticker", "timeframe"].includes(k))
-    .map(([k, v]) => `${k}=${v}`)
-    .join(" · ");
+    .map(([k, v]) => {
+      if (Array.isArray(v)) return `${k}=[${v.join(",")}]`;
+      return `${k}=${v}`;
+    })
+    .join("  ");
 
   return (
     <div className={styles.runRow}>
       <span className={styles.runName}>{run.name}</span>
       <span className={styles.runCell}>{run.ticker || "—"}</span>
+      <span className={styles.runCell}>{run.timeframe || "—"}</span>
       <span className={styles.runCell}>{run.start_date ?? "—"}</span>
       <span className={styles.runCell}>{run.end_date ?? "—"}</span>
-      <span className={styles.runCell}>{run.timeframe || "—"}</span>
       <span
         className={styles.runMetric}
         style={{ color: (run.sharpe ?? 0) >= 1 ? "var(--green)" : "var(--amber)" }}
@@ -272,6 +267,12 @@ function RunRow({
       </span>
       <span className={styles.runMetric} style={{ color: "var(--amber)" }}>
         {run.pf != null ? run.pf.toFixed(2) : "—"}
+      </span>
+      <span className={styles.runMetric}>
+        {run.n_trades != null ? run.n_trades : "—"}
+      </span>
+      <span className={styles.runMetric} style={{ color: "var(--dim)" }}>
+        {run.win_rate != null ? `${run.win_rate.toFixed(0)}%` : "—"}
       </span>
       <span className={styles.runParams} title={paramStr}>{paramStr || "—"}</span>
       <button

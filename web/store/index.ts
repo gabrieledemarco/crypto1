@@ -19,6 +19,7 @@ export type ScreenId =
 interface Store {
   runs: Run[];
   activeRunId: string;
+  activeStrategyId: string | null;
   screen: ScreenId;
   paletteOpen: boolean;
   helpOpen: boolean;
@@ -27,6 +28,7 @@ interface Store {
   toast: string | null;
   setRuns: (runs: Run[]) => void;
   setRun: (id: string) => void;
+  setActiveStrategy: (id: string | null) => void;
   goto: (screen: ScreenId) => void;
   setPaletteOpen: (open: boolean) => void;
   setHelpOpen: (open: boolean) => void;
@@ -38,6 +40,7 @@ interface Store {
 export const useStore = create<Store>((set) => ({
   runs: [],
   activeRunId: "",
+  activeStrategyId: null,
   screen: "dashboard",
   paletteOpen: false,
   helpOpen: false,
@@ -46,6 +49,7 @@ export const useStore = create<Store>((set) => ({
   toast: null,
   setRuns: (runs) => set({ runs }),
   setRun: (id) => set({ activeRunId: id }),
+  setActiveStrategy: (id) => set({ activeStrategyId: id }),
   goto: (screen) => set({ screen }),
   setPaletteOpen: (open) => set({ paletteOpen: open }),
   setHelpOpen: (open) => set({ helpOpen: open }),
