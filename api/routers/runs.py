@@ -51,18 +51,21 @@ async def stream_run(run_id: str):
 # ── List / get ────────────────────────────────────────────────────────────────
 
 @router.get("")
-def list_runs():
+def list_runs(strategy_id: Optional[str] = Query(None)):
     conn = get_conn()
-    rows = conn.execute("""
+    where = "WHERE r.strategy_id = ?" if strategy_id else ""
+    args  = [strategy_id] if strategy_id else []
+    rows = conn.execute(f"""
         SELECT r.id, r.name, r.ticker, r.timeframe, r.status, r.params, r.created_at,
-               rr.metrics, rr.equity
+               r.strategy_id, rr.metrics, rr.equity
         FROM runs r
         LEFT JOIN run_results rr ON r.id = rr.run_id
+        {where}
         ORDER BY r.created_at DESC
-    """).fetchall()
+    """, args).fetchall()
     result = []
     for r in rows:
-        run_id, name, ticker, timeframe, status, params_str, created_at, metrics_str, equity_str = r
+        run_id, name, ticker, timeframe, status, params_str, created_at, strat_id, metrics_str, equity_str = r
         params = json.loads(params_str) if params_str else {}
         best_m: dict = {}
         if metrics_str:
@@ -83,6 +86,7 @@ def list_runs():
             "ticker": ticker or params.get("ticker", ""),
             "timeframe": timeframe or params.get("timeframe", ""),
             "status": status,
+            "strategy_id": strat_id,
             "params": params,
             "created_at": str(created_at),
             "start_date": start_date,
@@ -91,6 +95,8 @@ def list_runs():
             "cagr": round(float(best_m["cagr_pct"]), 2) if "cagr_pct" in best_m else None,
             "max_dd": round(float(best_m["max_drawdown_pct"]), 2) if "max_drawdown_pct" in best_m else None,
             "pf": round(float(best_m["profit_factor"]), 2) if "profit_factor" in best_m and best_m["profit_factor"] != float("inf") else None,
+            "n_trades": int(best_m.get("n_trades", 0)) if best_m else None,
+            "win_rate": round(float(best_m["win_rate_pct"]), 1) if "win_rate_pct" in best_m else None,
         })
     return result
 
@@ -182,8 +188,8 @@ async def create_run(body: RunCreate):
 
     conn = get_conn()
     conn.execute(
-        "INSERT INTO runs (id, name, ticker, timeframe, params, status) VALUES (?,?,?,?,?,?)",
-        [run_id, name, params["ticker"], params["timeframe"], json.dumps(params), "pending"]
+        "INSERT INTO runs (id, name, ticker, timeframe, params, status, strategy_id) VALUES (?,?,?,?,?,?,?)",
+        [run_id, name, params["ticker"], params["timeframe"], json.dumps(params), "pending", body.strategy_id]
     )
 
     asyncio.create_task(_run_backtest(run_id, params))

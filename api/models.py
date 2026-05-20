@@ -20,6 +20,7 @@ class RunParams(BaseModel):
 class RunCreate(BaseModel):
     name: Optional[str] = None
     params: RunParams = RunParams()
+    strategy_id: Optional[str] = None
 
 
 class AssetFetch(BaseModel):

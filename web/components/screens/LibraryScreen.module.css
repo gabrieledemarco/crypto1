@@ -272,7 +272,7 @@
 /* Run history table */
 .runThead {
   display: grid;
-  grid-template-columns: 1fr 72px 86px 86px 40px 58px 58px 58px 48px 1fr 28px;
+  grid-template-columns: 1fr 72px 36px 86px 86px 56px 56px 56px 44px 44px 40px 1fr 28px;
   gap: 4px;
   padding: 3px 8px;
   background: var(--panel-3);
@@ -284,7 +284,7 @@
 
 .runRow {
   display: grid;
-  grid-template-columns: 1fr 72px 86px 86px 40px 58px 58px 58px 48px 1fr 28px;
+  grid-template-columns: 1fr 72px 36px 86px 86px 56px 56px 56px 44px 44px 40px 1fr 28px;
   gap: 4px;
   padding: 4px 8px;
   border-bottom: 1px solid var(--border);

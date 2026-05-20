@@ -24,7 +24,7 @@ interface Params {
 }
 
 export function SetupScreen() {
-  const { activeRunId, runs, setToast } = useStore();
+  const { activeRunId, runs, activeStrategyId, setToast } = useStore();
   const run = runs.find((r) => r.id === activeRunId) ?? fixtures.runs[0];
   const p = run?.params;
 
@@ -157,7 +157,7 @@ export function SetupScreen() {
       const res = await fetch("/api/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ params }),
+        body: JSON.stringify({ params, strategy_id: activeStrategyId ?? undefined }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));

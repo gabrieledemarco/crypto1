@@ -9,6 +9,7 @@ export interface RunListItem {
   ticker: string;
   timeframe: string;
   status: string;
+  strategy_id?: string | null;
   params: Record<string, unknown>;
   created_at: string;
   start_date?: string | null;
@@ -17,6 +18,8 @@ export interface RunListItem {
   cagr?: number | null;
   max_dd?: number | null;
   pf?: number | null;
+  n_trades?: number | null;
+  win_rate?: number | null;
 }
 
 // API trade shape from the engine serializer
@@ -62,11 +65,12 @@ export function useRuns() {
   });
 }
 
-// List all runs with full metrics + date range
-export function useRunList() {
+// List runs with full metrics + date range. Pass strategyId to filter.
+export function useRunList(strategyId?: string | null) {
+  const path = strategyId ? `/runs?strategy_id=${encodeURIComponent(strategyId)}` : "/runs";
   return useQuery({
-    queryKey: ["run-list"],
-    queryFn: () => api.get<RunListItem[]>("/runs"),
+    queryKey: ["run-list", strategyId ?? null],
+    queryFn: () => api.get<RunListItem[]>(path),
     staleTime: 15_000,
     retry: false,
   });
