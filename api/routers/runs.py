@@ -53,12 +53,57 @@ async def stream_run(run_id: str):
 @router.get("")
 def list_runs():
     conn = get_conn()
-    rows = conn.execute("SELECT id, name, ticker, status, params, created_at FROM runs ORDER BY created_at DESC").fetchall()
-    return [
-        {"id": r[0], "name": r[1], "ticker": r[2], "status": r[3],
-         "params": json.loads(r[4]) if r[4] else {}, "created_at": str(r[5])}
-        for r in rows
-    ]
+    rows = conn.execute("""
+        SELECT r.id, r.name, r.ticker, r.timeframe, r.status, r.params, r.created_at,
+               rr.metrics, rr.equity
+        FROM runs r
+        LEFT JOIN run_results rr ON r.id = rr.run_id
+        ORDER BY r.created_at DESC
+    """).fetchall()
+    result = []
+    for r in rows:
+        run_id, name, ticker, timeframe, status, params_str, created_at, metrics_str, equity_str = r
+        params = json.loads(params_str) if params_str else {}
+        best_m: dict = {}
+        if metrics_str:
+            all_m = json.loads(metrics_str)
+            best_key = "V_Agent" if "V_Agent" in all_m else "V4 +GARCH+Costi"
+            if best_key not in all_m and all_m:
+                best_key = next(iter(all_m))
+            best_m = all_m.get(best_key, {})
+        start_date = end_date = None
+        if equity_str:
+            eq = json.loads(equity_str)
+            if eq:
+                start_date = str(eq[0].get("ts", ""))[:10] or None
+                end_date   = str(eq[-1].get("ts", ""))[:10] or None
+        result.append({
+            "id": run_id,
+            "name": name,
+            "ticker": ticker or params.get("ticker", ""),
+            "timeframe": timeframe or params.get("timeframe", ""),
+            "status": status,
+            "params": params,
+            "created_at": str(created_at),
+            "start_date": start_date,
+            "end_date": end_date,
+            "sharpe": round(float(best_m["sharpe_ratio"]), 3) if "sharpe_ratio" in best_m else None,
+            "cagr": round(float(best_m["cagr_pct"]), 2) if "cagr_pct" in best_m else None,
+            "max_dd": round(float(best_m["max_drawdown_pct"]), 2) if "max_drawdown_pct" in best_m else None,
+            "pf": round(float(best_m["profit_factor"]), 2) if "profit_factor" in best_m and best_m["profit_factor"] != float("inf") else None,
+        })
+    return result
+
+
+@router.delete("/{run_id}")
+def delete_run(run_id: str):
+    conn = get_conn()
+    existing = conn.execute("SELECT id FROM runs WHERE id=?", [run_id]).fetchone()
+    if not existing:
+        raise HTTPException(404, "Run not found")
+    conn.execute("DELETE FROM run_results WHERE run_id=?", [run_id])
+    conn.execute("DELETE FROM runs WHERE id=?", [run_id])
+    return {"deleted": run_id}
 
 @router.get("/{run_id}")
 def get_run(run_id: str):

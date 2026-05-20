@@ -17,6 +17,16 @@
   flex: 1;
 }
 
+.panelSplit {
+  flex: 0 0 auto;
+  max-height: 50%;
+}
+
+.runPanel {
+  flex: 1;
+  min-height: 0;
+}
+
 .panelHeader {
   display: flex;
   align-items: center;
@@ -228,6 +238,117 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Selected strategy row */
+.trowSelected {
+  background: var(--panel-3) !important;
+  outline: 1px solid var(--amber);
+}
+
+/* Close button */
+.closeBtn {
+  background: transparent;
+  border: none;
+  color: var(--faint);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.closeBtn:hover {
+  color: var(--text);
+}
+
+/* Empty message */
+.emptyMsg {
+  padding: 16px 8px;
+  font-size: 11px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+}
+
+/* Run history table */
+.runThead {
+  display: grid;
+  grid-template-columns: 1fr 72px 86px 86px 40px 58px 58px 58px 48px 1fr 28px;
+  gap: 4px;
+  padding: 3px 8px;
+  background: var(--panel-3);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.runRow {
+  display: grid;
+  grid-template-columns: 1fr 72px 86px 86px 40px 58px 58px 58px 48px 1fr 28px;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+
+.runRow:hover {
+  background: var(--panel-2);
+}
+
+.runName {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.runCell {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.runMetric {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.runParams {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.delBtn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 4px;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.delBtn:hover:not(:disabled) {
+  border-color: var(--coral);
+  color: var(--coral);
+}
+
+.delBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* Load button */
