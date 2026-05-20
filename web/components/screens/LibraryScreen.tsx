@@ -18,8 +18,15 @@ export function LibraryScreen() {
 
   const { data: apiLibrary } = useLibrary();
   const starMutation = useStarStrategy();
-  const { data: runList, isLoading: runsLoading } = useRunList(selectedEntry?.id ?? null);
+  const { data: allRuns, isLoading: runsLoading } = useRunList();
   const deleteMutation = useDeleteRun();
+
+  // Sort: runs linked to selected strategy first, then the rest
+  const displayRuns: RunListItem[] = (allRuns ?? []).slice().sort((a, b) => {
+    const aLinked = a.strategy_id === selectedEntry?.id ? 1 : 0;
+    const bLinked = b.strategy_id === selectedEntry?.id ? 1 : 0;
+    return bLinked - aLinked;
+  });
 
   const entries: LibraryEntry[] =
     apiLibrary && apiLibrary.length > 0
@@ -65,8 +72,6 @@ export function LibraryScreen() {
       onError: () => setToast("Delete failed"),
     });
   };
-
-  const displayRuns: RunListItem[] = runList ?? [];
 
   return (
     <div className={styles.wrapper}>
@@ -178,7 +183,10 @@ export function LibraryScreen() {
             <span className={styles.panelTitle}>RUN HISTORY</span>
             <span className={styles.panelSub}>
               {selectedEntry.name}
-              {displayRuns.length > 0 && ` · ${displayRuns.length} run${displayRuns.length !== 1 ? "s" : ""}`}
+              {displayRuns.length > 0 && (() => {
+                const linked = displayRuns.filter(r => r.strategy_id === selectedEntry.id).length;
+                return ` · ${displayRuns.length} run${displayRuns.length !== 1 ? "s" : ""}${linked > 0 ? ` (${linked} linked)` : ""}`;
+              })()}
             </span>
             <span style={{ flex: 1 }} />
             <button className={styles.closeBtn} onClick={() => setSelectedEntry(null)}>✕</button>
@@ -189,11 +197,12 @@ export function LibraryScreen() {
               <div className={styles.emptyMsg}>Loading…</div>
             ) : displayRuns.length === 0 ? (
               <div className={styles.emptyMsg}>
-                Nessun run per questa strategia. Clicca <strong>LOAD →</strong> per caricarla in Setup, poi avvia un backtest.
+                Nessun run. Avvia un backtest da Setup dopo aver cliccato <strong>LOAD →</strong> su questa strategia.
               </div>
             ) : (
               <>
                 <div className={styles.runThead}>
+                  <span className={styles.th}></span>
                   <span className={styles.th}>NAME</span>
                   <span className={styles.th}>ASSET</span>
                   <span className={styles.th}>TF</span>
@@ -212,6 +221,7 @@ export function LibraryScreen() {
                   <RunRow
                     key={run.id}
                     run={run}
+                    linked={run.strategy_id === selectedEntry.id}
                     onDelete={(e) => handleDeleteRun(e, run.id)}
                     deleting={deleteMutation.isPending && deleteMutation.variables === run.id}
                   />
@@ -227,10 +237,12 @@ export function LibraryScreen() {
 
 function RunRow({
   run,
+  linked,
   onDelete,
   deleting,
 }: {
   run: RunListItem;
+  linked: boolean;
   onDelete: (e: React.MouseEvent) => void;
   deleting: boolean;
 }) {
@@ -244,7 +256,10 @@ function RunRow({
     .join("  ");
 
   return (
-    <div className={styles.runRow}>
+    <div className={`${styles.runRow} ${linked ? styles.runRowLinked : ""}`}>
+      <span title={linked ? "Linked to this strategy" : "Not linked"} style={{ fontSize: 10, color: linked ? "var(--green)" : "var(--border-l)", textAlign: "center" }}>
+        {linked ? "●" : "○"}
+      </span>
       <span className={styles.runName}>{run.name}</span>
       <span className={styles.runCell}>{run.ticker || "—"}</span>
       <span className={styles.runCell}>{run.timeframe || "—"}</span>

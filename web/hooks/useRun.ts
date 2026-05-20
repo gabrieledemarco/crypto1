@@ -65,12 +65,11 @@ export function useRuns() {
   });
 }
 
-// List runs with full metrics + date range. Pass strategyId to filter.
-export function useRunList(strategyId?: string | null) {
-  const path = strategyId ? `/runs?strategy_id=${encodeURIComponent(strategyId)}` : "/runs";
+// List all runs with full metrics + date range (no server-side filter)
+export function useRunList() {
   return useQuery({
-    queryKey: ["run-list", strategyId ?? null],
-    queryFn: () => api.get<RunListItem[]>(path),
+    queryKey: ["run-list"],
+    queryFn: () => api.get<RunListItem[]>("/runs"),
     staleTime: 15_000,
     retry: false,
   });
