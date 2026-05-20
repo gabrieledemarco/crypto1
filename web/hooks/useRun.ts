@@ -1,7 +1,23 @@
 "use client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { Trade } from "@/lib/fixtures";
+
+export interface RunListItem {
+  id: string;
+  name: string;
+  ticker: string;
+  timeframe: string;
+  status: string;
+  params: Record<string, unknown>;
+  created_at: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  sharpe?: number | null;
+  cagr?: number | null;
+  max_dd?: number | null;
+  pf?: number | null;
+}
 
 // API trade shape from the engine serializer
 interface ApiTrade {
@@ -37,12 +53,35 @@ function normalizeApiTrade(t: ApiTrade, n: number): Trade {
   };
 }
 
-// List all runs
+// List all runs (basic)
 export function useRuns() {
   return useQuery({
     queryKey: ["runs"],
     queryFn: () => api.get<{ id: string; name: string; status: string }[]>("/runs"),
     staleTime: 30_000,
+  });
+}
+
+// List all runs with full metrics + date range
+export function useRunList() {
+  return useQuery({
+    queryKey: ["run-list"],
+    queryFn: () => api.get<RunListItem[]>("/runs"),
+    staleTime: 15_000,
+    retry: false,
+  });
+}
+
+// Delete a run by id
+export function useDeleteRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: string) =>
+      api.delete<{ deleted: string }>(`/runs/${runId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["run-list"] });
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
+    },
   });
 }
 

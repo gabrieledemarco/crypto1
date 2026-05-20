@@ -14,4 +14,10 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export const api = { get, post };
+async function del<T>(path: string): Promise<T> {
+  const res = await fetch(`/api${path}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`DELETE ${path} → ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+export const api = { get, post, delete: del };

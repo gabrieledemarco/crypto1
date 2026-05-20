@@ -3,8 +3,10 @@ import { useState } from "react";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
 import { useLibrary, useStarStrategy } from "@/hooks/useLibrary";
+import { useRunList, useDeleteRun } from "@/hooks/useRun";
 import styles from "./LibraryScreen.module.css";
 import type { LibraryEntry } from "@/lib/fixtures";
+import type { RunListItem } from "@/hooks/useRun";
 
 type StatusFilter = "ALL" | "live" | "research" | "archived";
 
@@ -12,9 +14,12 @@ export function LibraryScreen() {
   const { goto, setToast } = useStore();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [selectedEntry, setSelectedEntry] = useState<LibraryEntry | null>(null);
 
   const { data: apiLibrary } = useLibrary();
   const starMutation = useStarStrategy();
+  const { data: runList, isLoading: runsLoading } = useRunList();
+  const deleteMutation = useDeleteRun();
 
   const entries: LibraryEntry[] =
     apiLibrary && apiLibrary.length > 0
@@ -48,9 +53,25 @@ export function LibraryScreen() {
     goto("setup");
   };
 
+  const handleSelectEntry = (entry: LibraryEntry) => {
+    setSelectedEntry((prev) => (prev?.id === entry.id ? null : entry));
+  };
+
+  const handleDeleteRun = (e: React.MouseEvent, runId: string) => {
+    e.stopPropagation();
+    deleteMutation.mutate(runId, {
+      onSuccess: () => setToast(`Run ${runId} deleted`),
+      onError: () => setToast("Delete failed"),
+    });
+  };
+
+  // Show all runs (or filter by ticker matching strategy name if applicable)
+  const displayRuns: RunListItem[] = runList ?? [];
+
   return (
     <div className={styles.wrapper}>
-      <div className={`${styles.panel} ${styles.panelFull}`}>
+      {/* ── Strategy table ── */}
+      <div className={`${styles.panel} ${selectedEntry ? styles.panelSplit : styles.panelFull}`}>
         <div className={styles.panelHeader}>
           <span className={styles.panelTitle}>STRATEGY LIBRARY</span>
           <span className={styles.panelSub}>{entries.length} strategies</span>
@@ -97,8 +118,8 @@ export function LibraryScreen() {
           {filtered.map((entry) => (
             <div
               key={entry.id}
-              className={`${styles.trow} ${entry.starred ? styles.trowStarred : ""}`}
-              onClick={() => handleLoad({ stopPropagation: () => {} } as React.MouseEvent, entry)}
+              className={`${styles.trow} ${entry.starred ? styles.trowStarred : ""} ${selectedEntry?.id === entry.id ? styles.trowSelected : ""}`}
+              onClick={() => handleSelectEntry(entry)}
             >
               <button
                 className={`${styles.starBtn} ${entry.starred ? styles.starBtnOn : ""}`}
@@ -157,6 +178,110 @@ export function LibraryScreen() {
           ))}
         </div>
       </div>
+
+      {/* ── Run history panel (shown when a strategy is selected) ── */}
+      {selectedEntry && (
+        <div className={`${styles.panel} ${styles.runPanel}`}>
+          <div className={styles.panelHeader}>
+            <span className={styles.panelTitle}>RUN HISTORY</span>
+            <span className={styles.panelSub}>
+              {selectedEntry.name} · {displayRuns.length} run{displayRuns.length !== 1 ? "s" : ""}
+            </span>
+            <span style={{ flex: 1 }} />
+            <button
+              className={styles.closeBtn}
+              onClick={() => setSelectedEntry(null)}
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className={styles.tableWrap}>
+            {runsLoading ? (
+              <div className={styles.emptyMsg}>Loading…</div>
+            ) : displayRuns.length === 0 ? (
+              <div className={styles.emptyMsg}>No runs found. Run a backtest from Setup.</div>
+            ) : (
+              <>
+                <div className={styles.runThead}>
+                  <span className={styles.th}>NAME</span>
+                  <span className={styles.th}>ASSET</span>
+                  <span className={styles.th}>START</span>
+                  <span className={styles.th}>END</span>
+                  <span className={styles.th}>TF</span>
+                  <span className={styles.th}>SHARPE</span>
+                  <span className={styles.th}>CAGR%</span>
+                  <span className={styles.th}>MAXDD%</span>
+                  <span className={styles.th}>PF</span>
+                  <span className={styles.th}>PARAMS</span>
+                  <span className={styles.th}></span>
+                </div>
+                {displayRuns.map((run) => (
+                  <RunRow
+                    key={run.id}
+                    run={run}
+                    onDelete={(e) => handleDeleteRun(e, run.id)}
+                    deleting={deleteMutation.isPending && deleteMutation.variables === run.id}
+                  />
+                ))}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RunRow({
+  run,
+  onDelete,
+  deleting,
+}: {
+  run: RunListItem;
+  onDelete: (e: React.MouseEvent) => void;
+  deleting: boolean;
+}) {
+  const params = run.params as Record<string, unknown>;
+  const paramStr = Object.entries(params)
+    .filter(([k]) => !["ticker", "timeframe"].includes(k))
+    .map(([k, v]) => `${k}=${v}`)
+    .join(" · ");
+
+  return (
+    <div className={styles.runRow}>
+      <span className={styles.runName}>{run.name}</span>
+      <span className={styles.runCell}>{run.ticker || "—"}</span>
+      <span className={styles.runCell}>{run.start_date ?? "—"}</span>
+      <span className={styles.runCell}>{run.end_date ?? "—"}</span>
+      <span className={styles.runCell}>{run.timeframe || "—"}</span>
+      <span
+        className={styles.runMetric}
+        style={{ color: (run.sharpe ?? 0) >= 1 ? "var(--green)" : "var(--amber)" }}
+      >
+        {run.sharpe != null ? run.sharpe.toFixed(2) : "—"}
+      </span>
+      <span
+        className={styles.runMetric}
+        style={{ color: (run.cagr ?? 0) >= 0 ? "var(--green)" : "var(--coral)" }}
+      >
+        {run.cagr != null ? `${run.cagr.toFixed(1)}%` : "—"}
+      </span>
+      <span className={styles.runMetric} style={{ color: "var(--coral)" }}>
+        {run.max_dd != null ? `${run.max_dd.toFixed(1)}%` : "—"}
+      </span>
+      <span className={styles.runMetric} style={{ color: "var(--amber)" }}>
+        {run.pf != null ? run.pf.toFixed(2) : "—"}
+      </span>
+      <span className={styles.runParams} title={paramStr}>{paramStr || "—"}</span>
+      <button
+        className={styles.delBtn}
+        onClick={onDelete}
+        disabled={deleting}
+        title="Delete run"
+      >
+        {deleting ? "…" : "✕"}
+      </button>
     </div>
   );
 }
