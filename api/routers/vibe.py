@@ -1,6 +1,6 @@
 """
 /vibe router — Claude streaming proxy
-POST /vibe/generate  → SSE stream: {type:"delta",text} … {type:"done",config:{}}
+POST /vibe/generate  → SSE stream: {type:"delta",text} … {type:"done",config:{},code:""}
 """
 import asyncio
 import json
@@ -17,9 +17,11 @@ router = APIRouter()
 _executor = ThreadPoolExecutor(max_workers=2)
 
 SYSTEM_PROMPT = """You are a quantitative trading strategy assistant for the Pareto Terminal.
-Given a natural language description, generate a trading strategy configuration as JSON.
+Given a natural language description, generate a trading strategy configuration and Python code.
 
-After a brief explanation, output the config in a ```json block with exactly these fields:
+## Step 1 — Brief explanation (2-4 sentences)
+
+## Step 2 — JSON config in a ```json block with exactly these fields:
 {
   "ticker": "BTC-USD",
   "timeframe": "1h",
@@ -38,19 +40,45 @@ Field constraints:
 - active_hours: [start_hour, end_hour] UTC (0-23)
 - risk_per_trade: 0.1 – 3.0 (% of equity)
 - direction: "ALL", "LONG", or "SHORT"
+
+## Step 3 — Python agent_fn in a ```python block.
+The function receives a DataFrame with columns: open, high, low, close, volume,
+ATR14, RSI14, EMA20, EMA50, VWAP, BBupper, BBlower.
+It must return the DataFrame with added columns: signal (1/−1/0), SL_dist, TP_dist.
+Use only pandas/numpy. Keep it self-contained.
+"""
+
+_MOCK_CODE = """\
+import pandas as pd
+
+def agent_fn(df: pd.DataFrame) -> pd.DataFrame:
+    \"\"\"Momentum strategy — RSI crossover with EMA trend filter.\"\"\"
+    df = df.copy()
+    df["signal"] = 0
+    long_cond = (
+        (df["RSI14"].shift(1) < 50) & (df["RSI14"] >= 50) &
+        (df["close"] > df["EMA20"])
+    )
+    short_cond = (
+        (df["RSI14"].shift(1) > 50) & (df["RSI14"] <= 50) &
+        (df["close"] < df["EMA20"])
+    )
+    df.loc[long_cond, "signal"] = 1
+    df.loc[short_cond, "signal"] = -1
+    df["SL_dist"] = df["ATR14"] * 2.0
+    df["TP_dist"] = df["ATR14"] * 4.0
+    return df\
 """
 
 
 def _extract_config(text: str) -> dict:
     """Extract JSON config from Claude response text."""
-    # Try ```json block first
     m = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
     if m:
         try:
             return json.loads(m.group(1))
         except json.JSONDecodeError:
             pass
-    # Fallback: first {...} object
     m = re.search(r"\{[^{}]*\"ticker\"[^{}]*\}", text, re.DOTALL)
     if m:
         try:
@@ -58,6 +86,14 @@ def _extract_config(text: str) -> dict:
         except json.JSONDecodeError:
             pass
     return {}
+
+
+def _extract_code(text: str) -> str:
+    """Extract Python agent_fn from Claude response text."""
+    m = re.search(r"```python\s*(.*?)\s*```", text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return ""
 
 
 async def _mock_stream(body: VibeGenerateRequest):
@@ -80,6 +116,9 @@ async def _mock_stream(body: VibeGenerateRequest):
         '  "risk_per_trade": 1.0,\n'
         '  "direction": "ALL"\n'
         "}\n"
+        "```\n\n"
+        "```python\n"
+        + _MOCK_CODE + "\n"
         "```"
     )
     chunk_size = 30
@@ -89,7 +128,8 @@ async def _mock_stream(body: VibeGenerateRequest):
         await asyncio.sleep(0.04)
 
     config = _extract_config(mock_text)
-    yield f"data: {json.dumps({'type': 'done', 'config': config})}\n\n"
+    code = _extract_code(mock_text)
+    yield f"data: {json.dumps({'type': 'done', 'config': config, 'code': code})}\n\n"
 
 
 async def _claude_stream(body: VibeGenerateRequest):
@@ -104,8 +144,7 @@ async def _claude_stream(body: VibeGenerateRequest):
         try:
             with client.messages.stream(
                 model="claude-opus-4-7",
-                max_tokens=1024,
-                thinking={"type": "adaptive"},
+                max_tokens=2048,
                 system=SYSTEM_PROMPT,
                 messages=[
                     {
@@ -135,11 +174,12 @@ async def _claude_stream(body: VibeGenerateRequest):
             yield f"data: {json.dumps({'type': 'delta', 'text': val})}\n\n"
         elif kind == "error":
             yield f"data: {json.dumps({'type': 'delta', 'text': f'[Error: {val}]'})}\n\n"
-            yield f"data: {json.dumps({'type': 'done', 'config': {}})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'config': {}, 'code': ''})}\n\n"
             break
         else:
             config = _extract_config(full_text)
-            yield f"data: {json.dumps({'type': 'done', 'config': config})}\n\n"
+            code = _extract_code(full_text)
+            yield f"data: {json.dumps({'type': 'done', 'config': config, 'code': code})}\n\n"
             break
 
 

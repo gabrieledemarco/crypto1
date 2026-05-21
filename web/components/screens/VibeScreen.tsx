@@ -16,6 +16,13 @@ interface StrategyConfig {
   direction?: string;
 }
 
+interface SavedStrategy {
+  id: string;
+  name: string;
+  config: StrategyConfig;
+  code: string;
+}
+
 const CONFIG_LABELS: Record<string, string> = {
   ticker: "TICKER",
   timeframe: "TIMEFRAME",
@@ -30,7 +37,6 @@ export function VibeScreen() {
   const { goto, setToast } = useStore();
   const { data: assetsData } = useAssets();
 
-  // Unique tickers with fetched data, formatted as "BTC-USD"
   const assetOptions = useMemo(() => {
     if (!assetsData || assetsData.length === 0) return FALLBACK_ASSETS;
     const tickers = [...new Set(assetsData.map((a) => a.ticker))].sort();
@@ -41,26 +47,43 @@ export function VibeScreen() {
   const [timeframe, setTimeframe] = useState("1h");
   const [prompt, setPrompt] = useState("");
 
-  // Available timeframes for the selected asset
   const availableTimeframes = useMemo(() => {
     if (!assetsData || assetsData.length === 0) return [];
     const base = asset.replace(/-USD$/, "");
     return assetsData.filter((a) => a.ticker === base).map((a) => a.interval);
   }, [assetsData, asset]);
 
-  // Auto-correct timeframe when asset changes and current TF has no data
   useEffect(() => {
     if (availableTimeframes.length > 0 && !availableTimeframes.includes(timeframe)) {
       setTimeframe(availableTimeframes[0]);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [availableTimeframes]);
+
   const [generating, setGenerating] = useState(false);
   const [text, setText] = useState("");
   const [config, setConfig] = useState<StrategyConfig | null>(null);
+  const [code, setCode] = useState<string | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll stream box
+  // Saved strategies for "load previous"
+  const [strategies, setStrategies] = useState<SavedStrategy[]>([]);
+  const [selectedStratId, setSelectedStratId] = useState("");
+
+  // Save flow
+  const [showSaveInput, setShowSaveInput] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const fetchStrategies = () => {
+    fetch("/api/strategies")
+      .then((r) => r.json())
+      .then((data: SavedStrategy[]) => setStrategies(data.filter((s) => s.code)))
+      .catch(() => {});
+  };
+
+  useEffect(() => { fetchStrategies(); }, []);
+
   useEffect(() => {
     if (streamRef.current) {
       streamRef.current.scrollTop = streamRef.current.scrollHeight;
@@ -72,6 +95,8 @@ export function VibeScreen() {
     setGenerating(true);
     setText("");
     setConfig(null);
+    setCode(null);
+    setShowSaveInput(false);
 
     try {
       const res = await fetch("/api/vibe/generate", {
@@ -100,6 +125,7 @@ export function VibeScreen() {
             if (ev.type === "delta") setText((t) => t + ev.text);
             if (ev.type === "done") {
               setConfig(ev.config ?? null);
+              setCode(ev.code ?? null);
               setGenerating(false);
             }
           } catch {
@@ -116,6 +142,48 @@ export function VibeScreen() {
   const handleApply = () => {
     setToast("Vibe config applied → adjust in Setup");
     goto("setup");
+  };
+
+  const handleSave = async () => {
+    if (!config || !saveName.trim()) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/strategies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: saveName.trim(),
+          strategy_type: "vibe",
+          config,
+          code: code ?? "",
+          status: "research",
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setToast(`Strategy saved (${data.id})`);
+        setShowSaveInput(false);
+        setSaveName("");
+        fetchStrategies();
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleLoad = () => {
+    const s = strategies.find((s) => s.id === selectedStratId);
+    if (!s) return;
+    setConfig(s.config);
+    setCode(s.code);
+    setText("");
+    setShowSaveInput(false);
+    setToast(`Loaded: ${s.name}`);
+  };
+
+  const handleCopyCode = () => {
+    if (!code) return;
+    navigator.clipboard.writeText(code).then(() => setToast("Code copied to clipboard"));
   };
 
   const formatConfigVal = (key: string, val: unknown): string => {
@@ -149,7 +217,7 @@ export function VibeScreen() {
             )}
           </div>
 
-          <div style={{ marginTop: 10 }}>
+          <div>
             <div className={styles.label}>TIMEFRAME</div>
             <select
               className={styles.assetSelect}
@@ -172,7 +240,7 @@ export function VibeScreen() {
             <div className={styles.label}>STRATEGY IDEA</div>
             <textarea
               className={styles.promptTextarea}
-              rows={8}
+              rows={6}
               placeholder={
                 "Describe your strategy idea…\ne.g. \"scalp BTC on 15m, long only, tighter stops at night, risk 0.5% per trade\""
               }
@@ -195,6 +263,33 @@ export function VibeScreen() {
           <div className={styles.hint}>
             Powered by Claude · ⌘↵ to generate · results are illustrative
           </div>
+
+          {/* Load previous strategy */}
+          {strategies.length > 0 && (
+            <div className={styles.loadSection}>
+              <div className={styles.label}>LOAD PREVIOUS</div>
+              <div className={styles.loadRow}>
+                <select
+                  className={styles.assetSelect}
+                  style={{ flex: 1, minWidth: 0 }}
+                  value={selectedStratId}
+                  onChange={(e) => setSelectedStratId(e.target.value)}
+                >
+                  <option value="">— select —</option>
+                  {strategies.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+                <button
+                  className={styles.loadBtn}
+                  onClick={handleLoad}
+                  disabled={!selectedStratId}
+                >
+                  LOAD
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -223,7 +318,7 @@ export function VibeScreen() {
             )}
           </div>
 
-          {/* Config table */}
+          {/* Config table + code + actions */}
           {config && (
             <>
               <div className={styles.configTable}>
@@ -241,9 +336,57 @@ export function VibeScreen() {
                 })}
               </div>
 
-              <button className={styles.applyBtn} onClick={handleApply}>
-                APPLY TO SETUP →
-              </button>
+              {/* Python code box */}
+              {code && (
+                <div className={styles.codeSection}>
+                  <div className={styles.codeSectionHeader}>
+                    <span className={styles.codeSectionTitle}>STRATEGY CODE</span>
+                    <button className={styles.copyBtn} onClick={handleCopyCode}>
+                      COPY
+                    </button>
+                  </div>
+                  <pre className={styles.codeBox}>{code}</pre>
+                </div>
+              )}
+
+              {/* Action row */}
+              <div className={styles.actionRow}>
+                {showSaveInput ? (
+                  <div className={styles.saveInputRow}>
+                    <input
+                      className={styles.saveInput}
+                      placeholder="strategy name…"
+                      value={saveName}
+                      onChange={(e) => setSaveName(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleSave()}
+                      autoFocus
+                    />
+                    <button
+                      className={styles.saveConfirmBtn}
+                      onClick={handleSave}
+                      disabled={saving || !saveName.trim()}
+                    >
+                      {saving ? "…" : "SAVE"}
+                    </button>
+                    <button
+                      className={styles.cancelBtn}
+                      onClick={() => { setShowSaveInput(false); setSaveName(""); }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className={styles.saveOutlineBtn}
+                    onClick={() => setShowSaveInput(true)}
+                  >
+                    + SAVE
+                  </button>
+                )}
+                <button className={styles.applyBtn} onClick={handleApply}>
+                  APPLY TO SETUP →
+                </button>
+              </div>
             </>
           )}
         </div>
