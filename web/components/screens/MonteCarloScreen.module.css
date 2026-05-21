@@ -311,3 +311,86 @@
   color: var(--faint);
   font-family: var(--font-mono);
 }
+
+/* ── Quant Risk Metrics panel ─────────────────────────────────────────────── */
+
+.quantRow {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.quantBlock {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+
+.quantBigVal {
+  font-size: 26px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  line-height: 1.1;
+}
+
+.quantNote {
+  font-size: 9px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+
+.quantEst {
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--dim);
+}
+
+.quantCap {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--dim);
+}
+
+.quantDDBlock {
+  padding: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+
+.quantDDTable {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 4px;
+}
+
+.quantDDRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.quantDDRow:last-child {
+  border-bottom: none;
+}
+
+.quantDDLabel {
+  font-size: 10px;
+  color: var(--dim);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.quantDDVal {
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+}

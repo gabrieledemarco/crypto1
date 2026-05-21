@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useId } from "react";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
 import { useRunSweep } from "@/hooks/useRun";
@@ -157,6 +157,31 @@ export function SweepScreen() {
           )}
         </div>
       </div>
+
+      {/* Parameter Sensitivity panel — full width below heatmap + selection */}
+      <div className={styles.panel} style={{ gridColumn: "span 12" }}>
+        <div className={styles.panelHeader}>
+          <span className={styles.panelTitle}>PARAMETER SENSITIVITY · {metric}</span>
+        </div>
+        <div className={styles.panelBody}>
+          <div className={styles.sensitivityRow}>
+            <SensitivityChart
+              label="SL SENSITIVITY"
+              xValues={SL_RANGE}
+              yValues={SL_RANGE.map((_, i) => grid[i]?.[best[1]] ?? 0)}
+              optimalIdx={best[0]}
+              xAxisLabel="sl_mult"
+            />
+            <SensitivityChart
+              label="TP SENSITIVITY"
+              xValues={TP_RANGE}
+              yValues={TP_RANGE.map((_, j) => grid[best[0]]?.[j] ?? 0)}
+              optimalIdx={best[1]}
+              xAxisLabel="tp_mult"
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -166,6 +191,184 @@ function MetricCell({ label, value, color, big }: { label: string; value: string
     <div className={styles.metricCell}>
       <div className={styles.metricLabel}>{label}</div>
       <div className={styles.metricVal} style={{ color: color ?? "var(--text)", fontSize: big ? 20 : 14 }}>{value}</div>
+    </div>
+  );
+}
+
+// ─── SensitivityChart ────────────────────────────────────────────────────────
+
+interface SensitivityChartProps {
+  label: string;
+  xValues: number[];   // axis tick values (sl or tp range)
+  yValues: number[];   // metric values for each tick
+  optimalIdx: number;  // index of the best point
+  xAxisLabel: string;
+}
+
+function SensitivityChart({ label, xValues, yValues, optimalIdx, xAxisLabel }: SensitivityChartProps) {
+  const clipId = useId();
+
+  if (xValues.length === 0 || yValues.length === 0) {
+    return (
+      <div className={styles.sensitivityChart}>
+        <div className={styles.chartLabel}>{label}</div>
+        <div className={styles.chartEmpty}>no data</div>
+      </div>
+    );
+  }
+
+  // Layout constants
+  const W = 380;
+  const H = 100;
+  const PAD_LEFT = 36;
+  const PAD_RIGHT = 12;
+  const PAD_TOP = 10;
+  const PAD_BOTTOM = 22;
+  const innerW = W - PAD_LEFT - PAD_RIGHT;
+  const innerH = H - PAD_TOP - PAD_BOTTOM;
+
+  const n = xValues.length;
+  const yMin = Math.min(...yValues);
+  const yMax = Math.max(...yValues);
+  const ySpan = yMax - yMin || 1;
+
+  // Map index → pixel coords
+  const toX = (i: number) => PAD_LEFT + (i / Math.max(n - 1, 1)) * innerW;
+  const toY = (v: number) => PAD_TOP + innerH - ((v - yMin) / ySpan) * innerH;
+
+  // Reference lines
+  const refZeroY = yMin <= 0 && yMax >= 0 ? toY(0) : null;
+  const peakThreshold = yMax * 0.8;
+  const refPeakY = toY(peakThreshold);
+
+  // Polyline points string
+  const polyPoints = yValues.map((v, i) => `${toX(i)},${toY(v)}`).join(" ");
+
+  // Optimal dot
+  const optX = toX(optimalIdx);
+  const optY = toY(yValues[optimalIdx] ?? yMin);
+
+  // Y-axis ticks (3 ticks: min, mid, max)
+  const yTicks = [yMin, (yMin + yMax) / 2, yMax];
+
+  return (
+    <div className={styles.sensitivityChart}>
+      <div className={styles.chartLabel}>{label}</div>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        width="100%"
+        height={H}
+        className={styles.chartSvg}
+        aria-label={label}
+      >
+        <defs>
+          <clipPath id={clipId}>
+            <rect x={PAD_LEFT} y={PAD_TOP} width={innerW} height={innerH} />
+          </clipPath>
+        </defs>
+
+        {/* Y-axis ticks + labels */}
+        {yTicks.map((v, i) => {
+          const y = toY(v);
+          return (
+            <g key={i}>
+              <line
+                x1={PAD_LEFT - 3} y1={y} x2={PAD_LEFT} y2={y}
+                stroke="var(--border)" strokeWidth={1}
+              />
+              <text
+                x={PAD_LEFT - 5} y={y + 3}
+                textAnchor="end"
+                fontSize={7}
+                fontFamily="var(--font-mono)"
+                fill="var(--faint)"
+              >
+                {v.toFixed(1)}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Y-axis line */}
+        <line
+          x1={PAD_LEFT} y1={PAD_TOP} x2={PAD_LEFT} y2={PAD_TOP + innerH}
+          stroke="var(--border)" strokeWidth={1}
+        />
+
+        {/* X-axis line */}
+        <line
+          x1={PAD_LEFT} y1={PAD_TOP + innerH} x2={PAD_LEFT + innerW} y2={PAD_TOP + innerH}
+          stroke="var(--border)" strokeWidth={1}
+        />
+
+        {/* Reference: zero line */}
+        {refZeroY !== null && (
+          <line
+            x1={PAD_LEFT} y1={refZeroY} x2={PAD_LEFT + innerW} y2={refZeroY}
+            stroke="var(--border)" strokeWidth={1} strokeDasharray="3 3"
+            clipPath={`url(#${clipId})`}
+          />
+        )}
+
+        {/* Reference: 80%-of-peak threshold */}
+        <line
+          x1={PAD_LEFT} y1={refPeakY} x2={PAD_LEFT + innerW} y2={refPeakY}
+          stroke="var(--border)" strokeWidth={1} strokeDasharray="4 2"
+          clipPath={`url(#${clipId})`}
+        />
+        <text
+          x={PAD_LEFT + innerW - 2} y={refPeakY - 2}
+          textAnchor="end"
+          fontSize={6}
+          fontFamily="var(--font-mono)"
+          fill="var(--faint)"
+        >
+          80%
+        </text>
+
+        {/* Metric line */}
+        <polyline
+          points={polyPoints}
+          fill="none"
+          stroke="var(--amber)"
+          strokeWidth={1.5}
+          strokeLinejoin="round"
+          clipPath={`url(#${clipId})`}
+        />
+
+        {/* Optimal dot */}
+        <circle
+          cx={optX} cy={optY} r={4}
+          fill="var(--cyan)"
+          stroke="var(--panel)"
+          strokeWidth={1.5}
+        />
+
+        {/* X-axis tick labels */}
+        {xValues.map((v, i) => (
+          <text
+            key={i}
+            x={toX(i)} y={PAD_TOP + innerH + 12}
+            textAnchor="middle"
+            fontSize={7}
+            fontFamily="var(--font-mono)"
+            fill="var(--faint)"
+          >
+            {v.toFixed(1)}
+          </text>
+        ))}
+
+        {/* X-axis param name */}
+        <text
+          x={PAD_LEFT + innerW / 2} y={H - 1}
+          textAnchor="middle"
+          fontSize={6}
+          fontFamily="var(--font-mono)"
+          fill="var(--dim)"
+        >
+          {xAxisLabel}
+        </text>
+      </svg>
     </div>
   );
 }

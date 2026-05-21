@@ -84,3 +84,92 @@
   border-color: var(--amber);
   color: var(--amber);
 }
+
+/* ── Exit Reasons row ────────────────────────────────────────────────────── */
+
+.exitReasonRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.exitReasonTitle {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--faint);
+  letter-spacing: 0.06em;
+  margin-right: 4px;
+}
+
+.exitRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.exitLabel {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--dim);
+  margin-right: 2px;
+}
+
+.exitChipAmber,
+.exitChipCyan,
+.exitChipDim {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 2px;
+}
+
+.exitChipAmber {
+  color: var(--amber);
+  border: 1px solid var(--amber);
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+}
+
+.exitChipCyan {
+  color: var(--cyan);
+  border: 1px solid var(--cyan);
+  background: color-mix(in srgb, var(--cyan) 10%, transparent);
+}
+
+.exitChipDim {
+  color: var(--faint);
+  border: 1px solid var(--border-l);
+  background: transparent;
+}
+
+/* ── Rolling Sharpe panel ────────────────────────────────────────────────── */
+
+.sharpePanelWrapper {
+  margin-top: 6px;
+  border: 1px solid var(--border-l);
+  background: var(--panel-2);
+}
+
+.sharpePanelHeader {
+  padding: 3px 8px;
+  background: var(--panel-3);
+  border-bottom: 1px solid var(--border-l);
+}
+
+.sharpePanelTitle {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--faint);
+  letter-spacing: 0.06em;
+}
+
+.sharpeSvg {
+  display: block;
+  width: 100%;
+}

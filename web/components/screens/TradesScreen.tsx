@@ -13,6 +13,454 @@ import type { Trade } from "@/lib/fixtures";
 
 const MAX_CHART_BARS = 300;
 
+// ─── Color helpers (shared with DOW heatmap) ─────────────────────────────────
+
+function lerpRgb(
+  t: number,
+  lo: [number, number, number],
+  hi: [number, number, number]
+): string {
+  const r = Math.round(lo[0] + (hi[0] - lo[0]) * t);
+  const g = Math.round(lo[1] + (hi[1] - lo[1]) * t);
+  const b = Math.round(lo[2] + (hi[2] - lo[2]) * t);
+  return `rgb(${r},${g},${b})`;
+}
+const C_CORAL: [number, number, number] = [255, 122, 85];
+const C_GREEN: [number, number, number] = [111, 209, 122];
+const C_GRAY = "#3a3c28";
+
+function winRateColor(wr: number): string {
+  if (wr < 0) return C_GRAY;
+  if (wr < 0.5) return lerpRgb(wr / 0.5, C_CORAL, [185, 165, 105]);
+  return lerpRgb((wr - 0.5) / 0.5, [185, 165, 105], C_GREEN);
+}
+
+// ─── Feature 1: Day-of-Week Win Rate Heatmap ─────────────────────────────────
+
+const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+// JS getDay(): 0=Sun,1=Mon,...,6=Sat  — we display Mon-first (index 0→Mon)
+const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Mon … Sun
+
+interface DowCell {
+  dow: number;       // 0–6 JS getDay value
+  side: "L" | "S" | "ALL";
+  total: number;
+  wins: number;
+  winRate: number;   // -1 = no data
+}
+
+function computeDowHeatmap(trades: Trade[]): DowCell[] {
+  const sides: ("L" | "S" | "ALL")[] = ["L", "S", "ALL"];
+  const cells: DowCell[] = [];
+  for (const side of sides) {
+    for (const dow of DOW_ORDER) {
+      const subset = trades.filter((t) => {
+        const d = new Date(t.date).getDay();
+        return d === dow && (side === "ALL" || t.side === side);
+      });
+      const wins = subset.filter((t) => t.pnl > 0).length;
+      cells.push({
+        dow,
+        side,
+        total: subset.length,
+        wins,
+        winRate: subset.length > 0 ? wins / subset.length : -1,
+      });
+    }
+  }
+  return cells;
+}
+
+function DowHeatmap({ trades }: { trades: Trade[] }) {
+  const cells = useMemo(() => computeDowHeatmap(trades), [trades]);
+  if (trades.length === 0) {
+    return <div className={styles.heatmapEmpty}>no data</div>;
+  }
+
+  const cellW = 56;
+  const cellH = 22;
+  const labelW = 30;
+  const headerH = 18;
+  const cols = ["LONG", "SHORT", "ALL"];
+  const svgW = labelW + cols.length * cellW + 2;
+  const svgH = headerH + DOW_ORDER.length * cellH + 2;
+
+  return (
+    <div className={styles.heatmapWrap}>
+      <svg
+        className={styles.heatmapSvg}
+        viewBox={`0 0 ${svgW} ${svgH}`}
+        style={{ width: svgW, height: svgH }}
+      >
+        {/* Column headers */}
+        {cols.map((col, ci) => (
+          <text
+            key={col}
+            x={labelW + ci * cellW + cellW / 2}
+            y={headerH - 4}
+            textAnchor="middle"
+            fontSize={8}
+            fill="#888"
+            fontFamily="var(--font-mono)"
+          >
+            {col}
+          </text>
+        ))}
+
+        {DOW_ORDER.map((dow, ri) => {
+          const dowLabel = DOW_LABELS[ri]; // Mon=0 … Sun=6 in display order
+          const y = headerH + ri * cellH;
+          return (
+            <g key={dow}>
+              {/* Row label */}
+              <text
+                x={labelW - 3}
+                y={y + cellH / 2 + 4}
+                textAnchor="end"
+                fontSize={8}
+                fill="#888"
+                fontFamily="var(--font-mono)"
+              >
+                {dowLabel}
+              </text>
+              {/* Cells */}
+              {(["L", "S", "ALL"] as const).map((side, ci) => {
+                const cell = cells.find((c) => c.dow === dow && c.side === side)!;
+                const bg = winRateColor(cell.winRate);
+                const x = labelW + ci * cellW;
+                return (
+                  <g key={side}>
+                    <rect
+                      x={x + 1}
+                      y={y + 1}
+                      width={cellW - 2}
+                      height={cellH - 2}
+                      fill={bg}
+                      rx={2}
+                    />
+                    {cell.winRate >= 0 ? (
+                      <>
+                        <text
+                          x={x + cellW / 2}
+                          y={y + cellH / 2 + 2}
+                          textAnchor="middle"
+                          fontSize={8}
+                          fontWeight={700}
+                          fill="#fff"
+                          fontFamily="var(--font-mono)"
+                        >
+                          {Math.round(cell.winRate * 100)}%
+                        </text>
+                        <text
+                          x={x + cellW - 3}
+                          y={y + cellH - 3}
+                          textAnchor="end"
+                          fontSize={6}
+                          fill="rgba(255,255,255,0.55)"
+                          fontFamily="var(--font-mono)"
+                        >
+                          {cell.total}
+                        </text>
+                      </>
+                    ) : (
+                      <text
+                        x={x + cellW / 2}
+                        y={y + cellH / 2 + 3}
+                        textAnchor="middle"
+                        fontSize={7}
+                        fill="#555"
+                        fontFamily="var(--font-mono)"
+                      >
+                        —
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+// ─── Feature 2: Holding Time Histogram ───────────────────────────────────────
+
+const DUR_BINS = ["<1h", "1-4h", "4-8h", "8-24h", "1-3d", ">3d"];
+const DUR_EDGES = [0, 1, 4, 8, 24, 72, Infinity];
+
+function binDuration(durH: number): number {
+  for (let i = 0; i < DUR_EDGES.length - 1; i++) {
+    if (durH >= DUR_EDGES[i] && durH < DUR_EDGES[i + 1]) return i;
+  }
+  return DUR_EDGES.length - 2;
+}
+
+function HoldingHistogram({ trades }: { trades: Trade[] }) {
+  const counts = useMemo(() => {
+    const arr = new Array(DUR_BINS.length).fill(0);
+    for (const t of trades) {
+      if (t.durH != null) arr[binDuration(t.durH)]++;
+    }
+    return arr;
+  }, [trades]);
+
+  const total = counts.reduce((s: number, c: number) => s + c, 0);
+  if (total === 0) {
+    return <div className={styles.heatmapEmpty}>no data</div>;
+  }
+
+  const maxCount = Math.max(...counts, 1);
+  const barH = 14;
+  const gap = 3;
+  const labelW = 36;
+  const statW = 60;
+  const barAreaW = 160;
+  const svgW = labelW + barAreaW + statW + 4;
+  const svgH = DUR_BINS.length * (barH + gap) + 4;
+
+  return (
+    <div className={styles.histWrap}>
+      <svg
+        viewBox={`0 0 ${svgW} ${svgH}`}
+        style={{ width: svgW, height: svgH, display: "block" }}
+      >
+        {DUR_BINS.map((label, i) => {
+          const count = counts[i] as number;
+          const pct = total > 0 ? (count / total) * 100 : 0;
+          const barW = (count / maxCount) * barAreaW;
+          const y = i * (barH + gap) + 2;
+          return (
+            <g key={label}>
+              {/* Label */}
+              <text
+                x={labelW - 3}
+                y={y + barH / 2 + 3}
+                textAnchor="end"
+                fontSize={8}
+                fill="#888"
+                fontFamily="var(--font-mono)"
+              >
+                {label}
+              </text>
+              {/* Bar background */}
+              <rect
+                x={labelW}
+                y={y}
+                width={barAreaW}
+                height={barH}
+                fill="rgba(255,255,255,0.04)"
+                rx={2}
+              />
+              {/* Bar fill */}
+              {barW > 0 && (
+                <rect
+                  x={labelW}
+                  y={y}
+                  width={barW}
+                  height={barH}
+                  fill="var(--amber)"
+                  rx={2}
+                  opacity={0.85}
+                />
+              )}
+              {/* Count + % */}
+              <text
+                x={labelW + barAreaW + 4}
+                y={y + barH / 2 + 3}
+                fontSize={8}
+                fill="#aaa"
+                fontFamily="var(--font-mono)"
+              >
+                {count} · {pct.toFixed(0)}%
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+// ─── Feature 3: PnL CDF ──────────────────────────────────────────────────────
+
+function PnlCdf({ trades }: { trades: Trade[] }) {
+  const points = useMemo(() => {
+    if (trades.length === 0) return { pts: "", zeroX: -1, minPnl: 0, maxPnl: 0 };
+    const sorted = [...trades].map((t) => t.pnl).sort((a, b) => a - b);
+    const n = sorted.length;
+    const minPnl = sorted[0];
+    const maxPnl = sorted[n - 1];
+    return { sorted, n, minPnl, maxPnl };
+  }, [trades]);
+
+  if (trades.length === 0) {
+    return <div className={styles.heatmapEmpty}>no data</div>;
+  }
+
+  const { sorted, n, minPnl, maxPnl } = points as {
+    sorted: number[];
+    n: number;
+    minPnl: number;
+    maxPnl: number;
+  };
+
+  const W = 280;
+  const H = 90;
+  const padL = 30;
+  const padR = 8;
+  const padT = 8;
+  const padB = 16;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  const pnlRange = maxPnl - minPnl || 1;
+
+  function xOf(pnl: number) {
+    return padL + ((pnl - minPnl) / pnlRange) * plotW;
+  }
+  function yOf(prob: number) {
+    return padT + (1 - prob) * plotH;
+  }
+
+  const polyline = sorted
+    .map((pnl, i) => `${xOf(pnl).toFixed(1)},${yOf((i + 1) / n).toFixed(1)}`)
+    .join(" ");
+
+  const zeroX = xOf(0);
+  const showZero = minPnl < 0 && maxPnl > 0;
+
+  // Shade area left of zero (losses region)
+  const lossPts = sorted
+    .filter((p) => p <= 0)
+    .map((pnl, i) => `${xOf(pnl).toFixed(1)},${yOf((i + 1) / n).toFixed(1)}`);
+
+  const shadeD =
+    lossPts.length > 0
+      ? `M ${padL},${yOf(padB / H)} ${lossPts.join(" ")} L ${zeroX},${padT + plotH} L ${padL},${padT + plotH} Z`
+      : "";
+
+  const yLabels = [
+    { prob: 1.0, label: "100%" },
+    { prob: 0.75, label: "75%" },
+    { prob: 0.5, label: "50%" },
+    { prob: 0.25, label: "25%" },
+    { prob: 0.0, label: "0%" },
+  ];
+
+  return (
+    <div className={styles.cdfWrap}>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        style={{ width: W, height: H, display: "block" }}
+      >
+        {/* Plot area border */}
+        <rect
+          x={padL}
+          y={padT}
+          width={plotW}
+          height={plotH}
+          fill="rgba(255,255,255,0.02)"
+          stroke="rgba(255,255,255,0.06)"
+          strokeWidth={0.5}
+        />
+
+        {/* Y-axis gridlines + labels */}
+        {yLabels.map(({ prob, label }) => {
+          const y = yOf(prob);
+          return (
+            <g key={label}>
+              <line
+                x1={padL}
+                y1={y}
+                x2={padL + plotW}
+                y2={y}
+                stroke="rgba(255,255,255,0.07)"
+                strokeWidth={0.5}
+              />
+              <text
+                x={padL - 3}
+                y={y + 3}
+                textAnchor="end"
+                fontSize={6.5}
+                fill="#666"
+                fontFamily="var(--font-mono)"
+              >
+                {label}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Zero PnL dashed line */}
+        {showZero && (
+          <line
+            x1={zeroX}
+            y1={padT}
+            x2={zeroX}
+            y2={padT + plotH}
+            stroke="rgba(255,255,255,0.25)"
+            strokeWidth={0.8}
+            strokeDasharray="3,2"
+          />
+        )}
+
+        {/* Loss shade */}
+        {shadeD && (
+          <path d={shadeD} fill="rgba(255,122,85,0.12)" />
+        )}
+
+        {/* CDF curve */}
+        <polyline
+          points={polyline}
+          fill="none"
+          stroke="var(--cyan)"
+          strokeWidth={1.5}
+          strokeLinejoin="round"
+        />
+
+        {/* X-axis labels: min, 0, max */}
+        <text
+          x={padL}
+          y={H - 2}
+          textAnchor="middle"
+          fontSize={6.5}
+          fill="#555"
+          fontFamily="var(--font-mono)"
+        >
+          {minPnl.toFixed(1)}
+        </text>
+        {showZero && (
+          <text
+            x={zeroX}
+            y={H - 2}
+            textAnchor="middle"
+            fontSize={6.5}
+            fill="#888"
+            fontFamily="var(--font-mono)"
+          >
+            0
+          </text>
+        )}
+        <text
+          x={padL + plotW}
+          y={H - 2}
+          textAnchor="middle"
+          fontSize={6.5}
+          fill="#555"
+          fontFamily="var(--font-mono)"
+        >
+          {maxPnl.toFixed(1)}
+        </text>
+      </svg>
+      <div className={styles.cdfCaption}>P(trade PnL ≤ x)</div>
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
 export function TradesScreen() {
   const { activeRunId, runs } = useStore();
   const [filterSide, setFilterSide] = useState("all");
@@ -26,19 +474,16 @@ export function TradesScreen() {
   const run = runs.find((r) => r.id === activeRunId) ?? fixtures.runs[0];
   const isReal = isRealRunId(activeRunId);
 
-  // Fetch all trades (unfiltered — we filter client-side for the table)
   const tradesQuery = useRunTrades(activeRunId || null, { limit: 500 });
   const allTrades: Trade[] =
     tradesQuery.data?.trades && tradesQuery.data.trades.length > 0
       ? (tradesQuery.data.trades as Trade[])
       : run?.trades ?? [];
 
-  // Price bars: only for real runs (run.strategy = ticker like "BTC-USD")
   const ticker = isReal ? (run?.strategy ?? null) : null;
   const interval = run?.params?.timeframe ?? "1d";
   const { data: bars } = useAssetBars(ticker, interval);
 
-  // Trade markers aligned to visible bars
   const tradeMarkers = useMemo((): TradeMarker[] => {
     if (!bars?.length || !allTrades.length) return [];
     const visible = bars.slice(-MAX_CHART_BARS);
@@ -58,7 +503,6 @@ export function TradesScreen() {
       }));
   }, [allTrades, bars]);
 
-  // Client-side filter + sort for the trade log table
   const filteredTrades = useMemo(
     () =>
       [...allTrades]
@@ -86,7 +530,6 @@ export function TradesScreen() {
     [allTrades, filterSide, filterPnl, filterText, sortKey, sortDir]
   );
 
-  // j/k keyboard navigation
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (document.activeElement as HTMLElement)?.tagName;
@@ -289,6 +732,44 @@ export function TradesScreen() {
 
       {/* ── Analysis panels ── */}
       <TradeAnalysisPanels trades={allTrades} />
+
+      {/* ── Quant visualizations row ── */}
+      <div className={styles.quantRow}>
+
+        {/* Day-of-Week Heatmap */}
+        <div className={styles.quantPanel}>
+          <div className={styles.panelHeader}>
+            <span className={styles.panelTitle}>DAY-OF-WEEK</span>
+            <span className={styles.panelSub}>win rate by day · L / S / ALL</span>
+          </div>
+          <div className={styles.quantBody}>
+            <DowHeatmap trades={allTrades} />
+          </div>
+        </div>
+
+        {/* Holding Time Histogram */}
+        <div className={styles.quantPanel}>
+          <div className={styles.panelHeader}>
+            <span className={styles.panelTitle}>HOLDING TIME DISTRIBUTION</span>
+            <span className={styles.panelSub}>{allTrades.length} trades</span>
+          </div>
+          <div className={styles.quantBody}>
+            <HoldingHistogram trades={allTrades} />
+          </div>
+        </div>
+
+        {/* PnL CDF */}
+        <div className={styles.quantPanel}>
+          <div className={styles.panelHeader}>
+            <span className={styles.panelTitle}>PnL CDF</span>
+            <span className={styles.panelSub}>cumulative distribution</span>
+          </div>
+          <div className={styles.quantBody}>
+            <PnlCdf trades={allTrades} />
+          </div>
+        </div>
+
+      </div>
 
     </div>
   );

@@ -155,3 +155,66 @@
   border-color: var(--amber);
   color: var(--amber);
 }
+
+/* ── Quant visualizations ──────────────────────────────────────────────────── */
+
+.quantRow {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr;
+  gap: 6px;
+  align-items: start;
+}
+
+.quantPanel {
+  background: var(--panel);
+  border: 1px solid var(--border-l);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.quantBody {
+  padding: 8px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  overflow-x: auto;
+}
+
+/* DOW heatmap */
+.heatmapWrap {
+  display: flex;
+  align-items: flex-start;
+}
+
+.heatmapSvg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.heatmapEmpty {
+  font-size: 10px;
+  color: var(--faint);
+  padding: 8px 0;
+}
+
+/* Holding histogram */
+.histWrap {
+  display: flex;
+  align-items: flex-start;
+}
+
+/* PnL CDF */
+.cdfWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.cdfCaption {
+  font-size: 9px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  padding-left: 30px;
+}
