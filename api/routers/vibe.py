@@ -17,9 +17,11 @@ router = APIRouter()
 _executor = ThreadPoolExecutor(max_workers=2)
 
 SYSTEM_PROMPT = """You are a quantitative trading strategy assistant for the Pareto Terminal.
-Given a natural language description, generate a trading strategy configuration and Python code.
+Given an asset's historical statistics and optionally a natural language description, generate a trading strategy configuration and Python code.
+If no strategy idea is provided, analyze the statistics and suggest the most appropriate strategy yourself.
 
 ## Step 1 — Brief explanation (2-4 sentences)
+If no prompt is given, start by explaining what the statistics reveal about the asset and why you chose this strategy.
 
 ## Step 2 — JSON config in a ```json block with exactly these fields:
 {
@@ -101,11 +103,20 @@ async def _mock_stream(body: VibeGenerateRequest):
     asset = body.asset or "BTC-USD"
     ticker = asset if "-USD" in asset else f"{asset}-USD"
     timeframe = body.timeframe or "1h"
-    mock_text = (
+    has_prompt = bool(body.prompt and body.prompt.strip())
+    intro = (
         f"Analyzing your strategy idea for {asset} on {timeframe}…\n\n"
         "Based on your description I recommend a momentum approach with "
         "dynamic ATR-based stops. The configuration below uses a conservative "
         "risk-per-trade and filters activity to liquid trading hours.\n\n"
+        if has_prompt else
+        f"Analyzing historical statistics for {asset} on {timeframe}…\n\n"
+        "Based on the asset statistics I recommend a mean-reversion approach — "
+        "the asset shows elevated volatility relative to trend strength, suggesting "
+        "reversion-to-mean strategies with tight ATR stops outperform pure momentum here.\n\n"
+    )
+    mock_text = (
+        intro
         "```json\n"
         "{\n"
         f'  "ticker": "{ticker}",\n'
@@ -132,6 +143,24 @@ async def _mock_stream(body: VibeGenerateRequest):
     yield f"data: {json.dumps({'type': 'done', 'config': config, 'code': code})}\n\n"
 
 
+def _build_user_message(body: VibeGenerateRequest) -> str:
+    parts = []
+    if body.asset_stats:
+        s = body.asset_stats
+        stats_lines = [f"Asset: {body.asset}  Timeframe: {body.timeframe or '1h'}"]
+        for key in ("cagr", "ann_vol", "sharpe", "sortino", "max_dd", "skew", "kurt", "var95", "cvar95", "best_day", "worst_day"):
+            if key in s:
+                stats_lines.append(f"  {key}: {s[key]}")
+        parts.append("Historical statistics:\n" + "\n".join(stats_lines))
+    else:
+        parts.append(f"Asset: {body.asset}\nTimeframe: {body.timeframe or '1h'}")
+    if body.prompt and body.prompt.strip():
+        parts.append(f"Strategy idea: {body.prompt.strip()}")
+    else:
+        parts.append("No strategy idea provided — please analyze the statistics above and suggest the best strategy for this asset.")
+    return "\n\n".join(parts)
+
+
 async def _claude_stream(body: VibeGenerateRequest):
     """Real Claude stream via anthropic SDK."""
     import anthropic
@@ -149,7 +178,7 @@ async def _claude_stream(body: VibeGenerateRequest):
                 messages=[
                     {
                         "role": "user",
-                        "content": f"{body.prompt}\n\nAsset: {body.asset}\nTimeframe: {body.timeframe or '1h'}",
+                        "content": _build_user_message(body),
                     }
                 ],
             ) as stream:

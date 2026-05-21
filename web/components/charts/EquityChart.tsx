@@ -82,6 +82,14 @@ export function EquityChart({
       value: ((_e.v / baseVal) - 1) * 100, // percent return
     }));
     mainSeries.setData(data);
+    mainSeries.createPriceLine({
+      price: 0,
+      color: "#5a5d3a",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: "",
+    });
     chart.timeScale().fitContent();
 
     // Benchmark (dashed)

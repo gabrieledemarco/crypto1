@@ -154,3 +154,38 @@
   color: var(--dim);
   font-family: var(--font-mono);
 }
+
+/* ─── Parameter Sensitivity Panel ─────────────────────────────────────────── */
+
+.sensitivityRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.sensitivityChart {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chartLabel {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+
+.chartSvg {
+  display: block;
+  width: 100%;
+}
+
+.chartEmpty {
+  font-size: 10px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  padding: 12px 0;
+}

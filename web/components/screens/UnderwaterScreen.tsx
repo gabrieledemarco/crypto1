@@ -134,7 +134,16 @@ export function UnderwaterScreen() {
 
   // Calmar = CAGR / |MaxDD| — approximate CAGR from equity endpoints
   const totalReturn = equity.length > 1 ? (equity[equity.length - 1].v / equity[0].v - 1) * 100 : 0;
-  const years = equity.length / (24 * 365); // assume 1h bars
+  const BARS_PER_YEAR: Record<string, number> = {
+    "5m":  365 * 24 * 12,
+    "15m": 365 * 24 * 4,
+    "1h":  365 * 24,
+    "4h":  365 * 6,
+    "1d":  365,
+  };
+  const tf = run?.params?.timeframe ?? "1h";
+  const barsPerYear = BARS_PER_YEAR[tf] ?? 365 * 24;
+  const years = equity.length / barsPerYear;
   const cagr  = years > 0 ? ((1 + totalReturn / 100) ** (1 / years) - 1) * 100 : 0;
   const calmar = maxDD !== 0 ? cagr / Math.abs(maxDD) : 0;
   const recoveryFactor = maxDD !== 0 ? totalReturn / Math.abs(maxDD) : 0;
