@@ -251,3 +251,45 @@
   margin-top: 8px;
   font-style: italic;
 }
+
+/* Ticker / Timeframe select */
+.select {
+  background: var(--panel-3);
+  border: 1px solid var(--border-l);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 6px;
+  outline: none;
+  cursor: pointer;
+  min-width: 100px;
+}
+
+.select:focus {
+  border-color: var(--amber);
+}
+
+.selectHint {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--faint);
+  font-style: italic;
+}
+
+/* WFO window config block */
+.wfoConfig {
+  padding: 6px 8px;
+  background: var(--panel-3);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.wfoFolds {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--cyan);
+  text-align: right;
+  padding-top: 2px;
+}
