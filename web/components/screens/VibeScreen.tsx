@@ -1,9 +1,10 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useStore } from "@/store";
+import { useAssets } from "@/hooks/useAssets";
 import styles from "./VibeScreen.module.css";
 
-const ASSETS = ["BTC-USD", "ETH-USD", "SOL-USD", "ARB-USD", "OP-USD", "AVAX-USD"];
+const FALLBACK_ASSETS = ["BTC-USD", "ETH-USD", "SOL-USD", "ARB-USD", "OP-USD", "AVAX-USD"];
 
 interface StrategyConfig {
   ticker?: string;
@@ -27,6 +28,15 @@ const CONFIG_LABELS: Record<string, string> = {
 
 export function VibeScreen() {
   const { goto, setToast } = useStore();
+  const { data: assetsData } = useAssets();
+
+  // Unique tickers with fetched data, formatted as "BTC-USD"
+  const assetOptions = useMemo(() => {
+    if (!assetsData || assetsData.length === 0) return FALLBACK_ASSETS;
+    const tickers = [...new Set(assetsData.map((a) => a.ticker))].sort();
+    return tickers.map((t) => (t.includes("-") ? t : `${t}-USD`));
+  }, [assetsData]);
+
   const [asset, setAsset] = useState("BTC-USD");
   const [prompt, setPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
@@ -109,17 +119,18 @@ export function VibeScreen() {
         <div className={styles.panelBody}>
           <div>
             <div className={styles.label}>ASSET</div>
-            <div className={styles.assetPills}>
-              {ASSETS.map((a) => (
-                <button
-                  key={a}
-                  className={`${styles.pill} ${asset === a ? styles.pillActive : ""}`}
-                  onClick={() => setAsset(a)}
-                >
-                  {a.replace("-USD", "")}
-                </button>
+            <select
+              className={styles.assetSelect}
+              value={asset}
+              onChange={(e) => setAsset(e.target.value)}
+            >
+              {assetOptions.map((a) => (
+                <option key={a} value={a}>{a.replace("-USD", "")}</option>
               ))}
-            </div>
+            </select>
+            {assetsData && assetsData.length === 0 && (
+              <span className={styles.assetHint}>no data — fetch from Assets first</span>
+            )}
           </div>
 
           <div className={styles.promptWrap}>
