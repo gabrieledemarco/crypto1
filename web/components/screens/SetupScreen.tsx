@@ -35,7 +35,7 @@ export function SetupScreen() {
   const { data: assetsData } = useAssets();
 
   const [params, setParams] = useState<Params>({
-    ticker:         p?.universe?.[0] ? `${p.universe[0]}-USD` : "BTC-USD",
+    ticker:         p?.universe?.[0] ? `${p.universe[0].replace(/-USD$/, "")}-USD` : "BTC-USD",
     timeframe:      p?.timeframe ?? "1h",
     sl_mult:        p?.atrStop ?? 2.0,
     tp_mult:        p?.takeProfit ?? 5.0,
