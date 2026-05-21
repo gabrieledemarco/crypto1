@@ -15,11 +15,14 @@ class RunParams(BaseModel):
     run_wfo: bool = True
     run_sweep: bool = True
     run_mc: bool = True
+    mc_sims: int = 1000
+    mc_bars: Optional[int] = None
 
 
 class RunCreate(BaseModel):
     name: Optional[str] = None
     params: RunParams = RunParams()
+    strategy_id: Optional[str] = None
 
 
 class AssetFetch(BaseModel):
@@ -38,6 +41,8 @@ class StrategyCreate(BaseModel):
 
 
 class VibeGenerateRequest(BaseModel):
-    prompt: str
+    prompt: str = ""
     asset: str = "BTC-USD"
+    timeframe: str = "1h"
     n_candidates: int = 1
+    asset_stats: Optional[dict] = None
