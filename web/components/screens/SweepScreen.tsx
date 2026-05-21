@@ -9,7 +9,7 @@ import styles from "./SweepScreen.module.css";
 const FALLBACK_SL_RANGE = [1.0, 1.5, 2.0, 2.5, 3.0];
 const FALLBACK_TP_RANGE = [2.0, 3.0, 4.0, 5.0, 7.0];
 
-type SweepRecord = { sl_mult: number; tp_mult: number; sharpe_ratio?: number; cagr?: number; max_dd?: number };
+type SweepRecord = { sl_mult: number; tp_mult: number; sharpe_ratio?: number; cagr_pct?: number; max_drawdown_pct?: number; profit_factor?: number };
 
 export function SweepScreen() {
   const { activeRunId, runs } = useStore();
@@ -52,8 +52,9 @@ export function SweepScreen() {
           const found = apiRecords.find((p) => r1(p.sl_mult) === r1(sl) && r1(p.tp_mult) === r1(tp));
           if (!found) return 0;
           if (metric === "Sharpe") return found.sharpe_ratio ?? 0;
-          if (metric === "CAGR")   return found.cagr ?? 0;
-          return found.max_dd ?? 0;
+          if (metric === "CAGR")   return found.cagr_pct ?? 0;
+          if (metric === "MaxDD")  return found.max_drawdown_pct ?? 0;
+          return found.profit_factor ?? 0;
         })
       );
     }
@@ -94,7 +95,7 @@ export function SweepScreen() {
         <div className={styles.panelHeader}>
           <span className={styles.panelTitle}>PARAM SWEEP · {metric} · SL × TP</span>
           <span style={{ flex: 1 }} />
-          {["Sharpe", "CAGR", "MaxDD"].map((m) => (
+          {["Sharpe", "CAGR", "MaxDD", "PF"].map((m) => (
             <button key={m} className={`${styles.pill} ${metric === m ? styles.active : ""}`}
               onClick={() => setMetric(m)}>{m}</button>
           ))}

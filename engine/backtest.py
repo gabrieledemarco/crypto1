@@ -181,6 +181,7 @@ def run_optimization(df_ind: pd.DataFrame, cfg: dict,
             "max_drawdown_pct": m.get("max_drawdown_pct", 0),
             "n_trades":         m.get("n_trades", 0),
             "win_rate_pct":     m.get("win_rate_pct", 0),
+            "profit_factor":    m.get("profit_factor", 0),
         })
 
     df_opt = pd.DataFrame(rows)
