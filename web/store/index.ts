@@ -31,6 +31,8 @@ export interface SetupParams {
   run_mc: boolean;
   wfo_is_window?: number;
   wfo_oos_window?: number;
+  mc_sims?: number;
+  mc_bars?: number;
 }
 
 interface Store {

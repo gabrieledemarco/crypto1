@@ -15,6 +15,8 @@ class RunParams(BaseModel):
     run_wfo: bool = True
     run_sweep: bool = True
     run_mc: bool = True
+    mc_sims: int = 1000
+    mc_bars: Optional[int] = None
 
 
 class RunCreate(BaseModel):

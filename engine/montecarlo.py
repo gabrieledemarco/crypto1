@@ -2,11 +2,15 @@
 import numpy as np
 
 
-def run_bootstrap(pnl: np.ndarray, n_sims: int = 5000,
+def run_bootstrap(pnl: np.ndarray, n_sims: int = 1000, n_bars: int | None = None,
                   initial_capital: float = 10_000) -> dict:
-    """Bootstrap Monte Carlo simulation."""
-    K   = len(pnl)
-    idx = np.random.randint(0, K, size=(n_sims, K))
+    """Bootstrap Monte Carlo simulation.
+
+    n_bars: trades per simulation path; defaults to len(pnl) when None/0.
+    """
+    K = len(pnl)
+    path_len = n_bars if (n_bars and 0 < n_bars) else K
+    idx = np.random.randint(0, K, size=(n_sims, path_len))
     sim = pnl[idx]
     eq  = initial_capital + np.cumsum(sim, axis=1)
 
@@ -21,6 +25,7 @@ def run_bootstrap(pnl: np.ndarray, n_sims: int = 5000,
         if (np.diff(e) / initial_capital).std() > 0 else 0
         for e in eq
     ])
+    win_rates = (sim > 0).mean(axis=1) * 100  # per-simulation win-rate distribution
 
     return {
         "final_capital": final,
@@ -28,6 +33,7 @@ def run_bootstrap(pnl: np.ndarray, n_sims: int = 5000,
         "sharpe":        sharpe_arr,
         "max_dd_pct":    max_dd_arr,
         "equity_matrix": eq,
+        "win_rates":     win_rates,
     }
 
 
@@ -51,10 +57,11 @@ def run_stress(pnl: np.ndarray,
             ret       = final_cap / initial_capital - 1
             dd        = ((eq - np.maximum.accumulate(eq)) / np.maximum.accumulate(eq)).min() * 100
             rows.append({
-                "scenario":       label,
-                "final_cap_usd":  round(final_cap, 2),
+                "scenario":         label,
+                "final_cap_usd":    round(final_cap, 2),
                 "total_return_pct": round(ret * 100, 2),
                 "max_drawdown_pct": round(float(dd), 2),
+                "n_trades":         len(stressed),
             })
         except Exception:
             pass
