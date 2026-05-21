@@ -117,7 +117,7 @@ async def _mock_stream(body: VibeGenerateRequest):
     )
     mock_text = (
         intro
-        "```json\n"
+        + "```json\n"
         "{\n"
         f'  "ticker": "{ticker}",\n'
         f'  "timeframe": "{timeframe}",\n'
