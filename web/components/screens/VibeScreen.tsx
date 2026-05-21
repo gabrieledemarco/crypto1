@@ -73,6 +73,7 @@ export function VibeScreen() {
   const [text, setText] = useState("");
   const [config, setConfig] = useState<StrategyConfig | null>(null);
   const [code, setCode] = useState<string | null>(null);
+  const [outputTab, setOutputTab] = useState<"explanation" | "code">("explanation");
   const streamRef = useRef<HTMLDivElement>(null);
 
   // Saved strategies for "load previous"
@@ -105,6 +106,7 @@ export function VibeScreen() {
     setConfig(null);
     setCode(null);
     setShowSaveInput(false);
+    setOutputTab("explanation");
 
     let assetStats: Record<string, unknown> | null = null;
     try {
@@ -142,6 +144,7 @@ export function VibeScreen() {
               setConfig(ev.config ?? null);
               setCode(ev.code ?? null);
               setGenerating(false);
+              if (ev.code) setOutputTab("code");
             }
           } catch {
             // malformed SSE line — skip
@@ -193,6 +196,7 @@ export function VibeScreen() {
     setCode(s.code);
     setText("");
     setShowSaveInput(false);
+    setOutputTab(s.code ? "code" : "explanation");
     setToast(`Loaded: ${s.name}`);
   };
 
@@ -315,93 +319,144 @@ export function VibeScreen() {
           <span className={styles.panelSub}>
             {generating ? "streaming…" : config ? "done" : "waiting"}
           </span>
+          <span style={{ flex: 1 }} />
+          {/* Tab switcher */}
+          <button
+            className={`${styles.tabBtn} ${outputTab === "explanation" ? styles.tabBtnActive : ""}`}
+            onClick={() => setOutputTab("explanation")}
+          >
+            EXPLANATION
+          </button>
+          <button
+            className={`${styles.tabBtn} ${outputTab === "code" ? styles.tabBtnActive : ""} ${code ? styles.tabBtnHasData : ""}`}
+            onClick={() => setOutputTab("code")}
+          >
+            CODE{code ? " ●" : ""}
+          </button>
         </div>
         <div className={styles.panelBody}>
-          {/* Streaming text */}
-          <div className={styles.streamBox} ref={streamRef}>
-            {text ? (
-              <>
-                {text}
-                {generating && <span className={styles.cursor} />}
-              </>
-            ) : (
-              <span className={styles.emptyHint}>
-                {generating
-                  ? "Connecting…"
-                  : "Claude response will appear here…"}
-              </span>
-            )}
-          </div>
 
-          {/* Config table + code + actions */}
-          {config && (
+          {/* ── EXPLANATION tab ── */}
+          {outputTab === "explanation" && (
             <>
-              <div className={styles.configTable}>
-                {(Object.keys(CONFIG_LABELS) as (keyof StrategyConfig)[]).map((key) => {
-                  const val = config[key];
-                  if (val === undefined) return null;
-                  return (
-                    <div key={key} className={styles.configRow}>
-                      <span className={styles.configKey}>{CONFIG_LABELS[key]}</span>
-                      <span className={styles.configVal}>
-                        {formatConfigVal(key, val)}
-                      </span>
-                    </div>
-                  );
-                })}
+              <div className={styles.streamBox} ref={streamRef}>
+                {text ? (
+                  <>
+                    {text}
+                    {generating && <span className={styles.cursor} />}
+                  </>
+                ) : (
+                  <span className={styles.emptyHint}>
+                    {generating ? "Connecting…" : "Claude response will appear here…"}
+                  </span>
+                )}
               </div>
 
-              {/* Python code box */}
-              {code && (
-                <div className={styles.codeSection}>
-                  <div className={styles.codeSectionHeader}>
-                    <span className={styles.codeSectionTitle}>STRATEGY CODE</span>
-                    <button className={styles.copyBtn} onClick={handleCopyCode}>
-                      COPY
-                    </button>
-                  </div>
-                  <pre className={styles.codeBox}>{code}</pre>
+              {config && (
+                <div className={styles.configTable}>
+                  {(Object.keys(CONFIG_LABELS) as (keyof StrategyConfig)[]).map((key) => {
+                    const val = config[key];
+                    if (val === undefined) return null;
+                    return (
+                      <div key={key} className={styles.configRow}>
+                        <span className={styles.configKey}>{CONFIG_LABELS[key]}</span>
+                        <span className={styles.configVal}>{formatConfigVal(key, val)}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
-              {/* Action row */}
-              <div className={styles.actionRow}>
-                {showSaveInput ? (
-                  <div className={styles.saveInputRow}>
-                    <input
-                      className={styles.saveInput}
-                      placeholder="strategy name…"
-                      value={saveName}
-                      onChange={(e) => setSaveName(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleSave()}
-                      autoFocus
-                    />
-                    <button
-                      className={styles.saveConfirmBtn}
-                      onClick={handleSave}
-                      disabled={saving || !saveName.trim()}
-                    >
-                      {saving ? "…" : "SAVE"}
+              {config && (
+                <div className={styles.actionRow}>
+                  {showSaveInput ? (
+                    <div className={styles.saveInputRow}>
+                      <input
+                        className={styles.saveInput}
+                        placeholder="strategy name…"
+                        value={saveName}
+                        onChange={(e) => setSaveName(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && handleSave()}
+                        autoFocus
+                      />
+                      <button
+                        className={styles.saveConfirmBtn}
+                        onClick={handleSave}
+                        disabled={saving || !saveName.trim()}
+                      >
+                        {saving ? "…" : "SAVE"}
+                      </button>
+                      <button
+                        className={styles.cancelBtn}
+                        onClick={() => { setShowSaveInput(false); setSaveName(""); }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <button className={styles.saveOutlineBtn} onClick={() => setShowSaveInput(true)}>
+                      + SAVE
                     </button>
-                    <button
-                      className={styles.cancelBtn}
-                      onClick={() => { setShowSaveInput(false); setSaveName(""); }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    className={styles.saveOutlineBtn}
-                    onClick={() => setShowSaveInput(true)}
-                  >
-                    + SAVE
+                  )}
+                  <button className={styles.applyBtn} onClick={handleApply}>
+                    APPLY TO SETUP →
                   </button>
-                )}
-                <button className={styles.applyBtn} onClick={handleApply}>
-                  APPLY TO SETUP →
-                </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ── CODE tab ── */}
+          {outputTab === "code" && (
+            <>
+              <div className={styles.codeSection} style={{ flex: 1 }}>
+                <div className={styles.codeSectionHeader}>
+                  <span className={styles.codeSectionTitle}>STRATEGY CODE (Python agent_fn)</span>
+                  <button className={styles.copyBtn} onClick={handleCopyCode} disabled={!code}>
+                    COPY
+                  </button>
+                </div>
+                <pre className={`${styles.codeBox} ${styles.codeBoxTall}`}>
+                  {code ?? <span className={styles.emptyHint}>No code yet — generate a strategy or load one from the dropdown.</span>}
+                </pre>
               </div>
+
+              {config && (
+                <div className={styles.actionRow}>
+                  {showSaveInput ? (
+                    <div className={styles.saveInputRow}>
+                      <input
+                        className={styles.saveInput}
+                        placeholder="strategy name…"
+                        value={saveName}
+                        onChange={(e) => setSaveName(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && handleSave()}
+                        autoFocus
+                      />
+                      <button
+                        className={styles.saveConfirmBtn}
+                        onClick={handleSave}
+                        disabled={saving || !saveName.trim()}
+                      >
+                        {saving ? "…" : "SAVE"}
+                      </button>
+                      <button
+                        className={styles.cancelBtn}
+                        onClick={() => { setShowSaveInput(false); setSaveName(""); }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <button className={styles.saveOutlineBtn} onClick={() => setShowSaveInput(true)}>
+                      + SAVE
+                    </button>
+                  )}
+                  <button className={styles.applyBtn} onClick={handleApply}>
+                    APPLY TO SETUP →
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>

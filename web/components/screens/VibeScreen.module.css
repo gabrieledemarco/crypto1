@@ -163,6 +163,39 @@
   letter-spacing: 0.03em;
 }
 
+/* Output tab switcher */
+.tabBtn {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 8px;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  transition: color 0.1s, border-color 0.1s;
+}
+
+.tabBtn:hover {
+  color: var(--text);
+}
+
+.tabBtnActive {
+  color: var(--amber);
+  border-bottom-color: var(--amber);
+}
+
+.tabBtnHasData {
+  color: var(--cyan);
+}
+
+.tabBtnActive.tabBtnHasData {
+  color: var(--cyan);
+  border-bottom-color: var(--cyan);
+}
+
 /* Output panel */
 .streamBox {
   font-family: var(--font-mono);
@@ -334,6 +367,13 @@
   white-space: pre;
   word-break: normal;
   margin: 0;
+}
+
+.codeBoxTall {
+  max-height: none;
+  flex: 1;
+  height: 0;
+  min-height: 200px;
 }
 
 /* Action row */
