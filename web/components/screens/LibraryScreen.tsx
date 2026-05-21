@@ -49,7 +49,7 @@ function buildRunStub(run: RunListItem): Run {
 }
 
 export function LibraryScreen() {
-  const { goto, setToast, setActiveStrategy, loadRunFromHistory, setPendingSetupParams } = useStore();
+  const { goto, setToast, setActiveStrategy, loadRunFromHistory, setPendingSetupParams, setPendingVibeParams } = useStore();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [selectedEntry, setSelectedEntry] = useState<LibraryEntry | null>(null);
@@ -111,6 +111,14 @@ export function LibraryScreen() {
     loadRunFromHistory(buildRunStub(run));
     setToast(`Run "${run.name}" caricato → Equity`);
     goto("equity");
+  };
+
+  const handleLoadInVibe = (e: React.MouseEvent, run: RunListItem) => {
+    e.stopPropagation();
+    const asset = run.ticker?.includes("-") ? run.ticker : `${run.ticker}-USD`;
+    setPendingVibeParams({ asset, timeframe: run.timeframe ?? "1h" });
+    setToast(`${run.ticker} caricato in Vibe Trading`);
+    goto("vibe");
   };
 
   const handleReRun = (e: React.MouseEvent, run: RunListItem) => {
@@ -276,6 +284,7 @@ export function LibraryScreen() {
                   <span className={styles.th}></span>
                   <span className={styles.th}></span>
                   <span className={styles.th}></span>
+                  <span className={styles.th}></span>
                 </div>
                 {displayRuns.map((run) => (
                   <RunRow
@@ -283,6 +292,7 @@ export function LibraryScreen() {
                     run={run}
                     onLoad={(e) => handleLoadRun(e, run)}
                     onReRun={(e) => handleReRun(e, run)}
+                    onVibe={(e) => handleLoadInVibe(e, run)}
                     onDelete={(e) => handleDeleteRun(e, run.id)}
                     deleting={deleteMutation.isPending && deleteMutation.variables === run.id}
                   />
@@ -300,12 +310,14 @@ function RunRow({
   run,
   onLoad,
   onReRun,
+  onVibe,
   onDelete,
   deleting,
 }: {
   run: RunListItem;
   onLoad: (e: React.MouseEvent) => void;
   onReRun: (e: React.MouseEvent) => void;
+  onVibe: (e: React.MouseEvent) => void;
   onDelete: (e: React.MouseEvent) => void;
   deleting: boolean;
 }) {
@@ -364,6 +376,14 @@ function RunRow({
         style={{ color: "var(--cyan)" }}
       >
         ↺
+      </button>
+      <button
+        className={styles.actionBtn}
+        onClick={onVibe}
+        title="Apri asset in Vibe Trading per generare una strategia"
+        style={{ color: "var(--amber)" }}
+      >
+        ◈
       </button>
       <button
         className={styles.delBtn}

@@ -35,11 +35,17 @@ export interface SetupParams {
   mc_bars?: number;
 }
 
+export interface PendingVibeParams {
+  asset: string;
+  timeframe: string;
+}
+
 interface Store {
   runs: Run[];
   activeRunId: string;
   activeStrategyId: string | null;
   pendingSetupParams: SetupParams | null;
+  pendingVibeParams: PendingVibeParams | null;
   screen: ScreenId;
   paletteOpen: boolean;
   helpOpen: boolean;
@@ -50,6 +56,7 @@ interface Store {
   setRun: (id: string) => void;
   setActiveStrategy: (id: string | null) => void;
   setPendingSetupParams: (p: SetupParams | null) => void;
+  setPendingVibeParams: (p: PendingVibeParams | null) => void;
   loadRunFromHistory: (run: Run) => void;
   goto: (screen: ScreenId) => void;
   setPaletteOpen: (open: boolean) => void;
@@ -64,6 +71,7 @@ export const useStore = create<Store>((set) => ({
   activeRunId: "",
   activeStrategyId: null,
   pendingSetupParams: null,
+  pendingVibeParams: null,
   screen: "dashboard",
   paletteOpen: false,
   helpOpen: false,
@@ -74,6 +82,7 @@ export const useStore = create<Store>((set) => ({
   setRun: (id) => set({ activeRunId: id }),
   setActiveStrategy: (id) => set({ activeStrategyId: id }),
   setPendingSetupParams: (p) => set({ pendingSetupParams: p }),
+  setPendingVibeParams: (p) => set({ pendingVibeParams: p }),
   loadRunFromHistory: (run) =>
     set((s) => ({
       activeRunId: run.id,

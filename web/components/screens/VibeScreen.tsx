@@ -34,7 +34,7 @@ const CONFIG_LABELS: Record<string, string> = {
 };
 
 export function VibeScreen() {
-  const { goto, setToast } = useStore();
+  const { goto, setToast, pendingVibeParams, setPendingVibeParams } = useStore();
   const { data: assetsData } = useAssets();
 
   const assetOptions = useMemo(() => {
@@ -59,6 +59,15 @@ export function VibeScreen() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [availableTimeframes]);
+
+  useEffect(() => {
+    if (pendingVibeParams) {
+      setAsset(pendingVibeParams.asset);
+      setTimeframe(pendingVibeParams.timeframe);
+      setPendingVibeParams(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingVibeParams]);
 
   const [generating, setGenerating] = useState(false);
   const [text, setText] = useState("");
@@ -91,18 +100,24 @@ export function VibeScreen() {
   }, [text]);
 
   const handleGenerate = async () => {
-    if (!prompt.trim()) return;
     setGenerating(true);
     setText("");
     setConfig(null);
     setCode(null);
     setShowSaveInput(false);
 
+    let assetStats: Record<string, unknown> | null = null;
+    try {
+      const tickerBase = asset.replace(/-USD$/, "");
+      const r = await fetch(`/api/assets/${tickerBase}/stats?interval=${timeframe}`);
+      if (r.ok) assetStats = await r.json();
+    } catch { /* stats are optional */ }
+
     try {
       const res = await fetch("/api/vibe/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: prompt.trim(), asset, timeframe, n_candidates: 1 }),
+        body: JSON.stringify({ prompt: prompt.trim(), asset, timeframe, n_candidates: 1, asset_stats: assetStats }),
       });
 
       if (!res.body) throw new Error("No stream body");
@@ -242,7 +257,7 @@ export function VibeScreen() {
               className={styles.promptTextarea}
               rows={6}
               placeholder={
-                "Describe your strategy idea…\ne.g. \"scalp BTC on 15m, long only, tighter stops at night, risk 0.5% per trade\""
+                "Describe your strategy idea… (optional)\ne.g. \"scalp BTC on 15m, long only, tighter stops at night, risk 0.5% per trade\"\nLeave blank to let Claude suggest a strategy based on the asset's statistics."
               }
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
@@ -255,7 +270,7 @@ export function VibeScreen() {
           <button
             className={styles.generateBtn}
             onClick={handleGenerate}
-            disabled={generating || !prompt.trim()}
+            disabled={generating}
           >
             {generating ? "▶ GENERATING…" : "▶ GENERATE"}
           </button>

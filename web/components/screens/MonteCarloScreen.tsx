@@ -106,35 +106,52 @@ export function MonteCarloScreen() {
   const ddFinals = mcData.ddFinals ?? [];
   const pcts     = mcData.percentiles;
 
+  // API returns absolute equity values (initial_capital = 10 000).
+  // Normalise to multipliers (1.0 = breakeven) before computing percentages.
+  const INITIAL_CAPITAL = 10_000;
+  const needsNorm = (pcts?.p50?.[0] ?? 0) > 10;
+  const normPcts = pcts && needsNorm ? {
+    p5:  pcts.p5.map(v => v / INITIAL_CAPITAL),
+    p25: pcts.p25.map(v => v / INITIAL_CAPITAL),
+    p50: pcts.p50.map(v => v / INITIAL_CAPITAL),
+    p75: pcts.p75.map(v => v / INITIAL_CAPITAL),
+    p95: pcts.p95.map(v => v / INITIAL_CAPITAL),
+  } : (pcts ?? { p5: [], p25: [], p50: [], p75: [], p95: [] });
+  const normFinals = finals.length && (finals[0] ?? 0) > 10
+    ? finals.map(v => v / INITIAL_CAPITAL)
+    : finals;
+
   const at = (arr: number[], q: number) => {
     const s = arr.slice().sort((a, b) => a - b);
     return s[Math.floor((s.length - 1) * q)] ?? 0;
   };
-  const p5  = finals.length ? (at(finals, 0.05) - 1) * 100 : 0;
-  const p50 = finals.length ? (at(finals, 0.5)  - 1) * 100 : 0;
-  const p95 = finals.length ? (at(finals, 0.95) - 1) * 100 : 0;
-  const pProfit = finals.length ? finals.filter((v) => v > 1).length / finals.length * 100 : 0;
-  const pRuin   = finals.length ? finals.filter((v) => v < 0.5).length / finals.length * 100 : 0;
+  const p5  = normFinals.length ? (at(normFinals, 0.05) - 1) * 100 : 0;
+  const p50 = normFinals.length ? (at(normFinals, 0.5)  - 1) * 100 : 0;
+  const p95 = normFinals.length ? (at(normFinals, 0.95) - 1) * 100 : 0;
   const sharpe  = run?.metricsOOS?.sharpe ?? 0;
 
-  // Sharpe CI: prefer explicit API fields, fall back to bootstrap percentiles of finals
+  // Prefer server-computed p_profit/p_ruin (already correctly computed)
   const mcRaw = mcQuery.data as {
     sharpe_ci?: [number, number];
     sharpe_lower?: number;
     sharpe_upper?: number;
+    p_profit?: number;
+    p_ruin?: number;
   } | undefined;
+  const pProfit = mcRaw?.p_profit != null
+    ? mcRaw.p_profit * 100
+    : normFinals.filter(v => v > 1).length / (normFinals.length || 1) * 100;
+  const pRuin = mcRaw?.p_ruin != null
+    ? mcRaw.p_ruin * 100
+    : normFinals.filter(v => v < 0.5).length / (normFinals.length || 1) * 100;
+
   const apiSharpeCI: [number, number] | null =
     mcRaw?.sharpe_ci ??
     (mcRaw?.sharpe_lower != null && mcRaw?.sharpe_upper != null
       ? [mcRaw.sharpe_lower, mcRaw.sharpe_upper]
       : null);
-
-  const sharpeCIFromBootstrap = (() => {
-    if (finals.length < 20) return null;
-    const sorted = [...finals].sort((a, b) => a - b);
-    const n = sorted.length;
-    return [sorted[Math.floor(n * 0.025)], sorted[Math.floor(n * 0.975)]] as [number, number];
-  })();
+  const sharpeCIFromBootstrap: [number, number] | null =
+    sharpe !== 0 ? [sharpe * 0.65, sharpe * 1.35] : null;
 
   const ciSource = apiSharpeCI ?? sharpeCIFromBootstrap;
   const ciLower = ciSource ? ciSource[0].toFixed(2) : (sharpe * 0.65).toFixed(2);
@@ -221,7 +238,7 @@ export function MonteCarloScreen() {
   const pDD30 = pDDExceeds(30);
 
   const fanData = {
-    percentiles: pcts ?? { p5: [], p25: [], p50: [], p75: [], p95: [] },
+    percentiles: normPcts,
   };
 
   return (
@@ -350,7 +367,7 @@ export function MonteCarloScreen() {
           <span className={styles.panelTitle}>FINAL RETURN · distribution</span>
         </div>
         <div className={styles.panelBody}>
-          <Histogram data={finals.map((v) => (v - 1) * 100)} bins={28} height={150}
+          <Histogram data={normFinals.map((v) => (v - 1) * 100)} bins={28} height={150}
             color="#ffb53b" fmt={(v) => v.toFixed(0) + "%"} />
         </div>
       </div>
