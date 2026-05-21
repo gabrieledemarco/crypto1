@@ -48,12 +48,18 @@ function SummaryBar({ folds }: { folds: WFOFold[] }) {
   const positiveFolds = folds.filter((f) => f.oos_sharpe > 0).length;
   const pctPositive = (positiveFolds / n) * 100;
   const meanOOSCagr = folds.reduce((a, f) => a + f.oos_cagr, 0) / n;
+  const meanOOSMaxDD = folds.reduce((a, f) => a + f.oos_max_dd, 0) / n;
+  const positiveCagr = folds.filter((f) => f.oos_cagr > 0).length;
+  const pctPosCagr   = (positiveCagr / n) * 100;
+  const meanOOSTrades = Math.round(folds.reduce((a, f) => a + f.oos_n_trades, 0) / n);
 
   const wfeColor =
     wfe >= 0.7 ? "var(--green)" : wfe >= 0.4 ? "var(--amber)" : "var(--coral)";
   const pctColor = pctPositive >= 60 ? "var(--green)" : pctPositive >= 40 ? "var(--amber)" : "var(--coral)";
   const shpColor = meanOOSSharpe > 0 ? "var(--green)" : "var(--coral)";
   const cagrColor = meanOOSCagr > 0 ? "var(--green)" : "var(--coral)";
+  const ddColor = "var(--coral)";
+  const pctCagrColor = pctPosCagr >= 60 ? "var(--green)" : pctPosCagr >= 40 ? "var(--amber)" : "var(--coral)";
 
   return (
     <div className={styles.panel} style={{ gridColumn: "span 12" }}>
@@ -69,6 +75,12 @@ function SummaryBar({ folds }: { folds: WFOFold[] }) {
         <SumCell label="MEAN OOS SHARPE" value={fmtN(meanOOSSharpe)} color={shpColor} />
         <div className={styles.summaryDivider} />
         <SumCell label="MEAN OOS CAGR" value={fmtPct(meanOOSCagr)} color={cagrColor} />
+        <div className={styles.summaryDivider} />
+        <SumCell label="MEAN OOS MAX DD" value={fmtPct(meanOOSMaxDD)} color={ddColor} />
+        <div className={styles.summaryDivider} />
+        <SumCell label="MEAN OOS TRADES" value={String(meanOOSTrades)} color="var(--dim)" />
+        <div className={styles.summaryDivider} />
+        <SumCell label="% POSITIVE CAGR" value={fmtPct(pctPosCagr)} color={pctCagrColor} />
       </div>
     </div>
   );
@@ -335,49 +347,128 @@ function ScatterPanel({ folds }: { folds: WFOFold[] }) {
   );
 }
 
-// ── OOS equity overlay ────────────────────────────────────────────────────────
+// ── IS vs OOS Sharpe bar chart + OOS cumulative equity ───────────────────────
 
-function OOSEquityPanel({ folds }: { folds: WFOFold[] }) {
-  // The fold records don't include per-bar equity series — show informational message
-  const hasEquityData = false as boolean;
+function FoldChartsPanel({ folds }: { folds: WFOFold[] }) {
+  // ── Bar chart: IS vs OOS Sharpe per fold ──
+  const W1 = 580, H1 = 160;
+  const PAD1 = { top: 16, right: 16, bottom: 28, left: 40 };
+  const iW1 = W1 - PAD1.left - PAD1.right;
+  const iH1 = H1 - PAD1.top - PAD1.bottom;
 
-  if (!hasEquityData) {
-    return (
-      <div className={styles.panel} style={{ gridColumn: "span 12" }}>
-        <div className={styles.panelHeader}>
-          <span className={styles.panelTitle}>OOS EQUITY OVERLAY</span>
-        </div>
-        <div className={styles.equityUnavail}>OOS equity not available</div>
-      </div>
-    );
+  const allSharpe = folds.flatMap((f) => [f.is_sharpe, f.oos_sharpe]);
+  const minS = Math.min(...allSharpe, -0.5);
+  const maxS = Math.max(...allSharpe, 0.5);
+  const rangeS = maxS - minS || 1;
+
+  const foldW = iW1 / folds.length;
+  const barW  = foldW * 0.33;
+  const toX1  = (i: number, offset: number) => PAD1.left + i * foldW + foldW / 2 + offset;
+  const toY1  = (v: number) => PAD1.top + iH1 - ((v - minS) / rangeS) * iH1;
+  const y01   = toY1(0);
+
+  // ── Approximate OOS cumulative equity ──
+  const W2 = 580, H2 = 120;
+  const PAD2 = { top: 12, right: 16, bottom: 28, left: 44 };
+  const iW2 = W2 - PAD2.left - PAD2.right;
+  const iH2 = H2 - PAD2.top - PAD2.bottom;
+
+  const oosEquity: number[] = [1.0];
+  for (const f of folds) {
+    oosEquity.push(oosEquity[oosEquity.length - 1] * (1 + f.oos_cagr / 100));
   }
-
-  // Unreachable branch — kept for type safety if equity data is added later
-  const W = 800;
-  const H = 160;
-  const PAD = { top: 8, right: 12, bottom: 28, left: 40 };
-  const innerW = W - PAD.left - PAD.right;
-  const innerH = H - PAD.top - PAD.bottom;
+  const minEq = Math.min(...oosEquity);
+  const maxEq = Math.max(...oosEquity);
+  const rangeEq = maxEq - minEq || 0.1;
+  const toX2 = (i: number) => PAD2.left + (i / (oosEquity.length - 1)) * iW2;
+  const toY2 = (v: number) => PAD2.top + iH2 - ((v - minEq) / rangeEq) * iH2;
+  const eqPts = oosEquity.map((v, i) => `${toX2(i).toFixed(1)},${toY2(v).toFixed(1)}`).join(" ");
+  const eqFill = `${PAD2.left},${toY2(minEq)} ${eqPts} ${toX2(oosEquity.length - 1).toFixed(1)},${toY2(minEq)}`;
+  const finalReturn = (oosEquity[oosEquity.length - 1] - 1) * 100;
 
   return (
     <div className={styles.panel} style={{ gridColumn: "span 12" }}>
       <div className={styles.panelHeader}>
-        <span className={styles.panelTitle}>OOS EQUITY OVERLAY</span>
+        <span className={styles.panelTitle}>IS vs OOS SHARPE · per fold</span>
+        <span style={{ flex: 1 }} />
+        <span className={styles.panelTitle} style={{ marginLeft: 32 }}>OOS CUMULATIVE RETURN</span>
+        <span className={styles.panelSub} style={{ marginLeft: 8, color: finalReturn >= 0 ? "var(--green)" : "var(--coral)" }}>
+          {finalReturn >= 0 ? "+" : ""}{finalReturn.toFixed(1)}%
+        </span>
       </div>
-      <div className={styles.panelBody}>
-        <svg
-          width="100%"
-          viewBox={`0 0 ${W} ${H}`}
-          style={{ display: "block" }}
-        >
-          <rect
-            x={PAD.left}
-            y={PAD.top}
-            width={innerW}
-            height={innerH}
-            fill="none"
-            stroke="var(--border)"
-          />
+      <div className={styles.panelBody} style={{ display: "flex", gap: 16 }}>
+        {/* Bar chart */}
+        <svg width="50%" viewBox={`0 0 ${W1} ${H1}`} style={{ display: "block", flex: "0 0 50%" }}>
+          {/* y=0 line */}
+          <line x1={PAD1.left} y1={y01} x2={PAD1.left + iW1} y2={y01}
+            stroke="var(--border)" strokeWidth={1} />
+          {/* Tick lines + labels */}
+          {[minS, 0, maxS].map((v, i) => (
+            <g key={i}>
+              <line x1={PAD1.left} y1={toY1(v)} x2={PAD1.left + iW1} y2={toY1(v)}
+                stroke="var(--border)" strokeWidth={0.5} strokeDasharray="4 3" />
+              <text x={PAD1.left - 4} y={toY1(v) + 3} textAnchor="end" fontSize={8} fill="var(--faint)">
+                {v.toFixed(1)}
+              </text>
+            </g>
+          ))}
+          {folds.map((f, i) => {
+            const isH = Math.abs(toY1(f.is_sharpe) - y01);
+            const oosH = Math.abs(toY1(f.oos_sharpe) - y01);
+            const isY  = f.is_sharpe >= 0 ? toY1(f.is_sharpe) : y01;
+            const oosY = f.oos_sharpe >= 0 ? toY1(f.oos_sharpe) : y01;
+            const cx   = toX1(i, 0);
+            return (
+              <g key={i}>
+                <rect x={cx - barW - 1} y={isY} width={barW} height={Math.max(isH, 1)}
+                  fill="var(--amber)" fillOpacity={0.55} />
+                <rect x={cx + 1} y={oosY} width={barW} height={Math.max(oosH, 1)}
+                  fill={f.oos_sharpe >= 0 ? "var(--green)" : "var(--coral)"} fillOpacity={0.85} />
+                <text x={cx} y={PAD1.top + iH1 + 12} textAnchor="middle" fontSize={8} fill="var(--dim)">
+                  F{i + 1}
+                </text>
+              </g>
+            );
+          })}
+          {/* Legend */}
+          <rect x={W1 - 96} y={6} width={8} height={8} fill="var(--amber)" fillOpacity={0.55} />
+          <text x={W1 - 84} y={13} fontSize={8} fill="var(--dim)">IS</text>
+          <rect x={W1 - 56} y={6} width={8} height={8} fill="var(--green)" fillOpacity={0.85} />
+          <text x={W1 - 44} y={13} fontSize={8} fill="var(--dim)">OOS</text>
+        </svg>
+
+        {/* OOS cumulative equity */}
+        <svg width="50%" viewBox={`0 0 ${W2} ${H2}`} style={{ display: "block", flex: "0 0 50%" }}>
+          {/* Grid */}
+          {[minEq, (minEq + maxEq) / 2, maxEq].map((v, i) => (
+            <g key={i}>
+              <line x1={PAD2.left} y1={toY2(v)} x2={PAD2.left + iW2} y2={toY2(v)}
+                stroke="var(--border)" strokeWidth={0.5} strokeDasharray="4 3" />
+              <text x={PAD2.left - 4} y={toY2(v) + 3} textAnchor="end" fontSize={8} fill="var(--faint)">
+                {((v - 1) * 100).toFixed(0)}%
+              </text>
+            </g>
+          ))}
+          {/* Area fill */}
+          <polygon points={eqFill} fill="var(--cyan)" fillOpacity={0.15} />
+          {/* Line */}
+          <polyline points={eqPts} fill="none"
+            stroke={finalReturn >= 0 ? "var(--cyan)" : "var(--coral)"} strokeWidth={2} />
+          {/* Dots at fold boundaries */}
+          {oosEquity.map((v, i) => (
+            <circle key={i} cx={toX2(i)} cy={toY2(v)} r={3}
+              fill={v >= 1 ? "var(--green)" : "var(--coral)"}
+              stroke="var(--bg)" strokeWidth={1} />
+          ))}
+          {/* X-axis labels */}
+          {folds.map((_, i) => (
+            <text key={i} x={toX2(i + 1)} y={PAD2.top + iH2 + 12} textAnchor="middle" fontSize={8} fill="var(--dim)">
+              F{i + 1}
+            </text>
+          ))}
+          <text x={PAD2.left} y={PAD2.top + iH2 + 12} textAnchor="middle" fontSize={8} fill="var(--faint)">
+            start
+          </text>
         </svg>
       </div>
     </div>
@@ -387,10 +478,17 @@ function OOSEquityPanel({ folds }: { folds: WFOFold[] }) {
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export function WFOScreen() {
-  const { activeRunId } = useStore();
+  const { runs, activeRunId } = useStore();
   const wfoQuery = useRunWFO(activeRunId || null);
 
-  const rawFolds = wfoQuery.data ?? [];
+  // Use API data first; fall back to wfo stored on the run object (e.g. fixture data)
+  const run = runs.find((r) => r.id === activeRunId);
+  const runWfo = (run as unknown as { wfo?: unknown[] })?.wfo;
+  const rawFolds: unknown[] =
+    wfoQuery.data && wfoQuery.data.length > 0
+      ? wfoQuery.data
+      : (runWfo ?? []);
+
   const folds: WFOFold[] = (rawFolds as unknown[]).filter(
     (r): r is WFOFold =>
       r !== null &&
@@ -399,12 +497,31 @@ export function WFOScreen() {
       "oos_sharpe" in (r as object)
   );
 
+  // Show loading indicator while fetching from API
+  if (wfoQuery.isLoading) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: 300,
+          fontFamily: "var(--font-mono)",
+          color: "var(--faint)",
+          fontSize: 11,
+        }}
+      >
+        CARICAMENTO WFO…
+      </div>
+    );
+  }
+
   if (!folds.length) {
     return (
       <div className={styles.emptyWrap}>
-        <div className={styles.emptyTitle}>WFO NOT RUN</div>
+        <div className={styles.emptyTitle}>WFO NON ESEGUITO</div>
         <div className={styles.emptyHint}>
-          Enable WFO in Setup → run strategy
+          Abilita WFO in Setup → esegui la strategia
         </div>
       </div>
     );
@@ -415,7 +532,7 @@ export function WFOScreen() {
       <SummaryBar folds={folds} />
       <FoldTable folds={folds} />
       <ScatterPanel folds={folds} />
-      <OOSEquityPanel folds={folds} />
+      <FoldChartsPanel folds={folds} />
     </div>
   );
 }

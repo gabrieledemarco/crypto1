@@ -16,9 +16,36 @@ export type ScreenId =
   | "wfo"
   | "analysis";
 
+export interface SetupParams {
+  ticker: string;
+  timeframe: string;
+  sl_mult: number;
+  tp_mult: number;
+  active_hours: [number, number];
+  risk_per_trade: number;
+  commission: number;
+  slippage: number;
+  direction: string;
+  run_wfo: boolean;
+  run_sweep: boolean;
+  run_mc: boolean;
+  wfo_is_window?: number;
+  wfo_oos_window?: number;
+  mc_sims?: number;
+  mc_bars?: number;
+}
+
+export interface PendingVibeParams {
+  asset: string;
+  timeframe: string;
+}
+
 interface Store {
   runs: Run[];
   activeRunId: string;
+  activeStrategyId: string | null;
+  pendingSetupParams: SetupParams | null;
+  pendingVibeParams: PendingVibeParams | null;
   screen: ScreenId;
   paletteOpen: boolean;
   helpOpen: boolean;
@@ -27,6 +54,10 @@ interface Store {
   toast: string | null;
   setRuns: (runs: Run[]) => void;
   setRun: (id: string) => void;
+  setActiveStrategy: (id: string | null) => void;
+  setPendingSetupParams: (p: SetupParams | null) => void;
+  setPendingVibeParams: (p: PendingVibeParams | null) => void;
+  loadRunFromHistory: (run: Run) => void;
   goto: (screen: ScreenId) => void;
   setPaletteOpen: (open: boolean) => void;
   setHelpOpen: (open: boolean) => void;
@@ -38,6 +69,9 @@ interface Store {
 export const useStore = create<Store>((set) => ({
   runs: [],
   activeRunId: "",
+  activeStrategyId: null,
+  pendingSetupParams: null,
+  pendingVibeParams: null,
   screen: "dashboard",
   paletteOpen: false,
   helpOpen: false,
@@ -46,6 +80,16 @@ export const useStore = create<Store>((set) => ({
   toast: null,
   setRuns: (runs) => set({ runs }),
   setRun: (id) => set({ activeRunId: id }),
+  setActiveStrategy: (id) => set({ activeStrategyId: id }),
+  setPendingSetupParams: (p) => set({ pendingSetupParams: p }),
+  setPendingVibeParams: (p) => set({ pendingVibeParams: p }),
+  loadRunFromHistory: (run) =>
+    set((s) => ({
+      activeRunId: run.id,
+      runs: s.runs.some((r) => r.id === run.id)
+        ? s.runs.map((r) => (r.id === run.id ? run : r))
+        : [...s.runs, run],
+    })),
   goto: (screen) => set({ screen }),
   setPaletteOpen: (open) => set({ paletteOpen: open }),
   setHelpOpen: (open) => set({ helpOpen: open }),

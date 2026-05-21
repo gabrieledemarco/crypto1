@@ -329,6 +329,25 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
     sharpe = ret_s.mean() / ret_s.std() * np.sqrt(24 * 365) \
              if ret_s.std() > 0 else 0
 
+    # Sortino ratio (annualised, downside deviation only)
+    trading_periods_per_year = 24 * 365
+    down = ret_s[ret_s < 0]
+    if len(down) > 0:
+        dd_std = float(np.std(down)) * np.sqrt(trading_periods_per_year)
+        ann_return = float(ret_s.mean()) * trading_periods_per_year
+        sortino = ann_return / dd_std if dd_std > 0 else 0.0
+    else:
+        sortino = 0.0
+
+    # Skewness and kurtosis of equity returns
+    skewness = float(ret_s.skew()) if len(ret_s) >= 3 else 0.0
+    kurtosis = float(ret_s.kurt()) if len(ret_s) >= 4 else 0.0
+    # Guard against NaN from insufficient data
+    if not np.isfinite(skewness):
+        skewness = 0.0
+    if not np.isfinite(kurtosis):
+        kurtosis = 0.0
+
     roll_max = equity.cummax()
     dd = (equity - roll_max) / roll_max * 100
     max_dd = dd.min()
@@ -370,4 +389,7 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
         "omega": omega,
         "ulcer": ulcer,
         "recovery_factor": recovery_factor,
+        "sortino_ratio": sortino,
+        "skewness": skewness,
+        "kurtosis": kurtosis,
     }

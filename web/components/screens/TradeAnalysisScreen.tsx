@@ -633,6 +633,52 @@ function DriftChart({ trades }: { trades: Trade[] }) {
   );
 }
 
+// ─── Reusable panels (accepts trades directly, no data fetching) ─────────────
+
+export function TradeAnalysisPanels({ trades }: { trades: Trade[] }) {
+  if (trades.length === 0) return null;
+  return (
+    <div className={styles.grid}>
+      <div className={styles.panel} style={{ gridColumn: "span 12" }}>
+        <div className={styles.panelHeader}>
+          <span className={styles.panelTitle}>DIRECTION BREAKDOWN</span>
+          <span className={styles.panelSub}>{trades.length} trades</span>
+        </div>
+        <div className={styles.panelBody}><DirectionTable trades={trades} /></div>
+      </div>
+      <div className={styles.panel} style={{ gridColumn: "span 8" }}>
+        <div className={styles.panelHeader}>
+          <span className={styles.panelTitle}>HOURLY WIN-RATE HEATMAP</span>
+          <span className={styles.panelSub}>UTC hour × side</span>
+        </div>
+        <div className={styles.panelBody} style={{ overflowY: "auto" }}>
+          <HourlyHeatmap trades={trades} />
+        </div>
+      </div>
+      <div className={styles.panel} style={{ gridColumn: "span 4" }}>
+        <div className={styles.panelHeader}>
+          <span className={styles.panelTitle}>P&L DISTRIBUTION</span>
+          <span className={styles.panelSub}>50 bins</span>
+        </div>
+        <div className={styles.panelBody}><PnlHistogram trades={trades} /></div>
+      </div>
+      <div className={styles.panel} style={{ gridColumn: "span 6" }}>
+        <div className={styles.panelHeader}>
+          <span className={styles.panelTitle}>STREAK ANALYSIS</span>
+        </div>
+        <div className={styles.panelBody}><StreakPanel trades={trades} /></div>
+      </div>
+      <div className={styles.panel} style={{ gridColumn: "span 6" }}>
+        <div className={styles.panelHeader}>
+          <span className={styles.panelTitle}>DRIFT DETECTION</span>
+          <span className={styles.panelSub}>rolling 30-trade win rate</span>
+        </div>
+        <div className={styles.panelBody}><DriftChart trades={trades} /></div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main screen ─────────────────────────────────────────────────────────────
 
 export function TradeAnalysisScreen() {
@@ -640,6 +686,19 @@ export function TradeAnalysisScreen() {
   const run = runs.find((r) => r.id === activeRunId) ?? fixtures.runs[0];
 
   const tradesQuery = useRunTrades(activeRunId || null, { limit: 500 });
+
+  const isUsingFixture = !tradesQuery.data?.trades?.length;
+
+  if (tradesQuery.isLoading) {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        height: 200, fontFamily: "var(--font-mono)", color: "var(--faint)", fontSize: 11,
+      }}>
+        CARICAMENTO TRADE…
+      </div>
+    );
+  }
 
   const rawTrades: Trade[] =
     tradesQuery.data?.trades && tradesQuery.data.trades.length > 0
@@ -665,6 +724,15 @@ export function TradeAnalysisScreen() {
         <div className={styles.panelHeader}>
           <span className={styles.panelTitle}>DIRECTION BREAKDOWN</span>
           <span className={styles.panelSub}>{trades.length} trades</span>
+          {isUsingFixture && (
+            <span style={{
+              fontFamily: "var(--font-mono)", fontSize: 9,
+              color: "var(--amber)", border: "1px solid var(--amber)",
+              padding: "1px 5px", letterSpacing: "0.04em",
+            }}>
+              DEMO DATA
+            </span>
+          )}
         </div>
         <div className={styles.panelBody}>
           <DirectionTable trades={trades} />

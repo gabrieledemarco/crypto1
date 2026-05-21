@@ -51,14 +51,79 @@ async def stream_run(run_id: str):
 # ── List / get ────────────────────────────────────────────────────────────────
 
 @router.get("")
-def list_runs():
+def list_runs(strategy_id: Optional[str] = Query(None)):
     conn = get_conn()
-    rows = conn.execute("SELECT id, name, ticker, status, params, created_at FROM runs ORDER BY created_at DESC").fetchall()
-    return [
-        {"id": r[0], "name": r[1], "ticker": r[2], "status": r[3],
-         "params": json.loads(r[4]) if r[4] else {}, "created_at": str(r[5])}
-        for r in rows
-    ]
+    where = "WHERE r.strategy_id = ?" if strategy_id else ""
+    args  = [strategy_id] if strategy_id else []
+    rows = conn.execute(f"""
+        SELECT r.id, r.name, r.ticker, r.timeframe, r.status, r.params, r.created_at,
+               r.strategy_id, rr.metrics, rr.equity
+        FROM runs r
+        LEFT JOIN run_results rr ON r.id = rr.run_id
+        {where}
+        ORDER BY r.created_at DESC
+    """, args).fetchall()
+    result = []
+    for r in rows:
+        run_id, name, ticker, timeframe, status, params_str, created_at, strat_id, metrics_str, equity_str = r
+        params = json.loads(params_str) if params_str else {}
+        best_m: dict = {}
+        if metrics_str:
+            all_m = json.loads(metrics_str)
+            best_key = "V_Agent" if "V_Agent" in all_m else "V4 +GARCH+Costi"
+            if best_key not in all_m and all_m:
+                best_key = next(iter(all_m))
+            best_m = all_m.get(best_key, {})
+        start_date = end_date = None
+        if equity_str:
+            eq = json.loads(equity_str)
+            if eq:
+                start_date = str(eq[0].get("ts", ""))[:10] or None
+                end_date   = str(eq[-1].get("ts", ""))[:10] or None
+        result.append({
+            "id": run_id,
+            "name": name,
+            "ticker": ticker or params.get("ticker", ""),
+            "timeframe": timeframe or params.get("timeframe", ""),
+            "status": status,
+            "strategy_id": strat_id,
+            "params": params,
+            "created_at": str(created_at),
+            "start_date": start_date,
+            "end_date": end_date,
+            "sharpe": round(float(best_m["sharpe_ratio"]), 3) if "sharpe_ratio" in best_m else None,
+            "cagr": round(float(best_m["cagr_pct"]), 2) if "cagr_pct" in best_m else None,
+            "max_dd": round(float(best_m["max_drawdown_pct"]), 2) if "max_drawdown_pct" in best_m else None,
+            "pf": round(float(best_m["profit_factor"]), 2) if "profit_factor" in best_m and best_m["profit_factor"] != float("inf") else None,
+            "n_trades": int(best_m.get("n_trades", 0)) if best_m else None,
+            "win_rate": round(float(best_m["win_rate_pct"]), 1) if "win_rate_pct" in best_m else None,
+        })
+    return result
+
+
+@router.delete("")
+def delete_unlinked_runs():
+    """Delete all runs that have no strategy_id (cleanup)."""
+    conn = get_conn()
+    ids = [r[0] for r in conn.execute(
+        "SELECT id FROM runs WHERE strategy_id IS NULL OR strategy_id = ''"
+    ).fetchall()]
+    if ids:
+        placeholders = ",".join(["?" for _ in ids])
+        conn.execute(f"DELETE FROM run_results WHERE run_id IN ({placeholders})", ids)
+        conn.execute(f"DELETE FROM runs WHERE id IN ({placeholders})", ids)
+    return {"deleted": len(ids), "ids": ids}
+
+
+@router.delete("/{run_id}")
+def delete_run(run_id: str):
+    conn = get_conn()
+    existing = conn.execute("SELECT id FROM runs WHERE id=?", [run_id]).fetchone()
+    if not existing:
+        raise HTTPException(404, "Run not found")
+    conn.execute("DELETE FROM run_results WHERE run_id=?", [run_id])
+    conn.execute("DELETE FROM runs WHERE id=?", [run_id])
+    return {"deleted": run_id}
 
 @router.get("/{run_id}")
 def get_run(run_id: str):
@@ -137,8 +202,8 @@ async def create_run(body: RunCreate):
 
     conn = get_conn()
     conn.execute(
-        "INSERT INTO runs (id, name, ticker, timeframe, params, status) VALUES (?,?,?,?,?,?)",
-        [run_id, name, params["ticker"], params["timeframe"], json.dumps(params), "pending"]
+        "INSERT INTO runs (id, name, ticker, timeframe, params, status, strategy_id) VALUES (?,?,?,?,?,?,?)",
+        [run_id, name, params["ticker"], params["timeframe"], json.dumps(params), "pending", body.strategy_id]
     )
 
     asyncio.create_task(_run_backtest(run_id, params))
@@ -297,8 +362,27 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
     if params.get("run_mc", True) and trades_list:
         push("mc", 90, "monte carlo")
         pnl_arr = np.array([t.get("pnl", 0) for t in trades_list])
-        bs = run_bootstrap(pnl_arr, n_sims=2000, initial_capital=INITIAL_CAPITAL)
+        dir_arr = np.array([
+            1 if str(t.get("direction", "")).upper() == "LONG" else -1
+            for t in trades_list
+        ])
+        n_sims  = max(100, int(params.get("mc_sims", 1000)))
+        mc_bars_raw = params.get("mc_bars")
+        n_bars  = int(mc_bars_raw) if (mc_bars_raw and int(mc_bars_raw) > 0) else None
+
+        bs     = run_bootstrap(pnl_arr, n_sims=n_sims, n_bars=n_bars, initial_capital=INITIAL_CAPITAL)
         stress = run_stress(pnl_arr, initial_capital=INITIAL_CAPITAL)
+
+        # Trade stats from original trades
+        n_long  = int((dir_arr == 1).sum())
+        n_short = int((dir_arr == -1).sum())
+        n_total = len(pnl_arr)
+        win_rate_base  = round(float((pnl_arr > 0).mean() * 100), 1) if n_total > 0 else 0.0
+        win_rate_long  = round(float((pnl_arr[dir_arr == 1] > 0).mean() * 100), 1) if n_long > 0 else 0.0
+        win_rate_short = round(float((pnl_arr[dir_arr == -1] > 0).mean() * 100), 1) if n_short > 0 else 0.0
+
+        wr_arr = bs["win_rates"]
+
         # Percentiles per timestep
         eq_mat = bs["equity_matrix"]
         steps = eq_mat.shape[1]
@@ -316,6 +400,18 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
             "stress":    stress,
             "p_profit":  round(float((bs["final_capital"] > INITIAL_CAPITAL).mean()), 4),
             "p_ruin":    round(float((bs["final_capital"] < INITIAL_CAPITAL * 0.5).mean()), 4),
+            # Trade metrics
+            "n_trades":       n_total,
+            "n_long":         n_long,
+            "n_short":        n_short,
+            "win_rate_base":  win_rate_base,
+            "win_rate_long":  win_rate_long,
+            "win_rate_short": win_rate_short,
+            "win_rate_p5":    round(float(np.percentile(wr_arr, 5)), 1),
+            "win_rate_p50":   round(float(np.percentile(wr_arr, 50)), 1),
+            "win_rate_p95":   round(float(np.percentile(wr_arr, 95)), 1),
+            "n_sims":         n_sims,
+            "path_len":       n_bars or n_total,
         }
 
     return result

@@ -20,7 +20,6 @@ import { AssetsScreen }     from "@/components/screens/AssetsScreen";
 import { LibraryScreen }    from "@/components/screens/LibraryScreen";
 import { VibeScreen }       from "@/components/screens/VibeScreen";
 import { WFOScreen }        from "@/components/screens/WFOScreen";
-import { TradeAnalysisScreen } from "@/components/screens/TradeAnalysisScreen";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useHotkeys } from "@/hooks/useHotkeys";
 import type { ScreenId } from "@/store";
@@ -46,7 +45,7 @@ function ScreenContent({ screen }: { screen: ScreenId }) {
     case "wfo":
       return <WFOScreen />;
     case "analysis":
-      return <TradeAnalysisScreen />;
+      return <TradesScreen />;
     case "assets":
       return <AssetsScreen />;
     case "library":

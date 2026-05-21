@@ -13,12 +13,12 @@ router = APIRouter()
 def list_strategies():
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id, name, strategy_type, config, starred, status, run_ref, created_at FROM strategies ORDER BY created_at DESC"
+        "SELECT id, name, strategy_type, config, code, starred, status, run_ref, created_at FROM strategies ORDER BY created_at DESC"
     ).fetchall()
     return [
         {"id": r[0], "name": r[1], "strategy_type": r[2],
-         "config": json.loads(r[3]) if r[3] else {},
-         "starred": bool(r[4]), "status": r[5], "run_ref": r[6], "created_at": str(r[7])}
+         "config": json.loads(r[3]) if r[3] else {}, "code": r[4] or "",
+         "starred": bool(r[5]), "status": r[6], "run_ref": r[7], "created_at": str(r[8])}
         for r in rows
     ]
 

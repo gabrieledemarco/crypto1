@@ -84,9 +84,50 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
     return results
 
 
+_WFO_SL_GRID: list[float] = [1.5, 2.0, 2.5, 3.0]
+_WFO_TP_GRID: list[float] = [2.0, 3.0, 4.0, 5.0, 6.0]
+
+
+def _best_params_on_is(
+    is_data: pd.DataFrame,
+    hrs: tuple,
+    direction: str,
+) -> tuple[float, float]:
+    """Grid-search (sl, tp) on IS window; return pair maximising Sharpe.
+
+    Uses V1-Base settings (no GARCH, no commission) for speed.
+    """
+    best_sharpe = float("-inf")
+    best_sl, best_tp = _WFO_SL_GRID[1], _WFO_TP_GRID[1]   # sensible default
+    for sl_c in _WFO_SL_GRID:
+        for tp_c in _WFO_TP_GRID:
+            df_s = generate_signals_v2(
+                is_data, atr_mult_sl=sl_c, atr_mult_tp=tp_c,
+                active_hours=hrs, use_garch_filter=False,
+            )
+            df_s = _apply_direction_filter(df_s, direction)
+            res  = backtest_v2(df_s, INITIAL_CAPITAL, 0.01,
+                               commission=0.0, slippage=0.0)
+            sharpe = compute_metrics(res, INITIAL_CAPITAL).get("sharpe_ratio", float("-inf"))
+            if sharpe > best_sharpe:
+                best_sharpe, best_sl, best_tp = sharpe, sl_c, tp_c
+    return best_sl, best_tp
+
+
 def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
-            direction: str = "ALL", progress_cb=None) -> pd.DataFrame:
-    """Walk-Forward Optimization. Returns DataFrame of fold results."""
+            direction: str = "ALL", progress_cb=None,
+            per_fold_opt: bool = False) -> pd.DataFrame:
+    """Walk-Forward Optimization. Returns DataFrame of fold results.
+
+    Parameters
+    ----------
+    per_fold_opt:
+        When True, each fold's IS window is used to grid-search the best
+        (sl_mult, tp_mult) pair (20 combinations).  Those optimal params are
+        then used for both IS and OOS evaluation of that fold.  Adds
+        ``best_sl`` / ``best_tp`` columns to the result.
+        When False (default) behaviour is identical to the original implementation.
+    """
     comm = cfg.get("commission", 0.0004)
     slip = cfg.get("slippage",   0.0001)
     risk = cfg.get("risk_per_trade", 0.01)
@@ -121,17 +162,27 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
             is_data  = df_ind.iloc[i : i + is_len]
             oos_data = df_ind.iloc[i + is_len : i + is_len + oos_len]
 
-            df_is  = _apply_cfg_overrides(_apply_direction_filter(agent_fn(is_data), direction),
-                                           sl, tp, hrs)
+            # --- per-fold IS optimisation (optional) ---
+            if per_fold_opt:
+                fold_sl, fold_tp = _best_params_on_is(is_data, hrs, direction)
+            else:
+                fold_sl, fold_tp = sl, tp
+
+            df_is  = _apply_cfg_overrides(
+                _apply_direction_filter(agent_fn(is_data), direction),
+                fold_sl, fold_tp, hrs,
+            )
             res_is = backtest_v2(df_is,  INITIAL_CAPITAL, risk, comm, slip)
             m_is   = compute_metrics(res_is, INITIAL_CAPITAL)
 
-            df_os  = _apply_cfg_overrides(_apply_direction_filter(agent_fn(oos_data), direction),
-                                           sl, tp, hrs)
+            df_os  = _apply_cfg_overrides(
+                _apply_direction_filter(agent_fn(oos_data), direction),
+                fold_sl, fold_tp, hrs,
+            )
             res_os = backtest_v2(df_os, INITIAL_CAPITAL, risk, comm, slip)
             m_os   = compute_metrics(res_os, INITIAL_CAPITAL)
 
-            rows.append({
+            row: dict = {
                 "window_config": wcfg["label"],
                 "fold":          fold,
                 "is_sharpe":     m_is.get("sharpe_ratio", 0),
@@ -142,7 +193,10 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
                 "oos_n_trades":  m_os.get("n_trades", 0),
                 "is_max_dd":     m_is.get("max_drawdown_pct", 0),
                 "oos_max_dd":    m_os.get("max_drawdown_pct", 0),
-            })
+                "best_sl":       fold_sl if per_fold_opt else None,
+                "best_tp":       fold_tp if per_fold_opt else None,
+            }
+            rows.append(row)
             fold += 1
             i    += step
             done += 1
@@ -181,6 +235,7 @@ def run_optimization(df_ind: pd.DataFrame, cfg: dict,
             "max_drawdown_pct": m.get("max_drawdown_pct", 0),
             "n_trades":         m.get("n_trades", 0),
             "win_rate_pct":     m.get("win_rate_pct", 0),
+            "profit_factor":    m.get("profit_factor", 0),
         })
 
     df_opt = pd.DataFrame(rows)

@@ -1,9 +1,10 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useStore } from "@/store";
+import { useAssets } from "@/hooks/useAssets";
 import styles from "./VibeScreen.module.css";
 
-const ASSETS = ["BTC-USD", "ETH-USD", "SOL-USD", "ARB-USD", "OP-USD", "AVAX-USD"];
+const FALLBACK_ASSETS = ["BTC-USD", "ETH-USD", "SOL-USD", "ARB-USD", "OP-USD", "AVAX-USD"];
 
 interface StrategyConfig {
   ticker?: string;
@@ -13,6 +14,13 @@ interface StrategyConfig {
   active_hours?: number[];
   risk_per_trade?: number;
   direction?: string;
+}
+
+interface SavedStrategy {
+  id: string;
+  name: string;
+  config: StrategyConfig;
+  code: string;
 }
 
 const CONFIG_LABELS: Record<string, string> = {
@@ -26,15 +34,65 @@ const CONFIG_LABELS: Record<string, string> = {
 };
 
 export function VibeScreen() {
-  const { goto, setToast } = useStore();
+  const { goto, setToast, pendingVibeParams, setPendingVibeParams } = useStore();
+  const { data: assetsData } = useAssets();
+
+  const assetOptions = useMemo(() => {
+    if (!assetsData || assetsData.length === 0) return FALLBACK_ASSETS;
+    const tickers = [...new Set(assetsData.map((a) => a.ticker))].sort();
+    return tickers.map((t) => (t.includes("-") ? t : `${t}-USD`));
+  }, [assetsData]);
+
   const [asset, setAsset] = useState("BTC-USD");
+  const [timeframe, setTimeframe] = useState("1h");
   const [prompt, setPrompt] = useState("");
+
+  const availableTimeframes = useMemo(() => {
+    if (!assetsData || assetsData.length === 0) return [];
+    const base = asset.replace(/-USD$/, "");
+    return assetsData.filter((a) => a.ticker === base).map((a) => a.interval);
+  }, [assetsData, asset]);
+
+  useEffect(() => {
+    if (availableTimeframes.length > 0 && !availableTimeframes.includes(timeframe)) {
+      setTimeframe(availableTimeframes[0]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableTimeframes]);
+
+  useEffect(() => {
+    if (pendingVibeParams) {
+      setAsset(pendingVibeParams.asset);
+      setTimeframe(pendingVibeParams.timeframe);
+      setPendingVibeParams(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingVibeParams]);
+
   const [generating, setGenerating] = useState(false);
   const [text, setText] = useState("");
   const [config, setConfig] = useState<StrategyConfig | null>(null);
+  const [code, setCode] = useState<string | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll stream box
+  // Saved strategies for "load previous"
+  const [strategies, setStrategies] = useState<SavedStrategy[]>([]);
+  const [selectedStratId, setSelectedStratId] = useState("");
+
+  // Save flow
+  const [showSaveInput, setShowSaveInput] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const fetchStrategies = () => {
+    fetch("/api/strategies")
+      .then((r) => r.json())
+      .then((data: SavedStrategy[]) => setStrategies(data.filter((s) => s.code)))
+      .catch(() => {});
+  };
+
+  useEffect(() => { fetchStrategies(); }, []);
+
   useEffect(() => {
     if (streamRef.current) {
       streamRef.current.scrollTop = streamRef.current.scrollHeight;
@@ -42,16 +100,24 @@ export function VibeScreen() {
   }, [text]);
 
   const handleGenerate = async () => {
-    if (!prompt.trim()) return;
     setGenerating(true);
     setText("");
     setConfig(null);
+    setCode(null);
+    setShowSaveInput(false);
+
+    let assetStats: Record<string, unknown> | null = null;
+    try {
+      const tickerBase = asset.replace(/-USD$/, "");
+      const r = await fetch(`/api/assets/${tickerBase}/stats?interval=${timeframe}`);
+      if (r.ok) assetStats = await r.json();
+    } catch { /* stats are optional */ }
 
     try {
       const res = await fetch("/api/vibe/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: prompt.trim(), asset, n_candidates: 1 }),
+        body: JSON.stringify({ prompt: prompt.trim(), asset, timeframe, n_candidates: 1, asset_stats: assetStats }),
       });
 
       if (!res.body) throw new Error("No stream body");
@@ -74,6 +140,7 @@ export function VibeScreen() {
             if (ev.type === "delta") setText((t) => t + ev.text);
             if (ev.type === "done") {
               setConfig(ev.config ?? null);
+              setCode(ev.code ?? null);
               setGenerating(false);
             }
           } catch {
@@ -90,6 +157,48 @@ export function VibeScreen() {
   const handleApply = () => {
     setToast("Vibe config applied → adjust in Setup");
     goto("setup");
+  };
+
+  const handleSave = async () => {
+    if (!config || !saveName.trim()) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/strategies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: saveName.trim(),
+          strategy_type: "vibe",
+          config,
+          code: code ?? "",
+          status: "research",
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setToast(`Strategy saved (${data.id})`);
+        setShowSaveInput(false);
+        setSaveName("");
+        fetchStrategies();
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleLoad = () => {
+    const s = strategies.find((s) => s.id === selectedStratId);
+    if (!s) return;
+    setConfig(s.config);
+    setCode(s.code);
+    setText("");
+    setShowSaveInput(false);
+    setToast(`Loaded: ${s.name}`);
+  };
+
+  const handleCopyCode = () => {
+    if (!code) return;
+    navigator.clipboard.writeText(code).then(() => setToast("Code copied to clipboard"));
   };
 
   const formatConfigVal = (key: string, val: unknown): string => {
@@ -109,26 +218,46 @@ export function VibeScreen() {
         <div className={styles.panelBody}>
           <div>
             <div className={styles.label}>ASSET</div>
-            <div className={styles.assetPills}>
-              {ASSETS.map((a) => (
-                <button
-                  key={a}
-                  className={`${styles.pill} ${asset === a ? styles.pillActive : ""}`}
-                  onClick={() => setAsset(a)}
-                >
-                  {a.replace("-USD", "")}
-                </button>
+            <select
+              className={styles.assetSelect}
+              value={asset}
+              onChange={(e) => setAsset(e.target.value)}
+            >
+              {assetOptions.map((a) => (
+                <option key={a} value={a}>{a.replace("-USD", "")}</option>
               ))}
-            </div>
+            </select>
+            {assetsData && assetsData.length === 0 && (
+              <span className={styles.assetHint}>no data — fetch from Assets first</span>
+            )}
+          </div>
+
+          <div>
+            <div className={styles.label}>TIMEFRAME</div>
+            <select
+              className={styles.assetSelect}
+              value={timeframe}
+              onChange={(e) => setTimeframe(e.target.value)}
+            >
+              {(availableTimeframes.length > 0
+                ? availableTimeframes
+                : ["5m", "15m", "1h", "4h", "1d"]
+              ).map((tf) => (
+                <option key={tf} value={tf}>{tf}</option>
+              ))}
+            </select>
+            {availableTimeframes.length === 0 && assetsData && assetsData.length > 0 && (
+              <span className={styles.assetHint}>no data for this asset</span>
+            )}
           </div>
 
           <div className={styles.promptWrap}>
             <div className={styles.label}>STRATEGY IDEA</div>
             <textarea
               className={styles.promptTextarea}
-              rows={8}
+              rows={6}
               placeholder={
-                "Describe your strategy idea…\ne.g. \"scalp BTC on 15m, long only, tighter stops at night, risk 0.5% per trade\""
+                "Describe your strategy idea… (optional)\ne.g. \"scalp BTC on 15m, long only, tighter stops at night, risk 0.5% per trade\"\nLeave blank to let Claude suggest a strategy based on the asset's statistics."
               }
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
@@ -141,7 +270,7 @@ export function VibeScreen() {
           <button
             className={styles.generateBtn}
             onClick={handleGenerate}
-            disabled={generating || !prompt.trim()}
+            disabled={generating}
           >
             {generating ? "▶ GENERATING…" : "▶ GENERATE"}
           </button>
@@ -149,6 +278,33 @@ export function VibeScreen() {
           <div className={styles.hint}>
             Powered by Claude · ⌘↵ to generate · results are illustrative
           </div>
+
+          {/* Load previous strategy */}
+          {strategies.length > 0 && (
+            <div className={styles.loadSection}>
+              <div className={styles.label}>LOAD PREVIOUS</div>
+              <div className={styles.loadRow}>
+                <select
+                  className={styles.assetSelect}
+                  style={{ flex: 1, minWidth: 0 }}
+                  value={selectedStratId}
+                  onChange={(e) => setSelectedStratId(e.target.value)}
+                >
+                  <option value="">— select —</option>
+                  {strategies.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+                <button
+                  className={styles.loadBtn}
+                  onClick={handleLoad}
+                  disabled={!selectedStratId}
+                >
+                  LOAD
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -177,7 +333,7 @@ export function VibeScreen() {
             )}
           </div>
 
-          {/* Config table */}
+          {/* Config table + code + actions */}
           {config && (
             <>
               <div className={styles.configTable}>
@@ -195,9 +351,57 @@ export function VibeScreen() {
                 })}
               </div>
 
-              <button className={styles.applyBtn} onClick={handleApply}>
-                APPLY TO SETUP →
-              </button>
+              {/* Python code box */}
+              {code && (
+                <div className={styles.codeSection}>
+                  <div className={styles.codeSectionHeader}>
+                    <span className={styles.codeSectionTitle}>STRATEGY CODE</span>
+                    <button className={styles.copyBtn} onClick={handleCopyCode}>
+                      COPY
+                    </button>
+                  </div>
+                  <pre className={styles.codeBox}>{code}</pre>
+                </div>
+              )}
+
+              {/* Action row */}
+              <div className={styles.actionRow}>
+                {showSaveInput ? (
+                  <div className={styles.saveInputRow}>
+                    <input
+                      className={styles.saveInput}
+                      placeholder="strategy name…"
+                      value={saveName}
+                      onChange={(e) => setSaveName(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleSave()}
+                      autoFocus
+                    />
+                    <button
+                      className={styles.saveConfirmBtn}
+                      onClick={handleSave}
+                      disabled={saving || !saveName.trim()}
+                    >
+                      {saving ? "…" : "SAVE"}
+                    </button>
+                    <button
+                      className={styles.cancelBtn}
+                      onClick={() => { setShowSaveInput(false); setSaveName(""); }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className={styles.saveOutlineBtn}
+                    onClick={() => setShowSaveInput(true)}
+                  >
+                    + SAVE
+                  </button>
+                )}
+                <button className={styles.applyBtn} onClick={handleApply}>
+                  APPLY TO SETUP →
+                </button>
+              </div>
             </>
           )}
         </div>

@@ -1,7 +1,26 @@
 "use client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { Trade } from "@/lib/fixtures";
+
+export interface RunListItem {
+  id: string;
+  name: string;
+  ticker: string;
+  timeframe: string;
+  status: string;
+  strategy_id?: string | null;
+  params: Record<string, unknown>;
+  created_at: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  sharpe?: number | null;
+  cagr?: number | null;
+  max_dd?: number | null;
+  pf?: number | null;
+  n_trades?: number | null;
+  win_rate?: number | null;
+}
 
 // API trade shape from the engine serializer
 interface ApiTrade {
@@ -37,7 +56,7 @@ function normalizeApiTrade(t: ApiTrade, n: number): Trade {
   };
 }
 
-// List all runs
+// List all runs (basic)
 export function useRuns() {
   return useQuery({
     queryKey: ["runs"],
@@ -46,8 +65,48 @@ export function useRuns() {
   });
 }
 
+// List runs with full metrics + date range, optionally filtered by strategy
+export function useRunList(strategyId?: string | null) {
+  const path = strategyId
+    ? `/runs?strategy_id=${encodeURIComponent(strategyId)}`
+    : "/runs";
+  return useQuery({
+    queryKey: ["run-list", strategyId ?? null],
+    queryFn: () => api.get<RunListItem[]>(path),
+    enabled: strategyId !== undefined,
+    staleTime: 15_000,
+    retry: false,
+  });
+}
+
+// Delete a single run by id
+export function useDeleteRun() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: string) =>
+      api.delete<{ deleted: string }>(`/runs/${runId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["run-list"] });
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
+    },
+  });
+}
+
+// Delete all runs with no strategy_id
+export function useDeleteUnlinkedRuns() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.delete<{ deleted: number; ids: string[] }>("/runs"),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["run-list"] });
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
+    },
+  });
+}
+
 // Fixture run IDs (run-NNN) don't exist in the database — skip API calls for them
-function isRealRunId(id: string | null): boolean {
+export function isRealRunId(id: string | null): boolean {
   return !!id && !/^run-\d+$/.test(id);
 }
 

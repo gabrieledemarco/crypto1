@@ -37,12 +37,32 @@ def list_assets():
     return result
 
 
+@router.get("/{ticker}/series")
+def list_ticker_series(ticker: str):
+    """All stored series (interval + date range) for a single ticker."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT source, MIN(ts) as start, MAX(ts) as end, COUNT(*) as bars "
+        "FROM assets WHERE ticker=? GROUP BY source ORDER BY source",
+        [ticker]
+    ).fetchall()
+    result = []
+    for r in rows:
+        source = r[0]
+        interval = source.split(":")[-1] if ":" in source else "1d"
+        result.append({
+            "ticker": ticker, "source": source, "interval": interval,
+            "start": str(r[1]), "end": str(r[2]), "bars": r[3]
+        })
+    return result
+
+
 @router.post("/fetch")
 def fetch_asset(body: AssetFetch):
     from engine.providers.yfinance_client import fetch as yf_fetch
 
     try:
-        df = yf_fetch(body.ticker, period=body.period)
+        df = yf_fetch(body.ticker, period=body.period, interval=body.interval)
     except Exception as exc:
         raise HTTPException(400, f"Fetch failed: {exc}")
 
