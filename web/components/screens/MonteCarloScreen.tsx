@@ -11,6 +11,21 @@ interface StressScenario {
   final_cap_usd: number;
   total_return_pct: number;
   max_drawdown_pct: number;
+  n_trades?: number;
+}
+
+interface MCTradeStats {
+  n_trades: number;
+  n_long: number;
+  n_short: number;
+  win_rate_base: number;
+  win_rate_long: number;
+  win_rate_short: number;
+  win_rate_p5: number;
+  win_rate_p50: number;
+  win_rate_p95: number;
+  n_sims: number;
+  path_len: number;
 }
 
 // Human-readable labels matched against scenario strings from the engine
@@ -35,6 +50,8 @@ export function MonteCarloScreen() {
   let mcData = fixtMC;
   let stressData: StressScenario[] | null = null;
 
+  let tradeStats: MCTradeStats | null = null;
+
   if (mcQuery.data && typeof mcQuery.data === "object") {
     const d = mcQuery.data as {
       percentiles?: { p5: number[]; p25: number[]; p50: number[]; p75: number[]; p95: number[] };
@@ -43,6 +60,17 @@ export function MonteCarloScreen() {
       p_profit?: number;
       p_ruin?: number;
       stress?: StressScenario[];
+      n_trades?: number;
+      n_long?: number;
+      n_short?: number;
+      win_rate_base?: number;
+      win_rate_long?: number;
+      win_rate_short?: number;
+      win_rate_p5?: number;
+      win_rate_p50?: number;
+      win_rate_p95?: number;
+      n_sims?: number;
+      path_len?: number;
     };
     if (d.percentiles) {
       mcData = {
@@ -54,6 +82,21 @@ export function MonteCarloScreen() {
     }
     if (Array.isArray(d.stress) && d.stress.length > 0) {
       stressData = d.stress as StressScenario[];
+    }
+    if (d.n_trades != null) {
+      tradeStats = {
+        n_trades:       d.n_trades,
+        n_long:         d.n_long ?? 0,
+        n_short:        d.n_short ?? 0,
+        win_rate_base:  d.win_rate_base ?? 0,
+        win_rate_long:  d.win_rate_long ?? 0,
+        win_rate_short: d.win_rate_short ?? 0,
+        win_rate_p5:    d.win_rate_p5 ?? 0,
+        win_rate_p50:   d.win_rate_p50 ?? 0,
+        win_rate_p95:   d.win_rate_p95 ?? 0,
+        n_sims:         d.n_sims ?? 0,
+        path_len:       d.path_len ?? 0,
+      };
     }
   }
 
@@ -178,6 +221,123 @@ export function MonteCarloScreen() {
         </div>
       </div>
 
+      {/* Trade metrics — full width */}
+      {tradeStats && (
+        <div className={styles.panel} style={{ gridColumn: "span 12" }}>
+          <div className={styles.panelHeader}>
+            <span className={styles.panelTitle}>TRADE METRICS · MC BOOTSTRAP</span>
+            <span className={styles.panelSub}>
+              {tradeStats.n_sims.toLocaleString()} sim · {tradeStats.path_len} trades/path
+            </span>
+          </div>
+          <div className={styles.panelBody}>
+            <div className={styles.tradeMetricsGrid}>
+              {/* Base trades */}
+              <div className={styles.tradeBlock}>
+                <div className={styles.sectionLabel}>BASE TRADES</div>
+                <div className={styles.tradeRow}>
+                  <span className={styles.tradeLabel}>Total</span>
+                  <span className={styles.tradeVal}>{tradeStats.n_trades}</span>
+                </div>
+                <div className={styles.tradeRow}>
+                  <span className={styles.tradeLabel}>Long</span>
+                  <span className={styles.tradeVal} style={{ color: "var(--green)" }}>
+                    {tradeStats.n_long}
+                    <span className={styles.tradePct}>
+                      {tradeStats.n_trades > 0
+                        ? ` (${((tradeStats.n_long / tradeStats.n_trades) * 100).toFixed(0)}%)`
+                        : ""}
+                    </span>
+                  </span>
+                </div>
+                <div className={styles.tradeRow}>
+                  <span className={styles.tradeLabel}>Short</span>
+                  <span className={styles.tradeVal} style={{ color: "var(--cyan)" }}>
+                    {tradeStats.n_short}
+                    <span className={styles.tradePct}>
+                      {tradeStats.n_trades > 0
+                        ? ` (${((tradeStats.n_short / tradeStats.n_trades) * 100).toFixed(0)}%)`
+                        : ""}
+                    </span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Win rates base */}
+              <div className={styles.tradeBlock}>
+                <div className={styles.sectionLabel}>WIN RATE · BASE</div>
+                <div className={styles.tradeRow}>
+                  <span className={styles.tradeLabel}>Overall</span>
+                  <span className={styles.tradeVal} style={{ color: "var(--amber)" }}>
+                    {tradeStats.win_rate_base.toFixed(1)}%
+                  </span>
+                </div>
+                <div className={styles.tradeRow}>
+                  <span className={styles.tradeLabel}>Long</span>
+                  <span className={styles.tradeVal} style={{ color: "var(--green)" }}>
+                    {tradeStats.win_rate_long.toFixed(1)}%
+                  </span>
+                </div>
+                <div className={styles.tradeRow}>
+                  <span className={styles.tradeLabel}>Short</span>
+                  <span className={styles.tradeVal} style={{ color: "var(--cyan)" }}>
+                    {tradeStats.win_rate_short.toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+
+              {/* Win rate MC distribution */}
+              <div className={styles.tradeBlock}>
+                <div className={styles.sectionLabel}>WIN RATE · MC DISTRIBUTION</div>
+                <div className={styles.tradeRow}>
+                  <span className={styles.tradeLabel}>p5 (pessimistic)</span>
+                  <span className={styles.tradeVal} style={{ color: "var(--coral)" }}>
+                    {tradeStats.win_rate_p5.toFixed(1)}%
+                  </span>
+                </div>
+                <div className={styles.tradeRow}>
+                  <span className={styles.tradeLabel}>p50 (median)</span>
+                  <span className={styles.tradeVal} style={{ color: "var(--amber)" }}>
+                    {tradeStats.win_rate_p50.toFixed(1)}%
+                  </span>
+                </div>
+                <div className={styles.tradeRow}>
+                  <span className={styles.tradeLabel}>p95 (optimistic)</span>
+                  <span className={styles.tradeVal} style={{ color: "var(--green)" }}>
+                    {tradeStats.win_rate_p95.toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+
+              {/* Win rate bar chart */}
+              <div className={styles.tradeBlock}>
+                <div className={styles.sectionLabel}>WIN RATE CI RANGE</div>
+                <div className={styles.winRangeBar}>
+                  <div className={styles.winRangeTrack}>
+                    <div
+                      className={styles.winRangeFill}
+                      style={{
+                        left: `${tradeStats.win_rate_p5}%`,
+                        width: `${Math.max(0, tradeStats.win_rate_p95 - tradeStats.win_rate_p5)}%`,
+                      }}
+                    />
+                    <div
+                      className={styles.winRangeMedian}
+                      style={{ left: `${tradeStats.win_rate_p50}%` }}
+                    />
+                  </div>
+                  <div className={styles.winRangeLabels}>
+                    <span>0%</span>
+                    <span>50%</span>
+                    <span>100%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Stress scenarios — full width */}
       <div className={styles.panel} style={{ gridColumn: "span 12" }}>
         <div className={styles.panelHeader}>
@@ -216,6 +376,14 @@ export function MonteCarloScreen() {
                           ${s.final_cap_usd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                         </span>
                       </div>
+                      {s.n_trades != null && (
+                        <div className={styles.stressRow}>
+                          <span className={styles.stressLabel}>Trades</span>
+                          <span className={styles.stressVal} style={{ color: "var(--dim)" }}>
+                            {s.n_trades}
+                          </span>
+                        </div>
+                      )}
                     </div>
                     <div className={styles.stressDelta} style={{ color: deltaColor }}>
                       {deltaSign}{delta.toFixed(1)}% vs median

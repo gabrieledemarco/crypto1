@@ -362,8 +362,27 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
     if params.get("run_mc", True) and trades_list:
         push("mc", 90, "monte carlo")
         pnl_arr = np.array([t.get("pnl", 0) for t in trades_list])
-        bs = run_bootstrap(pnl_arr, n_sims=2000, initial_capital=INITIAL_CAPITAL)
+        dir_arr = np.array([
+            1 if str(t.get("direction", "")).upper() == "LONG" else -1
+            for t in trades_list
+        ])
+        n_sims  = max(100, int(params.get("mc_sims", 1000)))
+        mc_bars_raw = params.get("mc_bars")
+        n_bars  = int(mc_bars_raw) if (mc_bars_raw and int(mc_bars_raw) > 0) else None
+
+        bs     = run_bootstrap(pnl_arr, n_sims=n_sims, n_bars=n_bars, initial_capital=INITIAL_CAPITAL)
         stress = run_stress(pnl_arr, initial_capital=INITIAL_CAPITAL)
+
+        # Trade stats from original trades
+        n_long  = int((dir_arr == 1).sum())
+        n_short = int((dir_arr == -1).sum())
+        n_total = len(pnl_arr)
+        win_rate_base  = round(float((pnl_arr > 0).mean() * 100), 1) if n_total > 0 else 0.0
+        win_rate_long  = round(float((pnl_arr[dir_arr == 1] > 0).mean() * 100), 1) if n_long > 0 else 0.0
+        win_rate_short = round(float((pnl_arr[dir_arr == -1] > 0).mean() * 100), 1) if n_short > 0 else 0.0
+
+        wr_arr = bs["win_rates"]
+
         # Percentiles per timestep
         eq_mat = bs["equity_matrix"]
         steps = eq_mat.shape[1]
@@ -381,6 +400,18 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
             "stress":    stress,
             "p_profit":  round(float((bs["final_capital"] > INITIAL_CAPITAL).mean()), 4),
             "p_ruin":    round(float((bs["final_capital"] < INITIAL_CAPITAL * 0.5).mean()), 4),
+            # Trade metrics
+            "n_trades":       n_total,
+            "n_long":         n_long,
+            "n_short":        n_short,
+            "win_rate_base":  win_rate_base,
+            "win_rate_long":  win_rate_long,
+            "win_rate_short": win_rate_short,
+            "win_rate_p5":    round(float(np.percentile(wr_arr, 5)), 1),
+            "win_rate_p50":   round(float(np.percentile(wr_arr, 50)), 1),
+            "win_rate_p95":   round(float(np.percentile(wr_arr, 95)), 1),
+            "n_sims":         n_sims,
+            "path_len":       n_bars or n_total,
         }
 
     return result

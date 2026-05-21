@@ -221,3 +221,93 @@
   letter-spacing: 0.04em;
   opacity: 0.6;
 }
+
+/* ── Trade metrics panel ─────────────────────────────────────────────────── */
+
+.tradeMetricsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .tradeMetricsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.tradeBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.tradeRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.tradeLabel {
+  font-size: 9px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tradeVal {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.tradePct {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--dim);
+}
+
+/* Win rate CI range bar */
+.winRangeBar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.winRangeTrack {
+  position: relative;
+  height: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.winRangeFill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: var(--amber);
+  opacity: 0.35;
+}
+
+.winRangeMedian {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: calc(100% + 4px);
+  background: var(--amber);
+  transform: translateX(-50%);
+}
+
+.winRangeLabels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+}

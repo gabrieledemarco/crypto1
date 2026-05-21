@@ -24,6 +24,8 @@ interface Params {
   run_mc: boolean;
   wfo_is_window: number;
   wfo_oos_window: number;
+  mc_sims: number;
+  mc_bars: number;  // 0 = auto (use actual trade count)
 }
 
 export function SetupScreen() {
@@ -47,6 +49,8 @@ export function SetupScreen() {
     run_mc:         true,
     wfo_is_window:  500,
     wfo_oos_window: 100,
+    mc_sims:        1000,
+    mc_bars:        0,
   });
 
   const [runId, setRunId] = useState<string | null>(null);
@@ -329,6 +333,31 @@ export function SetupScreen() {
                     : totalBars != null
                     ? `${totalBars?.toLocaleString()} bars · adjust windows`
                     : "fetch data to estimate folds"}
+                </div>
+              </div>
+            )}
+
+            {/* MC simulation configuration */}
+            {params.run_mc && (
+              <div className={styles.wfoConfig}>
+                <SliderRow
+                  label="MC PATHS"
+                  min={100} max={5000} step={100}
+                  value={params.mc_sims}
+                  onChange={(v) => update("mc_sims", v)}
+                  valueLabel={`${params.mc_sims.toLocaleString()} paths`}
+                />
+                <SliderRow
+                  label="TRADE/PATH"
+                  min={0} max={2000} step={50}
+                  value={params.mc_bars}
+                  onChange={(v) => update("mc_bars", v)}
+                  valueLabel={params.mc_bars === 0 ? "AUTO" : `${params.mc_bars}`}
+                />
+                <div className={styles.wfoFolds}>
+                  {params.mc_bars === 0
+                    ? "bars/path = actual trade count"
+                    : `${params.mc_bars} trades resampled per path`}
                 </div>
               </div>
             )}
