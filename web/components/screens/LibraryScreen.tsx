@@ -5,13 +5,51 @@ import { fixtures } from "@/lib/fixtures";
 import { useLibrary, useStarStrategy } from "@/hooks/useLibrary";
 import { useRunList, useDeleteRun } from "@/hooks/useRun";
 import styles from "./LibraryScreen.module.css";
-import type { LibraryEntry } from "@/lib/fixtures";
+import type { LibraryEntry, Run, RunMetrics } from "@/lib/fixtures";
 import type { RunListItem } from "@/hooks/useRun";
+import type { SetupParams } from "@/store";
 
 type StatusFilter = "ALL" | "live" | "research" | "archived";
 
+function buildRunStub(run: RunListItem): Run {
+  const emptyM: RunMetrics = { sharpe: 0, sortino: 0, cagr: 0, maxDD: 0, calmar: 0, finalReturn: 0 };
+  const p = run.params as Record<string, unknown>;
+  return {
+    id: run.id,
+    name: run.name,
+    strategy: run.ticker,
+    color: "var(--amber)",
+    equity: [],
+    oosStart: 0,
+    trades: [],
+    params: {
+      fastMA: 0, slowMA: 0,
+      atrStop: (p.sl_mult as number) ?? 2,
+      takeProfit: (p.tp_mult as number) ?? 5,
+      riskPerTrade: (p.risk_per_trade as number) ?? 0.01,
+      fees: (p.commission as number) ?? 0.0004,
+      slippage: (p.slippage as number) ?? 0.0001,
+      funding: false,
+      universe: [run.ticker],
+      timeframe: run.timeframe ?? "1h",
+    },
+    dates: { isStart: run.start_date ?? "", isEnd: run.end_date ?? "", oosStart: "", oosEnd: "" },
+    metricsIS: { ...emptyM, sharpe: run.sharpe ?? 0, cagr: run.cagr ?? 0, maxDD: run.max_dd ?? 0 },
+    metricsOOS: emptyM,
+    ddPeriods: [],
+    sweep: [],
+    mc: { paths: [], percentiles: { p5: [], p25: [], p50: [], p75: [], p95: [] }, finals: [], ddFinals: [] },
+    winRate: run.win_rate ?? 0,
+    profitFactor: run.pf ?? 0,
+    tradesCount: run.n_trades ?? 0,
+    avgDur: 0,
+    exposure: 0,
+    monthly: [],
+  };
+}
+
 export function LibraryScreen() {
-  const { goto, setToast, setActiveStrategy } = useStore();
+  const { goto, setToast, setActiveStrategy, loadRunFromHistory, setPendingSetupParams } = useStore();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [selectedEntry, setSelectedEntry] = useState<LibraryEntry | null>(null);
@@ -66,6 +104,35 @@ export function LibraryScreen() {
       onSuccess: () => setToast(`Run ${runId} deleted`),
       onError: () => setToast("Delete failed"),
     });
+  };
+
+  const handleLoadRun = (e: React.MouseEvent, run: RunListItem) => {
+    e.stopPropagation();
+    loadRunFromHistory(buildRunStub(run));
+    setToast(`Run "${run.name}" caricato → Equity`);
+    goto("equity");
+  };
+
+  const handleReRun = (e: React.MouseEvent, run: RunListItem) => {
+    e.stopPropagation();
+    const p = run.params as Record<string, unknown>;
+    const setupP: SetupParams = {
+      ticker: run.ticker || (p.ticker as string) || "BTC-USD",
+      timeframe: run.timeframe || (p.timeframe as string) || "1h",
+      sl_mult: (p.sl_mult as number) ?? 2,
+      tp_mult: (p.tp_mult as number) ?? 5,
+      active_hours: (p.active_hours as [number, number]) ?? [6, 22],
+      risk_per_trade: (p.risk_per_trade as number) ?? 0.01,
+      commission: (p.commission as number) ?? 0.0004,
+      slippage: (p.slippage as number) ?? 0.0001,
+      direction: (p.direction as string) ?? "ALL",
+      run_wfo: (p.run_wfo as boolean) ?? true,
+      run_sweep: (p.run_sweep as boolean) ?? true,
+      run_mc: (p.run_mc as boolean) ?? true,
+    };
+    setPendingSetupParams(setupP);
+    setToast(`Parametri di "${run.name}" caricati → Setup`);
+    goto("setup");
   };
 
   return (
@@ -207,11 +274,15 @@ export function LibraryScreen() {
                   <span className={styles.th}>WIN%</span>
                   <span className={styles.th}>PARAMS</span>
                   <span className={styles.th}></span>
+                  <span className={styles.th}></span>
+                  <span className={styles.th}></span>
                 </div>
                 {displayRuns.map((run) => (
                   <RunRow
                     key={run.id}
                     run={run}
+                    onLoad={(e) => handleLoadRun(e, run)}
+                    onReRun={(e) => handleReRun(e, run)}
                     onDelete={(e) => handleDeleteRun(e, run.id)}
                     deleting={deleteMutation.isPending && deleteMutation.variables === run.id}
                   />
@@ -227,10 +298,14 @@ export function LibraryScreen() {
 
 function RunRow({
   run,
+  onLoad,
+  onReRun,
   onDelete,
   deleting,
 }: {
   run: RunListItem;
+  onLoad: (e: React.MouseEvent) => void;
+  onReRun: (e: React.MouseEvent) => void;
   onDelete: (e: React.MouseEvent) => void;
   deleting: boolean;
 }) {
@@ -275,6 +350,21 @@ function RunRow({
         {run.win_rate != null ? `${run.win_rate.toFixed(0)}%` : "—"}
       </span>
       <span className={styles.runParams} title={paramStr}>{paramStr || "—"}</span>
+      <button
+        className={styles.actionBtn}
+        onClick={onLoad}
+        title="Carica run nelle schermate Analysis (Equity, Trades, Sweep, Underwater, MC, WFO)"
+      >
+        ▶
+      </button>
+      <button
+        className={styles.actionBtn}
+        onClick={onReRun}
+        title="Carica parametri in Setup per rieseguire il backtest"
+        style={{ color: "var(--cyan)" }}
+      >
+        ↺
+      </button>
       <button
         className={styles.delBtn}
         onClick={onDelete}

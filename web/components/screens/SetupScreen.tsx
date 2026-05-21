@@ -24,7 +24,7 @@ interface Params {
 }
 
 export function SetupScreen() {
-  const { activeRunId, runs, activeStrategyId, setToast } = useStore();
+  const { activeRunId, runs, activeStrategyId, pendingSetupParams, setPendingSetupParams, setToast } = useStore();
   const run = runs.find((r) => r.id === activeRunId) ?? fixtures.runs[0];
   const p = run?.params;
 
@@ -48,8 +48,13 @@ export function SetupScreen() {
   const [running, setRunning] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
 
-  // Load saved params from localStorage on mount
+  // Load pending params from Library "Re-run" (takes priority over localStorage)
   useEffect(() => {
+    if (pendingSetupParams) {
+      setParams(pendingSetupParams as unknown as Params);
+      setPendingSetupParams(null);
+      return;
+    }
     try {
       const saved = localStorage.getItem("pareto_saved_params");
       if (saved) {

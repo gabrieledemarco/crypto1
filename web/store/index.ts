@@ -16,10 +16,26 @@ export type ScreenId =
   | "wfo"
   | "analysis";
 
+export interface SetupParams {
+  ticker: string;
+  timeframe: string;
+  sl_mult: number;
+  tp_mult: number;
+  active_hours: [number, number];
+  risk_per_trade: number;
+  commission: number;
+  slippage: number;
+  direction: string;
+  run_wfo: boolean;
+  run_sweep: boolean;
+  run_mc: boolean;
+}
+
 interface Store {
   runs: Run[];
   activeRunId: string;
   activeStrategyId: string | null;
+  pendingSetupParams: SetupParams | null;
   screen: ScreenId;
   paletteOpen: boolean;
   helpOpen: boolean;
@@ -29,6 +45,8 @@ interface Store {
   setRuns: (runs: Run[]) => void;
   setRun: (id: string) => void;
   setActiveStrategy: (id: string | null) => void;
+  setPendingSetupParams: (p: SetupParams | null) => void;
+  loadRunFromHistory: (run: Run) => void;
   goto: (screen: ScreenId) => void;
   setPaletteOpen: (open: boolean) => void;
   setHelpOpen: (open: boolean) => void;
@@ -41,6 +59,7 @@ export const useStore = create<Store>((set) => ({
   runs: [],
   activeRunId: "",
   activeStrategyId: null,
+  pendingSetupParams: null,
   screen: "dashboard",
   paletteOpen: false,
   helpOpen: false,
@@ -50,6 +69,14 @@ export const useStore = create<Store>((set) => ({
   setRuns: (runs) => set({ runs }),
   setRun: (id) => set({ activeRunId: id }),
   setActiveStrategy: (id) => set({ activeStrategyId: id }),
+  setPendingSetupParams: (p) => set({ pendingSetupParams: p }),
+  loadRunFromHistory: (run) =>
+    set((s) => ({
+      activeRunId: run.id,
+      runs: s.runs.some((r) => r.id === run.id)
+        ? s.runs.map((r) => (r.id === run.id ? run : r))
+        : [...s.runs, run],
+    })),
   goto: (screen) => set({ screen }),
   setPaletteOpen: (open) => set({ paletteOpen: open }),
   setHelpOpen: (open) => set({ helpOpen: open }),
