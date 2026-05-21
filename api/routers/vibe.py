@@ -64,15 +64,16 @@ async def _mock_stream(body: VibeGenerateRequest):
     """Fallback stream when ANTHROPIC_API_KEY is not set."""
     asset = body.asset or "BTC-USD"
     ticker = asset if "-USD" in asset else f"{asset}-USD"
+    timeframe = body.timeframe or "1h"
     mock_text = (
-        f"Analyzing your strategy idea for {asset}…\n\n"
+        f"Analyzing your strategy idea for {asset} on {timeframe}…\n\n"
         "Based on your description I recommend a momentum approach with "
         "dynamic ATR-based stops. The configuration below uses a conservative "
         "risk-per-trade and filters activity to liquid trading hours.\n\n"
         "```json\n"
         "{\n"
         f'  "ticker": "{ticker}",\n'
-        '  "timeframe": "1h",\n'
+        f'  "timeframe": "{timeframe}",\n'
         '  "sl_mult": 2.0,\n'
         '  "tp_mult": 4.0,\n'
         '  "active_hours": [6, 22],\n'
@@ -109,7 +110,7 @@ async def _claude_stream(body: VibeGenerateRequest):
                 messages=[
                     {
                         "role": "user",
-                        "content": f"{body.prompt}\n\nAsset: {body.asset}",
+                        "content": f"{body.prompt}\n\nAsset: {body.asset}\nTimeframe: {body.timeframe or '1h'}",
                     }
                 ],
             ) as stream:

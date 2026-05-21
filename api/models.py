@@ -43,4 +43,5 @@ class StrategyCreate(BaseModel):
 class VibeGenerateRequest(BaseModel):
     prompt: str
     asset: str = "BTC-USD"
+    timeframe: str = "1h"
     n_candidates: int = 1

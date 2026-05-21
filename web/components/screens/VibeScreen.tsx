@@ -38,7 +38,23 @@ export function VibeScreen() {
   }, [assetsData]);
 
   const [asset, setAsset] = useState("BTC-USD");
+  const [timeframe, setTimeframe] = useState("1h");
   const [prompt, setPrompt] = useState("");
+
+  // Available timeframes for the selected asset
+  const availableTimeframes = useMemo(() => {
+    if (!assetsData || assetsData.length === 0) return [];
+    const base = asset.replace(/-USD$/, "");
+    return assetsData.filter((a) => a.ticker === base).map((a) => a.interval);
+  }, [assetsData, asset]);
+
+  // Auto-correct timeframe when asset changes and current TF has no data
+  useEffect(() => {
+    if (availableTimeframes.length > 0 && !availableTimeframes.includes(timeframe)) {
+      setTimeframe(availableTimeframes[0]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableTimeframes]);
   const [generating, setGenerating] = useState(false);
   const [text, setText] = useState("");
   const [config, setConfig] = useState<StrategyConfig | null>(null);
@@ -61,7 +77,7 @@ export function VibeScreen() {
       const res = await fetch("/api/vibe/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: prompt.trim(), asset, n_candidates: 1 }),
+        body: JSON.stringify({ prompt: prompt.trim(), asset, timeframe, n_candidates: 1 }),
       });
 
       if (!res.body) throw new Error("No stream body");
@@ -130,6 +146,25 @@ export function VibeScreen() {
             </select>
             {assetsData && assetsData.length === 0 && (
               <span className={styles.assetHint}>no data — fetch from Assets first</span>
+            )}
+          </div>
+
+          <div style={{ marginTop: 10 }}>
+            <div className={styles.label}>TIMEFRAME</div>
+            <select
+              className={styles.assetSelect}
+              value={timeframe}
+              onChange={(e) => setTimeframe(e.target.value)}
+            >
+              {(availableTimeframes.length > 0
+                ? availableTimeframes
+                : ["5m", "15m", "1h", "4h", "1d"]
+              ).map((tf) => (
+                <option key={tf} value={tf}>{tf}</option>
+              ))}
+            </select>
+            {availableTimeframes.length === 0 && assetsData && assetsData.length > 0 && (
+              <span className={styles.assetHint}>no data for this asset</span>
             )}
           </div>
 
