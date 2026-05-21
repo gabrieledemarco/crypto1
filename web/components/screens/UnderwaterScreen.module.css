@@ -81,6 +81,12 @@
   margin-top: 12px;
 }
 
+.statsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+}
+
 .metricCell {
   display: flex;
   flex-direction: column;
