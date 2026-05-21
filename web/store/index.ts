@@ -29,6 +29,8 @@ export interface SetupParams {
   run_wfo: boolean;
   run_sweep: boolean;
   run_mc: boolean;
+  wfo_is_window?: number;
+  wfo_oos_window?: number;
 }
 
 interface Store {

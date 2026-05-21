@@ -1,10 +1,11 @@
 "use client";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
 import type { Run, RunMetrics } from "@/lib/fixtures";
 import { useSSE } from "@/hooks/useSSE";
 import { usePreview } from "@/hooks/usePreview";
+import { useAssets } from "@/hooks/useAssets";
 import { EquityChart } from "@/components/charts/EquityChart";
 import styles from "./SetupScreen.module.css";
 
@@ -21,26 +22,31 @@ interface Params {
   run_wfo: boolean;
   run_sweep: boolean;
   run_mc: boolean;
+  wfo_is_window: number;
+  wfo_oos_window: number;
 }
 
 export function SetupScreen() {
   const { activeRunId, runs, activeStrategyId, pendingSetupParams, setPendingSetupParams, setToast } = useStore();
   const run = runs.find((r) => r.id === activeRunId) ?? fixtures.runs[0];
   const p = run?.params;
+  const { data: assetsData } = useAssets();
 
   const [params, setParams] = useState<Params>({
-    ticker:       p?.universe?.[0] ? `${p.universe[0]}-USD` : "BTC-USD",
-    timeframe:    p?.timeframe ?? "1h",
-    sl_mult:      p?.atrStop ?? 2.0,
-    tp_mult:      p?.takeProfit ?? 5.0,
-    active_hours: [6, 22],
+    ticker:         p?.universe?.[0] ? `${p.universe[0]}-USD` : "BTC-USD",
+    timeframe:      p?.timeframe ?? "1h",
+    sl_mult:        p?.atrStop ?? 2.0,
+    tp_mult:        p?.takeProfit ?? 5.0,
+    active_hours:   [6, 22],
     risk_per_trade: p?.riskPerTrade ?? 1.0,
-    commission:   0.0004,
-    slippage:     0.0001,
-    direction:    "ALL",
-    run_wfo:      true,
-    run_sweep:    true,
-    run_mc:       true,
+    commission:     0.0004,
+    slippage:       0.0001,
+    direction:      "ALL",
+    run_wfo:        true,
+    run_sweep:      true,
+    run_mc:         true,
+    wfo_is_window:  500,
+    wfo_oos_window: 100,
   });
 
   const [runId, setRunId] = useState<string | null>(null);
@@ -51,7 +57,7 @@ export function SetupScreen() {
   // Load pending params from Library "Re-run" (takes priority over localStorage)
   useEffect(() => {
     if (pendingSetupParams) {
-      setParams(pendingSetupParams as unknown as Params);
+      setParams((prev) => ({ ...prev, ...(pendingSetupParams as unknown as Partial<Params>) }));
       setPendingSetupParams(null);
       return;
     }
@@ -59,21 +65,7 @@ export function SetupScreen() {
       const saved = localStorage.getItem("pareto_saved_params");
       if (saved) {
         const parsed = JSON.parse(saved) as Partial<Params>;
-        setParams((prev) => ({
-          ...prev,
-          ...(parsed.ticker !== undefined && { ticker: parsed.ticker }),
-          ...(parsed.timeframe !== undefined && { timeframe: parsed.timeframe }),
-          ...(parsed.sl_mult !== undefined && { sl_mult: parsed.sl_mult }),
-          ...(parsed.tp_mult !== undefined && { tp_mult: parsed.tp_mult }),
-          ...(parsed.active_hours !== undefined && { active_hours: parsed.active_hours }),
-          ...(parsed.risk_per_trade !== undefined && { risk_per_trade: parsed.risk_per_trade }),
-          ...(parsed.commission !== undefined && { commission: parsed.commission }),
-          ...(parsed.slippage !== undefined && { slippage: parsed.slippage }),
-          ...(parsed.direction !== undefined && { direction: parsed.direction }),
-          ...(parsed.run_wfo !== undefined && { run_wfo: parsed.run_wfo }),
-          ...(parsed.run_sweep !== undefined && { run_sweep: parsed.run_sweep }),
-          ...(parsed.run_mc !== undefined && { run_mc: parsed.run_mc }),
-        }));
+        setParams((prev) => ({ ...prev, ...parsed }));
       }
     } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -82,6 +74,46 @@ export function SetupScreen() {
   const update = useCallback(<K extends keyof Params>(k: K, v: Params[K]) => {
     setParams((prev) => ({ ...prev, [k]: v }));
   }, []);
+
+  // Ticker without "-USD" suffix — matches DB storage format
+  const selectedTickerBase = params.ticker.replace(/-USD$/, "");
+
+  // Unique tickers with fetched data
+  const availableTickers = useMemo(() => {
+    if (!assetsData || assetsData.length === 0) return [];
+    return [...new Set(assetsData.map((a) => a.ticker))].sort();
+  }, [assetsData]);
+
+  // Timeframes available for the selected ticker
+  const availableTimeframes = useMemo(() => {
+    if (!assetsData || assetsData.length === 0) return [];
+    return assetsData
+      .filter((a) => a.ticker === selectedTickerBase)
+      .map((a) => a.interval);
+  }, [assetsData, selectedTickerBase]);
+
+  // Auto-correct timeframe when ticker changes and current TF has no data
+  useEffect(() => {
+    if (availableTimeframes.length > 0 && !availableTimeframes.includes(params.timeframe)) {
+      update("timeframe", availableTimeframes[0]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableTimeframes]);
+
+  // Total bars for the selected ticker + timeframe (used for fold estimation)
+  const totalBars = useMemo(() => {
+    if (!assetsData) return null;
+    const asset = assetsData.find(
+      (a) => a.ticker === selectedTickerBase && a.interval === params.timeframe
+    );
+    return asset?.bars ?? null;
+  }, [assetsData, selectedTickerBase, params.timeframe]);
+
+  // Estimated WFO folds: how many OOS windows fit after the first IS window
+  const estimatedFolds =
+    totalBars != null && params.wfo_is_window > 0 && params.wfo_oos_window > 0
+      ? Math.max(0, Math.floor((totalBars - params.wfo_is_window) / params.wfo_oos_window))
+      : null;
 
   // Live preview (debounced 80ms)
   const { result: preview, loading: previewLoading } = usePreview(params as unknown as Record<string, unknown>);
@@ -94,9 +126,7 @@ export function SetupScreen() {
       setRunning(false);
       setToast("Run complete");
       if (runId) {
-        // Immediately set activeRunId so React Query hooks fire and DEMO badges clear
         useStore.getState().setRun(runId);
-        // Async: fetch run metadata and add a real Run to the store
         fetch(`/api/runs/${runId}`)
           .then((r) => r.json())
           .then((apiRun: Record<string, unknown>) => {
@@ -149,7 +179,7 @@ export function SetupScreen() {
             const { runs: cur } = useStore.getState();
             useStore.getState().setRuns([...cur, newRun]);
           })
-          .catch(() => { /* store update is best-effort */ });
+          .catch(() => {});
       }
     }
     if (ev.phase === "error") { setRunning(false); setToast(`Error: ${ev.msg}`); }
@@ -183,9 +213,18 @@ export function SetupScreen() {
     ? preview.equity.map((v, i) => ({ i, v, dd: 0, bench: 1, oos: false }))
     : [];
 
-  const UNIVERSE_TICKERS = ["BTC", "ETH", "SOL", "ARB", "OP", "MATIC", "AVAX"];
-  const TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"];
+  const FALLBACK_TICKERS = ["BTC", "ETH", "SOL", "ARB", "OP", "MATIC", "AVAX"];
+  const FALLBACK_TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"];
   const DIRECTIONS = ["ALL", "LONG", "SHORT"];
+
+  const tickerOptions = availableTickers.length > 0 ? availableTickers : FALLBACK_TICKERS;
+  const timeframeOptions = availableTimeframes.length > 0 ? availableTimeframes : FALLBACK_TIMEFRAMES;
+
+  const hourLabel = (h: number, isStart: boolean) => {
+    if (isStart && h === 0) return "0 (24h)";
+    if (!isStart && h === 24) return "24 (24h)";
+    return String(h);
+  };
 
   return (
     <div className={styles.grid}>
@@ -197,33 +236,51 @@ export function SetupScreen() {
         </div>
         <div className={styles.panelBody}>
           <div className={styles.form}>
-            <SliderRow label="SL MULT ×"       min={0.5} max={5}   step={0.1} value={params.sl_mult}      onChange={(v) => update("sl_mult", v)} />
-            <SliderRow label="TP MULT ×"       min={1}   max={10}  step={0.1} value={params.tp_mult}      onChange={(v) => update("tp_mult", v)} />
-            <SliderRow label="RISK / TRADE %"  min={0.1} max={3}   step={0.1} value={params.risk_per_trade} onChange={(v) => update("risk_per_trade", v)} />
-            <SliderRow label="HOUR START"      min={0}   max={22}  step={1}   value={params.active_hours[0]} onChange={(v) => update("active_hours", [v, params.active_hours[1]])} />
-            <SliderRow label="HOUR END"        min={1}   max={23}  step={1}   value={params.active_hours[1]} onChange={(v) => update("active_hours", [params.active_hours[0], v])} />
+            <SliderRow label="SL MULT ×"      min={0.5} max={5}   step={0.1} value={params.sl_mult}        onChange={(v) => update("sl_mult", v)} />
+            <SliderRow label="TP MULT ×"      min={1}   max={10}  step={0.1} value={params.tp_mult}        onChange={(v) => update("tp_mult", v)} />
+            <SliderRow label="RISK / TRADE %" min={0.1} max={3}   step={0.1} value={params.risk_per_trade} onChange={(v) => update("risk_per_trade", v)} />
+            <SliderRow
+              label="HOUR START" min={0} max={23} step={1}
+              value={params.active_hours[0]}
+              onChange={(v) => update("active_hours", [v, params.active_hours[1]])}
+              valueLabel={hourLabel(params.active_hours[0], true)}
+            />
+            <SliderRow
+              label="HOUR END" min={1} max={24} step={1}
+              value={params.active_hours[1]}
+              onChange={(v) => update("active_hours", [params.active_hours[0], v])}
+              valueLabel={hourLabel(params.active_hours[1], false)}
+            />
 
+            {/* Ticker select */}
             <div className={styles.formRow}>
               <span className={styles.rowLabel}>TICKER</span>
-              <div className={styles.pills}>
-                {UNIVERSE_TICKERS.map((s) => {
-                  const t = `${s}-USD`;
-                  return (
-                    <button key={s} className={`${styles.pill} ${params.ticker === t ? styles.active : ""}`}
-                      onClick={() => update("ticker", t)}>{s}</button>
-                  );
-                })}
-              </div>
+              <select
+                className={styles.select}
+                value={selectedTickerBase}
+                onChange={(e) => update("ticker", `${e.target.value}-USD`)}
+              >
+                {tickerOptions.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+              {availableTickers.length === 0 && (
+                <span className={styles.selectHint}>no data — fetch first</span>
+              )}
             </div>
 
+            {/* Timeframe select */}
             <div className={styles.formRow}>
               <span className={styles.rowLabel}>TIMEFRAME</span>
-              <div className={styles.pills}>
-                {TIMEFRAMES.map((tf) => (
-                  <button key={tf} className={`${styles.pill} ${params.timeframe === tf ? styles.active : ""}`}
-                    onClick={() => update("timeframe", tf)}>{tf}</button>
+              <select
+                className={styles.select}
+                value={params.timeframe}
+                onChange={(e) => update("timeframe", e.target.value)}
+              >
+                {timeframeOptions.map((tf) => (
+                  <option key={tf} value={tf}>{tf}</option>
                 ))}
-              </div>
+              </select>
             </div>
 
             <div className={styles.formRow}>
@@ -248,6 +305,33 @@ export function SetupScreen() {
                 })}
               </div>
             </div>
+
+            {/* WFO window configuration */}
+            {params.run_wfo && (
+              <div className={styles.wfoConfig}>
+                <SliderRow
+                  label="IS WINDOW"
+                  min={50} max={2000} step={50}
+                  value={params.wfo_is_window}
+                  onChange={(v) => update("wfo_is_window", v)}
+                  valueLabel={`${params.wfo_is_window}b`}
+                />
+                <SliderRow
+                  label="OOS WINDOW"
+                  min={10} max={500} step={10}
+                  value={params.wfo_oos_window}
+                  onChange={(v) => update("wfo_oos_window", v)}
+                  valueLabel={`${params.wfo_oos_window}b`}
+                />
+                <div className={styles.wfoFolds}>
+                  {estimatedFolds != null
+                    ? `~${estimatedFolds} fold${estimatedFolds !== 1 ? "s" : ""} · ${totalBars?.toLocaleString()} bars total`
+                    : totalBars != null
+                    ? `${totalBars?.toLocaleString()} bars · adjust windows`
+                    : "fetch data to estimate folds"}
+                </div>
+              </div>
+            )}
 
             <div className={styles.formRow} style={{ marginTop: 4 }}>
               <span className={styles.rowLabel}>FEES · SLIP</span>
@@ -316,11 +400,11 @@ export function SetupScreen() {
             </div>
           )}
           <div className={styles.previewMetrics}>
-            <PreviewMetric label="EST SHARPE"   value={preview?.sharpe?.toFixed(2)    ?? "—"} />
-            <PreviewMetric label="EST CAGR"     value={preview?.cagr != null ? `${preview.cagr.toFixed(1)}%` : "—"} />
-            <PreviewMetric label="MAX DD"       value={preview?.max_dd != null ? `${preview.max_dd.toFixed(1)}%` : "—"} color="var(--coral)" />
-            <PreviewMetric label="TRADES"       value={String(preview?.trades ?? "—")} />
-            <PreviewMetric label="WIN%"         value={preview?.win_rate != null ? `${preview.win_rate.toFixed(1)}%` : "—"} />
+            <PreviewMetric label="EST SHARPE" value={preview?.sharpe?.toFixed(2)    ?? "—"} />
+            <PreviewMetric label="EST CAGR"   value={preview?.cagr != null ? `${preview.cagr.toFixed(1)}%` : "—"} />
+            <PreviewMetric label="MAX DD"     value={preview?.max_dd != null ? `${preview.max_dd.toFixed(1)}%` : "—"} color="var(--coral)" />
+            <PreviewMetric label="TRADES"     value={String(preview?.trades ?? "—")} />
+            <PreviewMetric label="WIN%"       value={preview?.win_rate != null ? `${preview.win_rate.toFixed(1)}%` : "—"} />
           </div>
           <div className={styles.hint}>preview ricampionato ogni 80ms al cambio parametro</div>
         </div>
@@ -329,16 +413,19 @@ export function SetupScreen() {
   );
 }
 
-function SliderRow({ label, min, max, step, value, onChange }: {
+function SliderRow({ label, min, max, step, value, onChange, valueLabel }: {
   label: string; min: number; max: number; step: number; value: number;
   onChange: (v: number) => void;
+  valueLabel?: string;
 }) {
   return (
     <div className={styles.sliderRow}>
       <span className={styles.rowLabel}>{label}</span>
       <input type="range" min={min} max={max} step={step} value={value}
         onChange={(e) => onChange(+e.target.value)} className={styles.range} />
-      <span className={styles.sliderVal}>{Number.isInteger(value) ? value : value.toFixed(1)}</span>
+      <span className={styles.sliderVal}>
+        {valueLabel ?? (Number.isInteger(value) ? value : value.toFixed(1))}
+      </span>
     </div>
   );
 }
