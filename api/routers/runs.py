@@ -453,7 +453,14 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
         mc_bars_raw = params.get("mc_bars")
         n_bars  = int(mc_bars_raw) if (mc_bars_raw and int(mc_bars_raw) > 0) else None
 
-        bs     = run_bootstrap(pnl_arr, n_sims=n_sims, n_bars=n_bars, initial_capital=INITIAL_CAPITAL)
+        # Compute actual backtest duration in days for CAGR annualization
+        mc_days = 365.0
+        if equity_s is not None and len(equity_s) >= 2:
+            try:
+                mc_days = max((equity_s.index[-1] - equity_s.index[0]).days, 1)
+            except Exception:
+                mc_days = 365.0
+        bs     = run_bootstrap(pnl_arr, n_sims=n_sims, n_bars=n_bars, initial_capital=INITIAL_CAPITAL, days_in_period=mc_days)
         stress = run_stress(pnl_arr, initial_capital=INITIAL_CAPITAL)
 
         # Trade stats from original trades

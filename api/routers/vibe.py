@@ -170,7 +170,7 @@ async def _claude_stream(body: VibeGenerateRequest):
         yield f"data: {json.dumps({'type': 'delta', 'text': '[Error: ANTHROPIC_API_KEY not configured on server]'})}\n\n"
         yield f"data: {json.dumps({'type': 'done', 'config': {}, 'code': ''})}\n\n"
         return
-    client = anthropic.Anthropic(api_key=_ANTHROPIC_KEY)
+    client = anthropic.Anthropic(api_key=_ANTHROPIC_KEY, timeout=60.0)
     loop = asyncio.get_event_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -221,7 +221,20 @@ async def _claude_stream(body: VibeGenerateRequest):
 async def vibe_generate(body: VibeGenerateRequest):
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return StreamingResponse(_mock_stream(body), media_type="text/event-stream")
-    return StreamingResponse(_claude_stream(body), media_type="text/event-stream")
+
+    async def generator():
+        try:
+            async with asyncio.timeout(90):  # 90s hard limit
+                async for chunk in _claude_stream(body):
+                    yield chunk
+        except asyncio.TimeoutError:
+            yield f"data: {json.dumps({'type': 'delta', 'text': '[Error: stream timeout after 90s]'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'config': {}, 'code': ''})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'delta', 'text': f'[Error: {str(e)}]'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'config': {}, 'code': ''})}\n\n"
+
+    return StreamingResponse(generator(), media_type="text/event-stream")
 
 
 @router.post("/improve")

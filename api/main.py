@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from api.db import get_conn
+from api.db import get_conn, close_conn
 from api.routers import runs, assets, strategies, vibe
 
 structlog.configure(
@@ -28,8 +28,14 @@ ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").spl
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    get_conn()  # init schema
+    try:
+        get_conn()
+    except Exception as e:
+        import logging
+        logging.error(f"DB init failed: {e}")
+        raise
     yield
+    close_conn()
 
 
 app = FastAPI(title="Pareto API", version="0.2.0", lifespan=lifespan)

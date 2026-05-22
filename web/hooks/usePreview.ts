@@ -15,6 +15,7 @@ export interface PreviewResult {
 export function usePreview(params: Record<string, unknown> | null, delay = 80) {
   const [result, setResult] = useState<PreviewResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -22,11 +23,14 @@ export function usePreview(params: Record<string, unknown> | null, delay = 80) {
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(async () => {
       setLoading(true);
+      setError(null);
       try {
         const data = await api.post<PreviewResult>("/runs/preview", params);
         setResult(data);
-      } catch {
-        // API not available — silently skip
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
+        console.error('[usePreview]', msg);
       } finally {
         setLoading(false);
       }
@@ -34,5 +38,5 @@ export function usePreview(params: Record<string, unknown> | null, delay = 80) {
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, [JSON.stringify(params), delay]);
 
-  return { result, loading };
+  return { result, loading, error };
 }

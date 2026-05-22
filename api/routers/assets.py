@@ -59,10 +59,26 @@ def list_ticker_series(ticker: str):
 
 @router.post("/fetch")
 def fetch_asset(body: AssetFetch):
-    from engine.providers.yfinance_client import fetch as yf_fetch
+    VALID_INTERVALS = {"1m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
+    if body.interval not in VALID_INTERVALS:
+        raise HTTPException(400, f"Invalid interval '{body.interval}'. Must be one of: {sorted(VALID_INTERVALS)}")
 
     try:
-        df = yf_fetch(body.ticker, period=body.period, interval=body.interval)
+        from engine.providers.ccxt_client import is_crypto_ticker, fetch as ccxt_fetch
+        from engine.providers.yfinance_client import fetch as yf_fetch
+        if is_crypto_ticker(body.ticker):
+            try:
+                df = ccxt_fetch(body.ticker, period=body.period, interval=body.interval)
+            except Exception as ccxt_exc:
+                # fallback to yfinance if ccxt fails
+                try:
+                    df = yf_fetch(body.ticker, period=body.period, interval=body.interval)
+                except Exception as yf_exc:
+                    raise HTTPException(400, f"Fetch failed (ccxt: {ccxt_exc}; yfinance: {yf_exc})")
+        else:
+            df = yf_fetch(body.ticker, period=body.period, interval=body.interval)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(400, f"Fetch failed: {exc}")
 
@@ -87,6 +103,9 @@ def fetch_asset(body: AssetFetch):
 
 @router.get("/{ticker}/bars")
 def get_bars(ticker: str, limit: int = 1000, interval: str = "1d"):
+    VALID_INTERVALS = {"1m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
+    if interval not in VALID_INTERVALS:
+        raise HTTPException(400, f"Invalid interval '{interval}'")
     source_key = f"yfinance:{interval}"
     conn = get_conn()
     # backward compat: 1d also matches legacy source="yfinance"
@@ -113,6 +132,9 @@ def get_bars(ticker: str, limit: int = 1000, interval: str = "1d"):
 
 @router.get("/{ticker}/stats")
 def get_stats(ticker: str, interval: str = "1d"):
+    VALID_INTERVALS = {"1m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
+    if interval not in VALID_INTERVALS:
+        raise HTTPException(400, f"Invalid interval '{interval}'")
     BARS_PER_YEAR = {
         "1m": 60*24*365, "5m": 12*24*365, "15m": 4*24*365,
         "30m": 2*24*365, "1h": 24*365, "4h": 6*365,

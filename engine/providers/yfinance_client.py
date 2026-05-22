@@ -1,4 +1,4 @@
-"""Fetch OHLCV bars from yfinance."""
+"""Fetch OHLCV bars from yfinance. Fallback provider for non-crypto assets; crypto assets are handled by ccxt_client."""
 import pandas as pd
 
 

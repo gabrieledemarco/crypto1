@@ -14,6 +14,17 @@ def get_conn() -> duckdb.DuckDBPyConnection:
     return _local.conn
 
 
+def close_conn() -> None:
+    """Close the thread-local DuckDB connection if open."""
+    conn = getattr(_local, 'conn', None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _local.conn = None
+
+
 def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS assets (

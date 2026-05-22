@@ -3,7 +3,8 @@ import numpy as np
 
 
 def run_bootstrap(pnl: np.ndarray, n_sims: int = 1000, n_bars: int | None = None,
-                  initial_capital: float = 10_000) -> dict:
+                  initial_capital: float = 10_000,
+                  days_in_period: float = 365.0) -> dict:
     """Bootstrap Monte Carlo simulation.
 
     n_bars: trades per simulation path; defaults to len(pnl) when None/0.
@@ -24,16 +25,18 @@ def run_bootstrap(pnl: np.ndarray, n_sims: int = 1000, n_bars: int | None = None
     eq  = initial_capital + np.cumsum(sim, axis=1)
 
     final       = eq[:, -1]
-    cagr_arr    = ((final / initial_capital) ** (1 / max((K / (24 * 365)), 0.1)) - 1) * 100
+    cagr_arr    = ((final / initial_capital) ** (365.0 / max(days_in_period, 1.0)) - 1) * 100
     # Vectorized max-drawdown: eq shape (n_sims, path_len)
     running_max = np.maximum.accumulate(eq, axis=1)
     dd_matrix   = (eq - running_max) / running_max * 100   # negative values
     max_dd_arr  = dd_matrix.min(axis=1)                    # worst dd per sim
-    sharpe_arr  = np.array([
-        (np.diff(e) / initial_capital).mean() / (np.diff(e) / initial_capital).std() * np.sqrt(24 * 365)
-        if (np.diff(e) / initial_capital).std() > 0 else 0
-        for e in eq
-    ])
+    # Percentage returns: (eq[t] - eq[t-1]) / eq[t-1]
+    eq_prev = eq[:, :-1]  # shape (n_sims, path_len-1)
+    eq_curr = eq[:, 1:]   # shape (n_sims, path_len-1)
+    pct_rets = (eq_curr - eq_prev) / np.where(eq_prev > 0, eq_prev, 1e-8)
+    ret_mean = pct_rets.mean(axis=1)
+    ret_std  = pct_rets.std(axis=1)
+    sharpe_arr = np.where(ret_std > 0, ret_mean / ret_std * np.sqrt(24 * 365), 0.0)
     win_rates = (sim > 0).mean(axis=1) * 100  # per-simulation win-rate distribution
 
     sorted_finals = np.sort(final)
