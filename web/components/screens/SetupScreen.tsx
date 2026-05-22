@@ -1,5 +1,6 @@
 "use client";
 import { useState, useCallback, useEffect, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
 import type { Run, RunMetrics } from "@/lib/fixtures";
@@ -30,6 +31,7 @@ interface Params {
 
 export function SetupScreen() {
   const { activeRunId, runs, activeStrategyId, pendingSetupParams, setPendingSetupParams, setToast } = useStore();
+  const queryClient = useQueryClient();
   const run = runs.find((r) => r.id === activeRunId) ?? fixtures.runs[0];
   const p = run?.params;
   const { data: assetsData } = useAssets();
@@ -142,7 +144,6 @@ export function SetupScreen() {
       setRunning(false);
       setToast("Run complete");
       if (runId) {
-        useStore.getState().setRun(runId);
         fetch(`/api/runs/${runId}`)
           .then((r) => r.json())
           .then((apiRun: Record<string, unknown>) => {
@@ -192,10 +193,20 @@ export function SetupScreen() {
               exposure: 0,
               monthly: [],
             };
+            // Add run to store FIRST, then make it active so panels don't
+            // briefly fall back to fixture data while the store catches up.
             const { runs: cur } = useStore.getState();
             useStore.getState().setRuns([...cur, newRun]);
+            useStore.getState().setRun(runId);
+            // Bust React Query cache so equity/trades screens refetch immediately.
+            queryClient.invalidateQueries({ queryKey: ["run-equity", runId] });
+            queryClient.invalidateQueries({ queryKey: ["run-trades", runId] });
+            queryClient.invalidateQueries({ queryKey: ["run-list"] });
           })
-          .catch(() => {});
+          .catch(() => {
+            // Metadata fetch failed — still activate the run so panels try to load.
+            useStore.getState().setRun(runId);
+          });
       }
     }
     if (ev.phase === "error") { setRunning(false); setToast(`Error: ${ev.msg}`); }
