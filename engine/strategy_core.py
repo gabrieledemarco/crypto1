@@ -14,7 +14,7 @@ Provides:
 import re
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
+from arch import arch_model
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -33,42 +33,34 @@ def ticker_to_fname(ticker: str) -> str:
 
 # ── GARCH(1,1) ────────────────────────────────────────────────────────────────
 
-def _garch_h(params: np.ndarray, r: np.ndarray) -> np.ndarray:
-    """Sequenza di varianze condizionali GARCH(1,1)."""
-    omega, alpha, beta = params
-    T = len(r)
-    h = np.empty(T)
-    h[0] = np.var(r)
-    for t in range(1, T):
-        h[t] = omega + alpha * r[t - 1] ** 2 + beta * h[t - 1]
-    return h
-
-
 def fit_garch11(returns: np.ndarray) -> tuple:
     """
-    Stima GARCH(1,1) via Maximum Likelihood.
+    Stima GARCH(1,1) via arch library.
     Ritorna: (omega, alpha, beta, h)
-      h = array delle varianze condizionali
+      h = array delle varianze condizionali (NOT volatilities)
     """
     r = np.asarray(returns, dtype=float)
-    var_r = float(np.var(r)) if np.var(r) > 0 else 1e-6
-
-    def neg_ll(params):
-        omega, alpha, beta = params
-        if omega <= 0 or alpha < 0 or beta < 0 or alpha + beta >= 0.9999:
-            return 1e10
-        h = _garch_h(params, r)
-        if np.any(h <= 0) or not np.all(np.isfinite(h)):
-            return 1e10
-        return float(0.5 * np.sum(np.log(h) + r ** 2 / h))
-
-    x0 = np.array([var_r * 0.03, 0.05, 0.90])
-    bounds = [(1e-10, var_r), (0.001, 0.499), (0.001, 0.998)]
-    res = minimize(neg_ll, x0, method="L-BFGS-B", bounds=bounds,
-                   options={"maxiter": 300, "ftol": 1e-9})
-    omega, alpha, beta = res.x
-    h = _garch_h(res.x, r)
-    return float(omega), float(alpha), float(beta), h
+    if len(r) < 50 or np.var(r) == 0:
+        var_r = float(np.var(r)) if np.var(r) > 0 else 1e-6
+        return var_r * 0.03, 0.05, 0.90, np.full(len(r), var_r)
+    try:
+        # arch expects returns in % scale — multiply by 100
+        am = arch_model(r * 100, vol='Garch', p=1, q=1, dist='normal', rescale=False)
+        res = am.fit(disp='off', show_warning=False)
+        params = res.params
+        omega = float(params.get('omega', 1e-6)) / 10_000   # back to decimal scale
+        alpha = float(params.get('alpha[1]', 0.05))
+        beta  = float(params.get('beta[1]', 0.90))
+        # conditional_volatility is in % — convert to variance in decimal
+        h = (res.conditional_volatility / 100) ** 2
+        if not np.all(np.isfinite(h)) or len(h) != len(r):
+            raise ValueError("bad h")
+        return omega, alpha, beta, h.values if hasattr(h, 'values') else h
+    except Exception:
+        # fallback to rolling variance
+        var_r = float(np.var(r)) if np.var(r) > 0 else 1e-6
+        h = np.full(len(r), var_r)
+        return var_r * 0.03, 0.05, 0.90, h
 
 
 def compute_garch_regime(h: np.ndarray,

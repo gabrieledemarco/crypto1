@@ -10,7 +10,7 @@ import json
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 import pandas as pd
 import numpy as np
 from api.db import get_conn
@@ -192,4 +192,31 @@ def get_stats(ticker: str, interval: str = "1d"):
         "cvar95":    round(cvar95, 4),
         "best_day":  round(best_day, 4),
         "worst_day": round(worst_day, 4),
+    }
+
+
+@router.get("/{ticker}/quant")
+def get_quant_stats(ticker: str, interval: str = Query("1h")):
+    """Return Hurst, stationarity, VaR/CVaR for a stored asset series."""
+    from engine.quant_stats import compute_hurst, test_stationarity, compute_var_cvar, rolling_metrics
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT close FROM assets WHERE ticker = ? AND interval = ? ORDER BY ts ASC",
+            [ticker.replace("-USD", ""), interval]
+        ).fetchall()
+    except Exception:
+        rows = []
+    if not rows or len(rows) < 50:
+        raise HTTPException(status_code=404, detail=f"No data for {ticker}/{interval} (need ≥50 bars)")
+    prices = np.array([r[0] for r in rows], dtype=float)
+    rets = np.diff(np.log(prices[prices > 0]))
+    return {
+        "ticker": ticker,
+        "interval": interval,
+        "n_bars": len(prices),
+        "hurst": compute_hurst(prices),
+        "stationarity": test_stationarity(prices),
+        "var_cvar": compute_var_cvar(rets),
+        "rolling": rolling_metrics(prices),
     }
