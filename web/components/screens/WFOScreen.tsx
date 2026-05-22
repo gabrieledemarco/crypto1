@@ -11,6 +11,8 @@ interface WFOFold {
   oos_sharpe: number;
   is_cagr: number;
   oos_cagr: number;
+  is_return?: number;
+  oos_return?: number;
   is_n_trades: number;
   oos_n_trades: number;
   is_max_dd: number;
@@ -375,7 +377,8 @@ function FoldChartsPanel({ folds }: { folds: WFOFold[] }) {
 
   const oosEquity: number[] = [1.0];
   for (const f of folds) {
-    oosEquity.push(oosEquity[oosEquity.length - 1] * (1 + f.oos_cagr / 100));
+    const foldReturn = f.oos_return !== undefined ? f.oos_return : f.oos_cagr;
+    oosEquity.push(oosEquity[oosEquity.length - 1] * (1 + foldReturn / 100));
   }
   const minEq = Math.min(...oosEquity);
   const maxEq = Math.max(...oosEquity);
