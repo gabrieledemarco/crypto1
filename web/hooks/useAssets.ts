@@ -68,4 +68,34 @@ export function useAssetStats(ticker: string | null, interval = "1d") {
   });
 }
 
-export type { AssetListItem, AssetStatsApi, Bar };
+interface GarchForecast {
+  ticker: string;
+  interval: string;
+  n_bars: number;
+  params: {
+    omega: number;
+    alpha: number;
+    beta: number;
+    persistence: number;
+    half_life_bars: number | null;
+  };
+  current_vol_pct: number;
+  forecast_vol_pct: { h1: number; h5: number; h22: number };
+  ann_vol_pct: number;
+  ljung_box: {
+    returns: { stat: number; pvalue: number; significant: boolean };
+    sq_returns: { stat: number; pvalue: number; significant: boolean };
+  };
+}
+
+export function useGarchForecast(ticker: string | null, interval = "1h") {
+  return useQuery({
+    queryKey: ["garch-forecast", ticker, interval],
+    queryFn: () => api.get<GarchForecast>(`/assets/${ticker}/garch-forecast?interval=${interval}`),
+    enabled: !!ticker,
+    staleTime: 300_000,
+    retry: false,
+  });
+}
+
+export type { AssetListItem, AssetStatsApi, Bar, GarchForecast };

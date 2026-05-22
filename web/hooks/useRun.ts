@@ -188,3 +188,20 @@ export function useRunMC(runId: string | null) {
     staleTime: 60_000,
   });
 }
+
+interface BootstrapCI {
+  run_id: string;
+  n_returns: number;
+  sharpe: { point: number; ci_low: number; ci_high: number };
+  cagr_pct: { point: number; ci_low: number; ci_high: number };
+}
+
+export function useRunBootstrapCI(runId: string | null) {
+  return useQuery({
+    queryKey: ["run-bootstrap-ci", runId],
+    queryFn: () => api.get<BootstrapCI>(`/runs/${runId}/bootstrap-ci`),
+    enabled: !!runId && isRealRunId(runId),
+    staleTime: 300_000,
+    retry: false,
+  });
+}
