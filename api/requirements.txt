@@ -14,3 +14,4 @@ hurst>=0.0.5
 slowapi==0.1.9
 structlog>=23.0.0
 quantstats>=0.0.62
+ccxt>=4.0.0
