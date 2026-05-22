@@ -53,3 +53,5 @@ class VibeGenerateRequest(BaseModel):
     timeframe: str = "1h"
     n_candidates: int = 1
     asset_stats: Optional[dict] = None
+    quant_analysis: Optional[dict] = None
+    garch_forecast: Optional[dict] = None

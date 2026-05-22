@@ -23,7 +23,9 @@ Given an asset's historical statistics and optionally a natural language descrip
 If no strategy idea is provided, analyze the statistics and suggest the most appropriate strategy yourself.
 
 ## Step 1 — Brief explanation (2-4 sentences)
-If no prompt is given, start by explaining what the statistics reveal about the asset and why you chose this strategy.
+If no prompt is given, start by explaining what the statistics and regime analysis reveal about the asset and why you chose this strategy.
+Use the Hurst exponent to decide between trend-following (H>0.55) and mean-reversion (H<0.45).
+Use GARCH persistence and annualised vol to calibrate ATR multipliers and risk-per-trade.
 
 ## Step 2 — JSON config in a ```json block with exactly these fields:
 {
@@ -156,10 +158,43 @@ def _build_user_message(body: VibeGenerateRequest) -> str:
         parts.append("Historical statistics:\n" + "\n".join(stats_lines))
     else:
         parts.append(f"Asset: {body.asset}\nTimeframe: {body.timeframe or '1h'}")
+
+    if body.quant_analysis:
+        q = body.quant_analysis
+        lines = ["Quantitative regime analysis:"]
+        hurst = (q.get("hurst") or {})
+        if hurst.get("hurst") is not None:
+            lines.append(f"  Hurst exponent: {hurst['hurst']} ({hurst.get('regime', '?')})")
+        stat = (q.get("stationarity") or {})
+        if stat.get("adf_pvalue") is not None:
+            verdict = "stationary" if stat.get("adf_stationary") else "non-stationary"
+            lines.append(f"  ADF test: {verdict} (p={stat['adf_pvalue']})")
+        vc = (q.get("var_cvar") or {})
+        if vc.get("var") is not None:
+            lines.append(f"  VaR 95%: {vc['var']}%  CVaR 95%: {vc.get('cvar')}%")
+        roll = (q.get("rolling") or {})
+        if roll.get("ann_vol") is not None:
+            lines.append(f"  Rolling ann. vol: {roll['ann_vol']}%  Sharpe: {roll.get('sharpe')}")
+        parts.append("\n".join(lines))
+
+    if body.garch_forecast:
+        g = body.garch_forecast
+        if not g.get("garch_error"):
+            lines = ["Volatility regime (GARCH):"]
+            lines.append(f"  Current conditional vol: {g.get('current_vol_pct')}%/bar  Annualised: {g.get('ann_vol_pct')}%")
+            fc = g.get("forecast_vol_pct") or {}
+            lines.append(f"  Forecast: h1={fc.get('h1')}%  h5={fc.get('h5')}%  h22={fc.get('h22')}%")
+            p = g.get("params") or {}
+            lines.append(f"  Persistence: {p.get('persistence')}  Half-life: {p.get('half_life_bars')} bars")
+            lb = (g.get("ljung_box") or {}).get("sq_returns") or {}
+            arch_str = "ARCH effects present" if lb.get("significant") else "no significant ARCH effects"
+            lines.append(f"  Squared-returns Ljung-Box: {arch_str} (p={lb.get('pvalue')})")
+            parts.append("\n".join(lines))
+
     if body.prompt and body.prompt.strip():
         parts.append(f"Strategy idea: {body.prompt.strip()}")
     else:
-        parts.append("No strategy idea provided — please analyze the statistics above and suggest the best strategy for this asset.")
+        parts.append("No strategy idea provided — analyze all statistics above and suggest the best strategy.")
     return "\n\n".join(parts)
 
 

@@ -134,17 +134,23 @@ export function VibeScreen() {
     setShowSaveInput(false);
     setOutputTab("explanation");
 
-    let assetStats: Record<string, unknown> | null = null;
-    try {
-      const r = await fetch(`/api/assets/${encodeURIComponent(asset)}/stats?interval=${timeframe}`);
-      if (r.ok) assetStats = await r.json();
-    } catch { /* stats are optional */ }
+    const enc = encodeURIComponent(asset);
+    const [assetStats, quantAnalysis, garchForecast] = await Promise.all([
+      fetch(`/api/assets/${enc}/stats?interval=${timeframe}`).then((r) => r.ok ? r.json() : null).catch(() => null),
+      fetch(`/api/assets/${enc}/quant?interval=${timeframe}`).then((r) => r.ok ? r.json() : null).catch(() => null),
+      fetch(`/api/assets/${enc}/garch-forecast?interval=${timeframe}`).then((r) => r.ok ? r.json() : null).catch(() => null),
+    ]);
 
     try {
       const res = await fetch("/api/vibe/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: prompt.trim(), asset, timeframe, n_candidates: 1, asset_stats: assetStats }),
+        body: JSON.stringify({
+          prompt: prompt.trim(), asset, timeframe, n_candidates: 1,
+          asset_stats: assetStats,
+          quant_analysis: quantAnalysis,
+          garch_forecast: garchForecast,
+        }),
       });
 
       if (!res.body) throw new Error("No stream body");
