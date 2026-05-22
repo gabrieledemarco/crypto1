@@ -12,11 +12,34 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from api.models import VibeGenerateRequest
-from api.routers.brain import get_brain_context
+from api.routers.brain import get_brain_context, sync_brain
 
 router = APIRouter()
 _executor = ThreadPoolExecutor(max_workers=2)
 _ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
+
+# Auto-sync brain once per process if DB is empty
+_brain_sync_lock = asyncio.Lock()
+_brain_ready = False
+
+
+async def _ensure_brain_ready() -> None:
+    """Sync brain chapters from GitHub if none are in DuckDB yet."""
+    global _brain_ready
+    if _brain_ready:
+        return
+    async with _brain_sync_lock:
+        if _brain_ready:
+            return
+        try:
+            from api.db import get_conn
+            count = get_conn().execute("SELECT COUNT(*) FROM brain_chunks").fetchone()[0]
+            if count == 0:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, sync_brain)
+        except Exception:
+            pass
+        _brain_ready = True
 
 SYSTEM_PROMPT = """You are a quantitative trading strategy assistant for the Pareto Terminal.
 Given an asset's historical statistics and optionally a natural language description, generate a trading strategy configuration and Python code.
@@ -210,6 +233,7 @@ async def _claude_stream(body: VibeGenerateRequest):
     loop = asyncio.get_event_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
+    await _ensure_brain_ready()
     brain_ctx = get_brain_context(body.prompt or "")
     effective_system = brain_ctx + SYSTEM_PROMPT if brain_ctx else SYSTEM_PROMPT
 
