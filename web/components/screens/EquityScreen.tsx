@@ -2,7 +2,8 @@
 import { useState, useMemo } from "react";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
-import { useRunEquity, isRealRunId } from "@/hooks/useRun";
+import { useRunEquity, useRunBootstrapCI, isRealRunId } from "@/hooks/useRun";
+import { ACFPlot } from "@/components/charts/ACFPlot";
 import { EquityChart } from "@/components/charts/EquityChart";
 import { DrawdownChart } from "@/components/charts/DrawdownChart";
 import styles from "./EquityScreen.module.css";
