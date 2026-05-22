@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { fixtures } from "@/lib/fixtures";
-import { useAssets, useAssetBars, useAssetStats } from "@/hooks/useAssets";
+import { useAssets, useAssetBars, useAssetStats, useGarchForecast } from "@/hooks/useAssets";
 import type { AssetListItem } from "@/hooks/useAssets";
 import { CandlestickChart } from "@/components/charts/CandlestickChart";
 import { Histogram } from "@/components/charts/Histogram";
@@ -116,6 +116,56 @@ function jarqueBera(returns: number[]): { stat: number; isNormal: boolean } {
   return { stat: jb, isNormal: jb < 5.99 };
 }
 
+interface RollingHurstProps {
+  returns: number[];
+  windowSize?: number;
+}
+
+function RollingHurstChart({ returns, windowSize = 100 }: RollingHurstProps) {
+  if (returns.length < windowSize + 10) return null;
+  const W = 580, H = 90;
+  const PAD = { top: 10, right: 12, bottom: 22, left: 38 };
+  const iW = W - PAD.left - PAD.right;
+  const iH = H - PAD.top - PAD.bottom;
+
+  // Compute rolling Hurst using existing hurstRS function
+  const rollingH: number[] = [];
+  for (let i = windowSize; i <= returns.length; i++) {
+    rollingH.push(hurstRS(returns.slice(i - windowSize, i)));
+  }
+
+  const toX = (i: number) => PAD.left + (i / (rollingH.length - 1)) * iW;
+  const toY = (v: number) => PAD.top + (1 - (v - 0) / 1) * iH;
+  const y05 = toY(0.5);
+
+  const pts = rollingH.map((v, i) => `${toX(i).toFixed(1)},${toY(Math.max(0, Math.min(1, v))).toFixed(1)}`).join(" ");
+
+  const labels = [0.25, 0.5, 0.75];
+
+  return (
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
+      {/* 0.5 random walk line */}
+      <line x1={PAD.left} y1={y05} x2={PAD.left + iW} y2={y05}
+        stroke="var(--amber)" strokeWidth={0.8} strokeDasharray="4 3" opacity={0.7} />
+      {/* Trending zone (H>0.55) fill */}
+      <rect x={PAD.left} y={toY(1)} width={iW} height={toY(0.55) - toY(1)}
+        fill="var(--green)" opacity={0.06} />
+      {/* Mean-reverting zone (H<0.45) fill */}
+      <rect x={PAD.left} y={toY(0.45)} width={iW} height={toY(0) - toY(0.45)}
+        fill="var(--cyan)" opacity={0.06} />
+      {/* Hurst line */}
+      <polyline points={pts} fill="none" stroke="var(--cyan)" strokeWidth={1.2} opacity={0.9} />
+      {/* Y labels */}
+      {labels.map(v => (
+        <text key={v} x={PAD.left - 4} y={toY(v) + 3} textAnchor="end" fontSize={8} fill="var(--faint)" fontFamily="var(--font-mono)">{v.toFixed(2)}</text>
+      ))}
+      {/* X axis */}
+      <line x1={PAD.left} y1={PAD.top + iH} x2={PAD.left + iW} y2={PAD.top + iH} stroke="var(--border)" strokeWidth={0.6} />
+      <text x={PAD.left + iW / 2} y={H - 4} textAnchor="middle" fontSize={8} fill="var(--faint)" fontFamily="var(--font-mono)">← older · bars · newer →</text>
+    </svg>
+  );
+}
+
 function fmtDate(ts: string): string {
   return ts.slice(0, 10);
 }
@@ -183,6 +233,7 @@ export function AssetsScreen() {
 
   const { data: apiBars }  = useAssetBars(apiSeriesExists ? selectedTicker : null, viewInterval);
   const { data: apiStats } = useAssetStats(apiSeriesExists ? selectedTicker : null, viewInterval);
+  const { data: garchData } = useGarchForecast(apiSeriesExists ? selectedTicker : null, viewInterval);
 
   // Fixture fallback
   const fixtureMap = new Map<string, Asset>(
@@ -744,6 +795,98 @@ export function AssetsScreen() {
 
         </div>
       )}
+
+      {/* Third analysis row: GARCH Forecast + Rolling Hurst */}
+      <div className={styles.analysisRow}>
+
+        {/* GARCH Forecast panel — span 6 */}
+        <div className={styles.analysisPanel} style={{ gridColumn: "span 6" }}>
+          <div className={styles.analysisPanelHeader}>
+            <span className={styles.analysisPanelTitle}>GARCH(1,1) VOLATILITY FORECAST</span>
+            <span className={styles.panelSub}>
+              {garchData ? `persistence α+β = ${garchData.params.persistence.toFixed(3)}` : "loading…"}
+            </span>
+          </div>
+          <div className={styles.analysisPanelBody}>
+            {garchData ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {/* Forecast bar chart */}
+                <svg width="100%" viewBox="0 0 300 70" style={{ display: "block" }}>
+                  {(() => {
+                    const vals = [
+                      { label: "NOW",  v: garchData.current_vol_pct },
+                      { label: "1h",   v: garchData.forecast_vol_pct.h1 },
+                      { label: "5h",   v: garchData.forecast_vol_pct.h5 },
+                      { label: "22h",  v: garchData.forecast_vol_pct.h22 },
+                    ];
+                    const maxV = Math.max(...vals.map(d => d.v)) * 1.2 || 1;
+                    const W = 300, H = 70, PAD = { t: 6, b: 18, l: 8, r: 8 };
+                    const iW = W - PAD.l - PAD.r;
+                    const iH = H - PAD.t - PAD.b;
+                    const bW = iW / vals.length * 0.6;
+                    return vals.map((d, i) => {
+                      const x = PAD.l + (i + 0.5) * (iW / vals.length) - bW / 2;
+                      const bH = (d.v / maxV) * iH;
+                      const y = PAD.t + iH - bH;
+                      const isFirst = i === 0;
+                      return (
+                        <g key={d.label}>
+                          <rect x={x} y={y} width={bW} height={bH}
+                            fill={isFirst ? "var(--amber)" : "var(--cyan)"} opacity={0.8} />
+                          <text x={x + bW / 2} y={y - 2} textAnchor="middle" fontSize={7} fill="var(--text)" fontFamily="var(--font-mono)">{d.v.toFixed(3)}%</text>
+                          <text x={x + bW / 2} y={H - 4} textAnchor="middle" fontSize={7} fill="var(--faint)" fontFamily="var(--font-mono)">{d.label}</text>
+                        </g>
+                      );
+                    });
+                  })()}
+                </svg>
+                {/* GARCH params grid */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "2px 8px" }}>
+                  {[
+                    ["α (ARCH)", garchData.params.alpha.toFixed(4)],
+                    ["β (GARCH)", garchData.params.beta.toFixed(4)],
+                    ["α+β", garchData.params.persistence.toFixed(4)],
+                    ["HALF-LIFE", garchData.params.half_life_bars != null ? `${garchData.params.half_life_bars.toFixed(1)} bars` : "∞"],
+                    ["ANN VOL", `${garchData.ann_vol_pct.toFixed(1)}%`],
+                    ["LB² p", garchData.ljung_box.sq_returns.pvalue < 0.001 ? "<0.001" : garchData.ljung_box.sq_returns.pvalue.toFixed(3)],
+                  ].map(([label, val]) => (
+                    <div key={label} style={{ fontFamily: "var(--font-mono)", fontSize: 9 }}>
+                      <span style={{ color: "var(--faint)" }}>{label} </span>
+                      <span style={{ color: "var(--amber)" }}>{val}</span>
+                    </div>
+                  ))}
+                </div>
+                {/* Ljung-Box interpretation */}
+                <div style={{ fontFamily: "var(--font-mono)", fontSize: 8, color: "var(--faint)", marginTop: 2 }}>
+                  <span style={{ color: garchData.ljung_box.sq_returns.significant ? "var(--green)" : "var(--coral)" }}>
+                    {garchData.ljung_box.sq_returns.significant ? "✓ ARCH effects detected" : "✗ No ARCH effects"}
+                  </span>
+                  {" · "}
+                  <span style={{ color: garchData.ljung_box.returns.significant ? "var(--amber)" : "var(--faint)" }}>
+                    {garchData.ljung_box.returns.significant ? "⚠ Serial correlation in returns" : "returns uncorrelated"}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div style={{ height: 80, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--faint)", fontFamily: "var(--font-mono)", fontSize: 10 }}>
+                {apiSeriesExists ? "LOADING GARCH MODEL…" : "SELECT AN ASSET SERIES"}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Rolling Hurst panel — span 6 */}
+        <div className={styles.analysisPanel} style={{ gridColumn: "span 6" }}>
+          <div className={styles.analysisPanelHeader}>
+            <span className={styles.analysisPanelTitle}>ROLLING HURST (100 bars)</span>
+            <span className={styles.panelSub}>trending &gt;0.55 · mean-rev &lt;0.45</span>
+          </div>
+          <div className={styles.analysisPanelBody}>
+            <RollingHurstChart returns={logReturns} windowSize={100} />
+          </div>
+        </div>
+
+      </div>
     </div>
   );
 }
