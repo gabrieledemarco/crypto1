@@ -113,10 +113,42 @@ export function LibraryScreen() {
     goto("equity");
   };
 
-  const handleLoadInVibe = (e: React.MouseEvent, run: RunListItem) => {
+  const handleLoadInVibe = async (e: React.MouseEvent, run: RunListItem) => {
     e.stopPropagation();
     const asset = run.ticker?.includes("-") ? run.ticker : `${run.ticker}-USD`;
-    setPendingVibeParams({ asset, timeframe: run.timeframe ?? "1h" });
+
+    let code: string | null = null;
+    let config: Record<string, unknown> | null = null;
+
+    if (run.strategy_id) {
+      try {
+        const res = await fetch("/api/strategies");
+        if (res.ok) {
+          const list = await res.json();
+          const strat = list.find((s: { id: string; code?: string; config?: Record<string, unknown> }) => s.id === run.strategy_id);
+          if (strat) {
+            code = strat.code || null;
+            config = strat.config || null;
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Fallback: build config from run params so the config panel is pre-filled
+    if (!config) {
+      const p = run.params as Record<string, unknown>;
+      config = {
+        ticker: run.ticker || "BTC-USD",
+        timeframe: run.timeframe || "1h",
+        sl_mult: p.sl_mult,
+        tp_mult: p.tp_mult,
+        active_hours: p.active_hours,
+        risk_per_trade: p.risk_per_trade,
+        direction: p.direction,
+      };
+    }
+
+    setPendingVibeParams({ asset, timeframe: run.timeframe ?? "1h", code, config });
     setToast(`${run.ticker} caricato in Vibe Trading`);
     goto("vibe");
   };
