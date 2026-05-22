@@ -173,6 +173,114 @@ function RollingSharpePanel({ equity, timeframe }: RollingSharpeProps) {
 }
 
 // ---------------------------------------------------------------------------
+// ACF of Equity Returns
+// ---------------------------------------------------------------------------
+interface ACFEquityProps {
+  equity: EquityPoint[];
+}
+
+function ACFEquityPanel({ equity }: ACFEquityProps) {
+  const returns = useMemo(() => {
+    const r: number[] = [];
+    for (let i = 1; i < equity.length; i++) {
+      const prev = equity[i - 1].v;
+      if (prev > 0) r.push((equity[i].v - prev) / prev);
+    }
+    return r;
+  }, [equity]);
+
+  if (returns.length < 30) return null;
+
+  return (
+    <div style={{ marginTop: 4 }}>
+      <div style={{
+        fontFamily: "var(--font-mono)", fontSize: 9,
+        color: "var(--faint)", marginBottom: 3, paddingLeft: 2,
+        letterSpacing: "0.05em",
+      }}>
+        EQUITY RETURNS — ACF (lags 1–30)
+      </div>
+      <ACFPlot data={returns} maxLag={30} height={100} color="#5cc1ff" />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Bootstrap CI Panel
+// ---------------------------------------------------------------------------
+interface BootstrapCIData {
+  sharpe: { point: number; ci_low: number; ci_high: number };
+  cagr_pct: { point: number; ci_low: number; ci_high: number };
+  n_returns: number;
+}
+
+function BootstrapCIPanel({ data }: { data: BootstrapCIData }) {
+  const W = 600, H = 48;
+  const PAD = { l: 90, r: 20, t: 8, b: 8 };
+  const iW = W - PAD.l - PAD.r;
+  const iH = H - PAD.t - PAD.b;
+
+  const rows: Array<{ label: string; point: number; low: number; high: number; color: string; fmt: (v: number) => string }> = [
+    { label: "SHARPE 95% CI", point: data.sharpe.point, low: data.sharpe.ci_low, high: data.sharpe.ci_high, color: "var(--amber)", fmt: (v) => v.toFixed(2) },
+    { label: "CAGR 95% CI",   point: data.cagr_pct.point, low: data.cagr_pct.ci_low, high: data.cagr_pct.ci_high, color: "var(--green)", fmt: (v) => `${v.toFixed(1)}%` },
+  ];
+
+  const rowH = iH / rows.length;
+
+  // Determine x-scale: cover all CI values
+  const allVals = rows.flatMap(r => [r.low, r.point, r.high]);
+  const minV = Math.min(...allVals);
+  const maxV = Math.max(...allVals);
+  const range = maxV - minV || 1;
+  const toX = (v: number) => PAD.l + ((v - minV) / range) * iW;
+
+  return (
+    <div style={{ marginTop: 4 }}>
+      <div style={{
+        fontFamily: "var(--font-mono)", fontSize: 9,
+        color: "var(--faint)", marginBottom: 3, paddingLeft: 2,
+        letterSpacing: "0.05em",
+      }}>
+        BOOTSTRAP CONFIDENCE INTERVALS · n={data.n_returns.toLocaleString()} · 95%
+      </div>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
+        {rows.map((row, ri) => {
+          const cy = PAD.t + ri * rowH + rowH / 2;
+          const xLow   = toX(row.low);
+          const xHigh  = toX(row.high);
+          const xPoint = toX(row.point);
+          const zero   = toX(0);
+          return (
+            <g key={row.label}>
+              {/* Zero line */}
+              {zero >= PAD.l && zero <= PAD.l + iW && (
+                <line x1={zero} y1={PAD.t} x2={zero} y2={PAD.t + iH}
+                  stroke="var(--border)" strokeWidth={0.8} strokeDasharray="3 3" opacity={0.6} />
+              )}
+              {/* Label */}
+              <text x={PAD.l - 4} y={cy + 3} textAnchor="end" fontSize={8}
+                fill="var(--faint)" fontFamily="var(--font-mono)">{row.label}</text>
+              {/* CI bar */}
+              <rect x={xLow} y={cy - 3} width={Math.max(1, xHigh - xLow)} height={6}
+                fill={row.color} opacity={0.2} rx={1} />
+              {/* CI whiskers */}
+              <line x1={xLow}  y1={cy - 5} x2={xLow}  y2={cy + 5} stroke={row.color} strokeWidth={1.5} />
+              <line x1={xHigh} y1={cy - 5} x2={xHigh} y2={cy + 5} stroke={row.color} strokeWidth={1.5} />
+              {/* Point estimate */}
+              <circle cx={xPoint} cy={cy} r={3} fill={row.color} />
+              {/* Labels */}
+              <text x={xLow - 2}   y={cy + 10} textAnchor="middle" fontSize={7} fill={row.color} fontFamily="var(--font-mono)">{row.fmt(row.low)}</text>
+              <text x={xPoint}     y={cy - 7}  textAnchor="middle" fontSize={7} fill={row.color} fontFamily="var(--font-mono)" fontWeight="bold">{row.fmt(row.point)}</text>
+              <text x={xHigh + 2}  y={cy + 10} textAnchor="middle" fontSize={7} fill={row.color} fontFamily="var(--font-mono)">{row.fmt(row.high)}</text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Exit Reason chips
 // ---------------------------------------------------------------------------
 interface ExitReasonsProps {
@@ -211,6 +319,7 @@ export function EquityScreen() {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
   const equityQuery = useRunEquity(activeRunId || null);
+  const bootstrapCI = useRunBootstrapCI(activeRunId || null);
   const run = runs.find((r) => r.id === activeRunId) ?? fixtures.runs[0];
   const isFixtureRun = !isRealRunId(activeRunId);
 
@@ -375,6 +484,10 @@ export function EquityScreen() {
             equity={equity}
             timeframe={(run as { params?: { timeframe?: string } })?.params?.timeframe}
           />
+          <ACFEquityPanel equity={equity} />
+          {bootstrapCI.data && !bootstrapCI.isError && (
+            <BootstrapCIPanel data={bootstrapCI.data} />
+          )}
         </div>
       </div>
     </div>
