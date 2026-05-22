@@ -224,8 +224,10 @@ async def _run_backtest(run_id: str, params: dict):
         conn.execute("UPDATE runs SET status='running' WHERE id=?", [run_id])
         push("start", 0, "loading data")
 
-        # Load bars from DuckDB
+        # Load bars from DuckDB — strip any accidental double suffix e.g. "BNB-USD-USD"
         ticker = params["ticker"]
+        while ticker.endswith("-USD-USD") or ticker.endswith("-USDT-USDT"):
+            ticker = ticker[:-4]
         await asyncio.sleep(0)  # yield to event loop
         rows = conn.execute(
             "SELECT ts, open, high, low, close, volume FROM assets WHERE ticker=? ORDER BY ts",

@@ -58,10 +58,15 @@ export function SetupScreen() {
   const [running, setRunning] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
 
+  // Strips accidental double suffix: "BNB-USD-USD" → "BNB-USD"
+  const normalizeTicker = (t: string) => t.replace(/-USD-USD$/, "-USD").replace(/-USDT-USDT$/, "-USDT");
+
   // Load pending params from Library "Re-run" (takes priority over localStorage)
   useEffect(() => {
     if (pendingSetupParams) {
-      setParams((prev) => ({ ...prev, ...(pendingSetupParams as unknown as Partial<Params>) }));
+      const p2 = pendingSetupParams as unknown as Partial<Params>;
+      if (p2.ticker) p2.ticker = normalizeTicker(p2.ticker);
+      setParams((prev) => ({ ...prev, ...p2 }));
       setPendingSetupParams(null);
       return;
     }
@@ -69,6 +74,7 @@ export function SetupScreen() {
       const saved = localStorage.getItem("pareto_saved_params");
       if (saved) {
         const parsed = JSON.parse(saved) as Partial<Params>;
+        if (parsed.ticker) parsed.ticker = normalizeTicker(parsed.ticker);
         setParams((prev) => ({ ...prev, ...parsed }));
       }
     } catch {}
@@ -84,6 +90,15 @@ export function SetupScreen() {
     if (!assetsData || assetsData.length === 0) return [];
     return [...new Set(assetsData.map((a) => a.ticker))].sort();
   }, [assetsData]);
+
+  // Auto-correct params.ticker when assets load and the stored ticker isn't in the list
+  useEffect(() => {
+    if (availableTickers.length === 0) return;
+    if (availableTickers.includes(params.ticker)) return;
+    const normalized = normalizeTicker(params.ticker);
+    update("ticker", availableTickers.includes(normalized) ? normalized : availableTickers[0]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableTickers]);
 
   // Timeframes available for the selected ticker — compare full ticker directly
   const availableTimeframes = useMemo(() => {
