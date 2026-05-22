@@ -333,75 +333,68 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
     pf = wins["pnl"].sum() / abs(losses["pnl"].sum()) \
          if len(losses) > 0 and losses["pnl"].sum() != 0 else np.inf
 
-    days = max((equity.index[-1] - equity.index[0]).days, 1)
-    cagr = ((result["final_capital"] / initial_capital) ** (365 / days) - 1) * 100
-    cagr = max(min(cagr, 999.0), -999.0)
-
     ret_s = equity.pct_change().dropna()
-    sharpe = ret_s.mean() / ret_s.std() * np.sqrt(24 * 365) \
-             if ret_s.std() > 0 else 0
 
-    # Sortino ratio (annualised, downside deviation only)
-    trading_periods_per_year = 24 * 365
-    down = ret_s[ret_s < 0]
-    if len(down) > 0:
-        dd_std = float(np.std(down)) * np.sqrt(trading_periods_per_year)
-        ann_return = float(ret_s.mean()) * trading_periods_per_year
-        sortino = ann_return / dd_std if dd_std > 0 else 0.0
-    else:
-        sortino = 0.0
+    # ── quantstats risk metrics (hourly annualisation = 24*365) ───────────────
+    _PERIODS = 24 * 365
+    try:
+        import quantstats as qs
+        cagr = float(qs.stats.cagr(ret_s)) * 100
+        cagr = max(min(cagr, 999.0), -999.0)
+        sharpe  = float(qs.stats.sharpe(ret_s, periods=_PERIODS))
+        sortino = float(qs.stats.sortino(ret_s, periods=_PERIODS))
+        max_dd  = float(qs.stats.max_drawdown(ret_s)) * 100   # decimal → %
+        omega   = float(qs.stats.omega(ret_s, periods=_PERIODS))
+        ulcer   = float(qs.stats.ulcer_index(ret_s)) * 100
+    except Exception:
+        # fallback: pure numpy/pandas
+        days = max((equity.index[-1] - equity.index[0]).days, 1)
+        cagr = ((result["final_capital"] / initial_capital) ** (365 / days) - 1) * 100
+        cagr = max(min(cagr, 999.0), -999.0)
+        sharpe = float(ret_s.mean() / ret_s.std() * np.sqrt(_PERIODS)) if ret_s.std() > 0 else 0.0
+        down = ret_s[ret_s < 0]
+        dd_std = float(np.std(down)) * np.sqrt(_PERIODS) if len(down) > 0 else 0.0
+        sortino = float(ret_s.mean()) * _PERIODS / dd_std if dd_std > 0 else 0.0
+        roll_max_fb = equity.cummax()
+        max_dd = float(((equity - roll_max_fb) / roll_max_fb * 100).min())
+        pnl_arr_fb = trades["pnl"].values
+        pos_s = float(np.sum(pnl_arr_fb[pnl_arr_fb > 0]))
+        neg_s = float(abs(np.sum(pnl_arr_fb[pnl_arr_fb <= 0])))
+        omega = round(pos_s / neg_s, 3) if neg_s > 0 else 99.0
+        eq_arr = equity.values
+        rm = np.maximum.accumulate(eq_arr)
+        ulcer = float(np.sqrt(np.mean(((eq_arr - rm) / rm) ** 2))) * 100
 
-    # Skewness and kurtosis of equity returns
-    skewness = float(ret_s.skew()) if len(ret_s) >= 3 else 0.0
-    kurtosis = float(ret_s.kurt()) if len(ret_s) >= 4 else 0.0
-    # Guard against NaN from insufficient data
-    if not np.isfinite(skewness):
-        skewness = 0.0
-    if not np.isfinite(kurtosis):
-        kurtosis = 0.0
-
-    roll_max = equity.cummax()
-    dd = (equity - roll_max) / roll_max * 100
-    max_dd = dd.min()
     calmar = cagr / abs(max_dd) if max_dd != 0 else np.inf
 
+    # ── trade-level metrics (kept custom — not in quantstats) ─────────────────
     total_costs = trades["costs"].sum() if "costs" in trades.columns else 0
-
-    # Omega Ratio
-    pnl_arr = trades["pnl"].values
-    pos_sum = float(np.sum(pnl_arr[pnl_arr > 0]))
-    neg_sum = float(abs(np.sum(pnl_arr[pnl_arr <= 0])))
-    omega = round(pos_sum / neg_sum, 3) if neg_sum > 0 else 99.0
-
-    # Ulcer Index
-    equity_arr = equity.values
-    running_max = np.maximum.accumulate(equity_arr)
-    drawdowns_sq = ((equity_arr - running_max) / running_max) ** 2
-    ulcer = round(float(np.sqrt(np.mean(drawdowns_sq))) * 100, 2)
-
-    # Recovery Factor
     net_return = float(result["final_capital"] / initial_capital - 1) * 100
-    max_dd_pct = abs(float(max_dd))
-    recovery_factor = round(net_return / max_dd_pct, 2) if max_dd_pct > 0 else 0.0
+    recovery_factor = round(net_return / abs(max_dd), 2) if max_dd != 0 else 0.0
+
+    skewness = float(ret_s.skew()) if len(ret_s) >= 3 else 0.0
+    kurtosis = float(ret_s.kurt()) if len(ret_s) >= 4 else 0.0
+    if not np.isfinite(skewness): skewness = 0.0
+    if not np.isfinite(kurtosis): kurtosis = 0.0
 
     return {
         "total_return_pct": total_return,
-        "cagr_pct": cagr,
-        "sharpe_ratio": sharpe,
-        "max_drawdown_pct": max_dd,
-        "calmar_ratio": calmar,
-        "n_trades": n,
-        "win_rate_pct": win_rate,
-        "profit_factor": pf,
-        "avg_win_usd": avg_win,
-        "avg_loss_usd": avg_loss,
-        "sl_hits": len(trades[trades["exit_reason"] == "SL"]),
-        "tp_hits": len(trades[trades["exit_reason"] == "TP"]),
-        "total_costs_usd": total_costs,
-        "omega": omega,
-        "ulcer": ulcer,
-        "recovery_factor": recovery_factor,
-        "sortino_ratio": sortino,
-        "skewness": skewness,
-        "kurtosis": kurtosis,
+        "cagr_pct":         round(cagr, 4),
+        "sharpe_ratio":     round(sharpe, 4),
+        "max_drawdown_pct": round(max_dd, 4),
+        "calmar_ratio":     round(calmar, 4) if np.isfinite(calmar) else 0.0,
+        "n_trades":         n,
+        "win_rate_pct":     win_rate,
+        "profit_factor":    pf,
+        "avg_win_usd":      avg_win,
+        "avg_loss_usd":     avg_loss,
+        "sl_hits":          len(trades[trades["exit_reason"] == "SL"]),
+        "tp_hits":          len(trades[trades["exit_reason"] == "TP"]),
+        "total_costs_usd":  total_costs,
+        "omega":            round(omega, 3),
+        "ulcer":            round(ulcer, 2),
+        "recovery_factor":  recovery_factor,
+        "sortino_ratio":    round(sortino, 4),
+        "skewness":         round(skewness, 4),
+        "kurtosis":         round(kurtosis, 4),
     }
