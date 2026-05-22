@@ -261,27 +261,38 @@ def get_garch_forecast(ticker: str, interval: str = Query("1h")):
     ann_factor = BARS_PER_YEAR.get(interval, 365)
     source_key = f"yfinance:{interval}"
     conn = get_conn()
-    if interval == "1d":
+    # Query all stored sources for this ticker/interval so ccxt-fetched data is also found
+    rows = conn.execute(
+        "SELECT close FROM assets WHERE ticker=? AND source LIKE ? ORDER BY ts",
+        [ticker, f"%:{interval}"]
+    ).fetchall()
+    if interval == "1d" and not rows:
         rows = conn.execute(
-            "SELECT close FROM assets WHERE ticker=? AND (source=? OR source=?) ORDER BY ts",
+            "SELECT close FROM assets WHERE ticker=? AND source IN (?, ?) ORDER BY ts",
             [ticker, source_key, "yfinance"]
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT close FROM assets WHERE ticker=? AND source=? ORDER BY ts",
-            [ticker, source_key]
         ).fetchall()
     if not rows or len(rows) < 100:
         raise HTTPException(404, f"Not enough data for {ticker}/{interval} (need ≥100 bars)")
 
     prices = np.array([r[0] for r in rows], dtype=float)
+    prices = prices[np.isfinite(prices) & (prices > 0)]
+    if len(prices) < 100:
+        raise HTTPException(404, f"Insufficient valid prices for {ticker}/{interval}")
+
     rets_pct = np.diff(np.log(prices)) * 100  # percentage log-returns
+    # Remove zero-return runs that can cause GARCH degeneracy (e.g. forex weekends)
+    rets_pct = rets_pct[np.isfinite(rets_pct)]
+
+    garch_error: str | None = None
+    omega = alpha = beta = persistence = 0.0
+    half_life = None
+    current_vol = vol_1d = vol_5d = vol_22d = 0.0
 
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            model = arch_model(rets_pct, p=1, q=1, vol="Garch", dist="normal", rescale=False)
-            res = model.fit(disp="off", options={"maxiter": 200})
+            model = arch_model(rets_pct, p=1, q=1, vol="Garch", dist="normal", rescale=True)
+            res = model.fit(disp="off", options={"maxiter": 500})
 
         params = res.params
         omega = float(params.get("omega", 0))
@@ -290,17 +301,19 @@ def get_garch_forecast(ticker: str, interval: str = Query("1h")):
         persistence = alpha + beta
         half_life = float(np.log(0.5) / np.log(persistence)) if 0 < persistence < 1 else None
 
-        fc = res.forecast(horizon=22, reindex=False)
-        var_fc = fc.variance.values[-1]  # shape (22,)
-        vol_1d  = float(np.sqrt(max(var_fc[0], 0)))
-        vol_5d  = float(np.sqrt(max(var_fc[4], 0)))
-        vol_22d = float(np.sqrt(max(var_fc[21], 0)))
+        try:
+            fc = res.forecast(horizon=22, reindex=False)
+            var_fc = fc.variance.values[-1]
+            vol_1d  = float(np.sqrt(max(var_fc[0], 0)))
+            vol_5d  = float(np.sqrt(max(var_fc[4], 0)))
+            vol_22d = float(np.sqrt(max(var_fc[21], 0)))
+        except Exception:
+            pass
 
-        # Current conditional vol (last fitted value)
         current_vol = float(np.sqrt(max(res.conditional_volatility.iloc[-1] ** 2, 0)))
 
     except Exception as e:
-        raise HTTPException(500, f"GARCH fit failed: {e}")
+        garch_error = str(e)
 
     # Ljung-Box on returns and squared returns (lag=10)
     try:
@@ -313,13 +326,11 @@ def get_garch_forecast(ticker: str, interval: str = Query("1h")):
     except Exception:
         lb_ret_stat = lb_ret_pval = lb_sq_stat = lb_sq_pval = 0.0
 
-    # Convert vol from percentage to decimal for frontend consistency
-    scale = 1.0  # keep as pct for display
-
     return {
         "ticker":   ticker,
         "interval": interval,
         "n_bars":   len(prices),
+        "garch_error": garch_error,
         "params": {
             "omega":          round(omega, 8),
             "alpha":          round(alpha, 4),
