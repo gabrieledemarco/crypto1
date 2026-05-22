@@ -38,6 +38,8 @@ export interface SetupParams {
 export interface PendingVibeParams {
   asset: string;
   timeframe: string;
+  code?: string | null;
+  config?: Record<string, unknown> | null;
 }
 
 interface Store {

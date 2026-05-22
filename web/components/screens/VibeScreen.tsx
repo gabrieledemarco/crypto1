@@ -64,6 +64,13 @@ export function VibeScreen() {
     if (pendingVibeParams) {
       setAsset(pendingVibeParams.asset);
       setTimeframe(pendingVibeParams.timeframe);
+      if (pendingVibeParams.config !== undefined) {
+        setConfig(pendingVibeParams.config as StrategyConfig | null);
+      }
+      if (pendingVibeParams.code !== undefined) {
+        setCode(pendingVibeParams.code ?? null);
+        if (pendingVibeParams.code) setOutputTab("code");
+      }
       setPendingVibeParams(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps

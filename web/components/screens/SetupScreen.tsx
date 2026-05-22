@@ -79,22 +79,19 @@ export function SetupScreen() {
     setParams((prev) => ({ ...prev, [k]: v }));
   }, []);
 
-  // Ticker without "-USD" suffix — matches DB storage format
-  const selectedTickerBase = params.ticker.replace(/-USD$/, "");
-
-  // Unique tickers with fetched data
+  // Unique tickers with fetched data (stored as full symbols, e.g. "BTC-USD")
   const availableTickers = useMemo(() => {
     if (!assetsData || assetsData.length === 0) return [];
     return [...new Set(assetsData.map((a) => a.ticker))].sort();
   }, [assetsData]);
 
-  // Timeframes available for the selected ticker
+  // Timeframes available for the selected ticker — compare full ticker directly
   const availableTimeframes = useMemo(() => {
     if (!assetsData || assetsData.length === 0) return [];
     return assetsData
-      .filter((a) => a.ticker === selectedTickerBase)
+      .filter((a) => a.ticker === params.ticker)
       .map((a) => a.interval);
-  }, [assetsData, selectedTickerBase]);
+  }, [assetsData, params.ticker]);
 
   // Auto-correct timeframe when ticker changes and current TF has no data
   useEffect(() => {
@@ -108,10 +105,10 @@ export function SetupScreen() {
   const totalBars = useMemo(() => {
     if (!assetsData) return null;
     const asset = assetsData.find(
-      (a) => a.ticker === selectedTickerBase && a.interval === params.timeframe
+      (a) => a.ticker === params.ticker && a.interval === params.timeframe
     );
     return asset?.bars ?? null;
-  }, [assetsData, selectedTickerBase, params.timeframe]);
+  }, [assetsData, params.ticker, params.timeframe]);
 
   // Estimated WFO folds: how many OOS windows fit after the first IS window
   const estimatedFolds =
@@ -217,7 +214,7 @@ export function SetupScreen() {
     ? preview.equity.map((v, i) => ({ i, v, dd: 0, bench: 1, oos: false }))
     : [];
 
-  const FALLBACK_TICKERS = ["BTC", "ETH", "SOL", "ARB", "OP", "MATIC", "AVAX"];
+  const FALLBACK_TICKERS = ["BTC-USD", "ETH-USD", "SOL-USD", "ARB-USD", "OP-USD", "MATIC-USD", "AVAX-USD"];
   const FALLBACK_TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"];
   const DIRECTIONS = ["ALL", "LONG", "SHORT"];
 
@@ -261,11 +258,11 @@ export function SetupScreen() {
               <span className={styles.rowLabel}>TICKER</span>
               <select
                 className={styles.select}
-                value={selectedTickerBase}
-                onChange={(e) => update("ticker", `${e.target.value}-USD`)}
+                value={params.ticker}
+                onChange={(e) => update("ticker", e.target.value)}
               >
                 {tickerOptions.map((t) => (
-                  <option key={t} value={t}>{t}</option>
+                  <option key={t} value={t}>{t.replace(/-USD$/, "").replace(/=X$/, "").replace(/=F$/, "")}</option>
                 ))}
               </select>
               {availableTickers.length === 0 && (
