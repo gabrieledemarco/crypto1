@@ -78,3 +78,12 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS brain_chunks (
+            id         TEXT PRIMARY KEY,
+            title      TEXT,
+            content    TEXT,
+            tags       JSON,
+            synced_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
