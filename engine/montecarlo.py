@@ -10,8 +10,17 @@ def run_bootstrap(pnl: np.ndarray, n_sims: int = 1000, n_bars: int | None = None
     """
     K = len(pnl)
     path_len = n_bars if (n_bars and 0 < n_bars) else K
-    idx = np.random.randint(0, K, size=(n_sims, path_len))
-    sim = pnl[idx]
+    try:
+        from arch.bootstrap import StationaryBootstrap
+        block_size = max(1, int(np.ceil(K ** (1/3))))
+        bs = StationaryBootstrap(block_size, pnl)
+        sim_list = []
+        for data, _ in bs.bootstrap(n_sims):
+            sim_list.append(data[0][:path_len])
+        sim = np.array(sim_list)
+    except Exception:
+        idx = np.random.randint(0, K, size=(n_sims, path_len))
+        sim = pnl[idx]
     eq  = initial_capital + np.cumsum(sim, axis=1)
 
     final       = eq[:, -1]
@@ -70,6 +79,7 @@ def run_stress(pnl: np.ndarray,
                 "max_drawdown_pct": round(float(dd), 2),
                 "n_trades":         len(stressed),
             })
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.debug(f"Stress scenario '{label}' failed: {e}")
     return rows

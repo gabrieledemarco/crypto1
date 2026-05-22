@@ -197,6 +197,7 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
                 "oos_max_dd":    m_os.get("max_drawdown_pct", 0),
                 "best_sl":       fold_sl if per_fold_opt else None,
                 "best_tp":       fold_tp if per_fold_opt else None,
+                "efficiency_factor": round(m_os.get("sharpe_ratio", 0) / m_is.get("sharpe_ratio", 1), 3) if m_is.get("sharpe_ratio", 0) != 0 else 0.0,
             }
             rows.append(row)
             fold += 1

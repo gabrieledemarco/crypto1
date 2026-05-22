@@ -145,8 +145,9 @@ def get_stats(ticker: str, interval: str = "1d"):
     sharpe = (mean / std * np.sqrt(ann_factor)) if std > 0 else 0
     # CAGR
     total_ret = closes[-1] / closes[0]
-    n_hours   = len(closes)
-    cagr      = (total_ret ** (ann_factor / n_hours) - 1) * 100
+    n_hours   = max(len(closes), 1)
+    raw_cagr  = (total_ret ** (ann_factor / n_hours) - 1) * 100
+    cagr      = max(min(raw_cagr, 999.0), -99.9)
     # MaxDD
     peak_arr = np.maximum.accumulate(closes)
     dd_arr   = (closes - peak_arr) / peak_arr * 100
@@ -201,9 +202,10 @@ def get_quant_stats(ticker: str, interval: str = Query("1h")):
     from engine.quant_stats import compute_hurst, test_stationarity, compute_var_cvar, rolling_metrics
     conn = get_conn()
     try:
+        source_key = f"yfinance:{interval}"
         rows = conn.execute(
-            "SELECT close FROM assets WHERE ticker = ? AND interval = ? ORDER BY ts ASC",
-            [ticker.replace("-USD", ""), interval]
+            "SELECT close FROM assets WHERE ticker = ? AND source = ? ORDER BY ts ASC",
+            [ticker, source_key]
         ).fetchall()
     except Exception:
         rows = []

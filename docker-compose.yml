@@ -1,0 +1,31 @@
+version: '3.9'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8099:8099"
+    environment:
+      DUCKDB_PATH: /data/pareto.db
+      ALLOWED_ORIGINS: "http://localhost:3000"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+    volumes:
+      - pareto_data:/data
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "3000:3000"
+    environment:
+      API_URL: "http://api:8099"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pareto_data:
