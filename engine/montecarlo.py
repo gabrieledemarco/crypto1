@@ -16,16 +16,21 @@ def run_bootstrap(pnl: np.ndarray, n_sims: int = 1000, n_bars: int | None = None
 
     final       = eq[:, -1]
     cagr_arr    = ((final / initial_capital) ** (1 / max((K / (24 * 365)), 0.1)) - 1) * 100
-    max_dd_arr  = np.array([
-        ((e - np.maximum.accumulate(e)) / np.maximum.accumulate(e)).min() * 100
-        for e in eq
-    ])
+    # Vectorized max-drawdown: eq shape (n_sims, path_len)
+    running_max = np.maximum.accumulate(eq, axis=1)
+    dd_matrix   = (eq - running_max) / running_max * 100   # negative values
+    max_dd_arr  = dd_matrix.min(axis=1)                    # worst dd per sim
     sharpe_arr  = np.array([
         (np.diff(e) / initial_capital).mean() / (np.diff(e) / initial_capital).std() * np.sqrt(24 * 365)
         if (np.diff(e) / initial_capital).std() > 0 else 0
         for e in eq
     ])
     win_rates = (sim > 0).mean(axis=1) * 100  # per-simulation win-rate distribution
+
+    sorted_finals = np.sort(final)
+    var_idx = int(len(sorted_finals) * 0.05)
+    var_95  = float(sorted_finals[var_idx])                              # 5th pct of final capital
+    cvar_95 = float(sorted_finals[:max(1, var_idx)].mean())             # mean of worst 5%
 
     return {
         "final_capital": final,
@@ -34,6 +39,8 @@ def run_bootstrap(pnl: np.ndarray, n_sims: int = 1000, n_bars: int | None = None
         "max_dd_pct":    max_dd_arr,
         "equity_matrix": eq,
         "win_rates":     win_rates,
+        "var_95":        var_95,
+        "cvar_95":       cvar_95,
     }
 
 
