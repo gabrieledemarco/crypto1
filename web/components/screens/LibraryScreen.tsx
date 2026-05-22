@@ -148,6 +148,28 @@ export function LibraryScreen() {
       };
     }
 
+    // Generate synthetic agent_fn when no strategy code exists
+    if (!code) {
+      const p = run.params as Record<string, unknown>;
+      const sl = (p.sl_mult as number) ?? 2.0;
+      const tp = (p.tp_mult as number) ?? 5.0;
+      const hours = (p.active_hours as [number, number]) ?? [6, 22];
+      code = [
+        `def agent_fn(df):`,
+        `    """`,
+        `    Loaded from run: ${run.name || run.ticker || "backtest"}`,
+        `    Asset: ${run.ticker}  Timeframe: ${run.timeframe ?? "1h"}`,
+        `    """`,
+        `    return generate_signals_v2(`,
+        `        df,`,
+        `        atr_mult_sl=${sl},`,
+        `        atr_mult_tp=${tp},`,
+        `        active_hours=(${hours[0]}, ${hours[1]}),`,
+        `        use_garch_filter=True,`,
+        `    )`,
+      ].join("\n");
+    }
+
     setPendingVibeParams({ asset, timeframe: run.timeframe ?? "1h", code, config });
     setToast(`${run.ticker} caricato in Vibe Trading`);
     goto("vibe");

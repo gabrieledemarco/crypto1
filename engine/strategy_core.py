@@ -316,6 +316,7 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
 
     days = max((equity.index[-1] - equity.index[0]).days, 1)
     cagr = ((result["final_capital"] / initial_capital) ** (365 / days) - 1) * 100
+    cagr = max(min(cagr, 999.0), -999.0)
 
     ret_s = equity.pct_change().dropna()
     sharpe = ret_s.mean() / ret_s.std() * np.sqrt(24 * 365) \
