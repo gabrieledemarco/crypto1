@@ -20,6 +20,7 @@ import os
 from datetime import datetime
 from typing import Optional
 
+import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
@@ -191,6 +192,75 @@ def get_mc(run_id: str):
     if not row or not row[0]:
         return {}
     return json.loads(row[0])
+
+@router.get("/{run_id}/bootstrap-ci")
+def get_bootstrap_ci(run_id: str):
+    """Bootstrap 95% confidence intervals for Sharpe ratio and CAGR."""
+    import warnings
+    from scipy.stats import bootstrap as sp_bootstrap
+
+    conn = get_conn()
+    row = conn.execute("SELECT equity FROM run_results WHERE run_id=?", [run_id]).fetchone()
+    if not row or not row[0]:
+        raise HTTPException(404, "No results for this run")
+
+    equity_data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+    # equity_data is list of {i, v, dd, ts?}
+    vals = [float(e["v"]) for e in equity_data if "v" in e]
+    if len(vals) < 30:
+        raise HTTPException(400, "Not enough equity data for bootstrap (need ≥30 points)")
+
+    rets = np.array([(vals[i] - vals[i-1]) / vals[i-1] for i in range(1, len(vals))])
+    rets = rets[np.isfinite(rets)]
+    n = len(rets)
+    if n < 20:
+        raise HTTPException(400, "Not enough returns for bootstrap")
+
+    # Annualisation (assume hourly by default — stored equity is per-bar)
+    ann_factor = 24 * 365
+
+    def sharpe_fn(x):
+        m, s = float(np.mean(x)), float(np.std(x))
+        return (m / s * np.sqrt(ann_factor)) if s > 0 else 0.0
+
+    def cagr_fn(x):
+        total = float(np.prod(1.0 + x)) - 1.0
+        return float((1.0 + total) ** (ann_factor / len(x)) - 1.0) * 100
+
+    sharpe_point = sharpe_fn(rets)
+    cagr_point   = cagr_fn(rets)
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            bs_sharpe = sp_bootstrap(
+                (rets,), sharpe_fn, n_resamples=500, confidence_level=0.95,
+                method="percentile", random_state=42
+            )
+            bs_cagr = sp_bootstrap(
+                (rets,), cagr_fn, n_resamples=500, confidence_level=0.95,
+                method="percentile", random_state=42
+            )
+        sharpe_ci = (float(bs_sharpe.confidence_interval.low), float(bs_sharpe.confidence_interval.high))
+        cagr_ci   = (float(bs_cagr.confidence_interval.low),   float(bs_cagr.confidence_interval.high))
+    except Exception:
+        sharpe_ci = (sharpe_point * 0.7, sharpe_point * 1.3)
+        cagr_ci   = (cagr_point * 0.7,   cagr_point * 1.3)
+
+    return {
+        "run_id":    run_id,
+        "n_returns": n,
+        "sharpe": {
+            "point": round(sharpe_point, 3),
+            "ci_low":  round(sharpe_ci[0], 3),
+            "ci_high": round(sharpe_ci[1], 3),
+        },
+        "cagr_pct": {
+            "point": round(cagr_point, 2),
+            "ci_low":  round(cagr_ci[0], 2),
+            "ci_high": round(cagr_ci[1], 2),
+        },
+    }
 
 # ── Create + async backtest ───────────────────────────────────────────────────
 

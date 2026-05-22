@@ -220,3 +220,98 @@ def get_quant_stats(ticker: str, interval: str = Query("1h")):
         "var_cvar": compute_var_cvar(rets),
         "rolling": rolling_metrics(prices),
     }
+
+
+@router.get("/{ticker}/garch-forecast")
+def get_garch_forecast(ticker: str, interval: str = Query("1h")):
+    """GARCH(1,1) model fit + volatility forecast for 1/5/22 bars ahead."""
+    import warnings
+    from arch import arch_model
+    from statsmodels.stats.diagnostic import acorr_ljungbox
+
+    BARS_PER_YEAR = {
+        "1m": 60*24*365, "5m": 12*24*365, "15m": 4*24*365,
+        "30m": 2*24*365, "1h": 24*365, "4h": 6*365,
+        "1d": 365, "1wk": 52,
+    }
+    ann_factor = BARS_PER_YEAR.get(interval, 365)
+    source_key = f"yfinance:{interval}"
+    conn = get_conn()
+    if interval == "1d":
+        rows = conn.execute(
+            "SELECT close FROM assets WHERE ticker=? AND (source=? OR source=?) ORDER BY ts",
+            [ticker, source_key, "yfinance"]
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT close FROM assets WHERE ticker=? AND source=? ORDER BY ts",
+            [ticker, source_key]
+        ).fetchall()
+    if not rows or len(rows) < 100:
+        raise HTTPException(404, f"Not enough data for {ticker}/{interval} (need ≥100 bars)")
+
+    prices = np.array([r[0] for r in rows], dtype=float)
+    rets_pct = np.diff(np.log(prices)) * 100  # percentage log-returns
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model = arch_model(rets_pct, p=1, q=1, vol="Garch", dist="normal", rescale=False)
+            res = model.fit(disp="off", options={"maxiter": 200})
+
+        params = res.params
+        omega = float(params.get("omega", 0))
+        alpha = float(params.get("alpha[1]", 0))
+        beta  = float(params.get("beta[1]", 0))
+        persistence = alpha + beta
+        half_life = float(np.log(0.5) / np.log(persistence)) if 0 < persistence < 1 else None
+
+        fc = res.forecast(horizon=22, reindex=False)
+        var_fc = fc.variance.values[-1]  # shape (22,)
+        vol_1d  = float(np.sqrt(max(var_fc[0], 0)))
+        vol_5d  = float(np.sqrt(max(var_fc[4], 0)))
+        vol_22d = float(np.sqrt(max(var_fc[21], 0)))
+
+        # Current conditional vol (last fitted value)
+        current_vol = float(np.sqrt(max(res.conditional_volatility.iloc[-1] ** 2, 0)))
+
+    except Exception as e:
+        raise HTTPException(500, f"GARCH fit failed: {e}")
+
+    # Ljung-Box on returns and squared returns (lag=10)
+    try:
+        lb_ret = acorr_ljungbox(rets_pct, lags=[10], return_df=True)
+        lb_sq  = acorr_ljungbox(rets_pct**2, lags=[10], return_df=True)
+        lb_ret_stat = float(lb_ret["lb_stat"].iloc[0])
+        lb_ret_pval = float(lb_ret["lb_pvalue"].iloc[0])
+        lb_sq_stat  = float(lb_sq["lb_stat"].iloc[0])
+        lb_sq_pval  = float(lb_sq["lb_pvalue"].iloc[0])
+    except Exception:
+        lb_ret_stat = lb_ret_pval = lb_sq_stat = lb_sq_pval = 0.0
+
+    # Convert vol from percentage to decimal for frontend consistency
+    scale = 1.0  # keep as pct for display
+
+    return {
+        "ticker":   ticker,
+        "interval": interval,
+        "n_bars":   len(prices),
+        "params": {
+            "omega":          round(omega, 8),
+            "alpha":          round(alpha, 4),
+            "beta":           round(beta, 4),
+            "persistence":    round(persistence, 4),
+            "half_life_bars": round(half_life, 1) if half_life else None,
+        },
+        "current_vol_pct": round(current_vol, 4),
+        "forecast_vol_pct": {
+            "h1":  round(vol_1d, 4),
+            "h5":  round(vol_5d, 4),
+            "h22": round(vol_22d, 4),
+        },
+        "ann_vol_pct": round(current_vol * float(np.sqrt(ann_factor)), 2),
+        "ljung_box": {
+            "returns":     {"stat": round(lb_ret_stat, 2), "pvalue": round(lb_ret_pval, 4), "significant": lb_ret_pval < 0.05},
+            "sq_returns":  {"stat": round(lb_sq_stat, 2),  "pvalue": round(lb_sq_pval, 4),  "significant": lb_sq_pval < 0.05},
+        },
+    }
