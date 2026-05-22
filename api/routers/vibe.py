@@ -12,6 +12,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from api.models import VibeGenerateRequest
+from api.routers.brain import get_brain_context
 
 router = APIRouter()
 _executor = ThreadPoolExecutor(max_workers=2)
@@ -174,12 +175,15 @@ async def _claude_stream(body: VibeGenerateRequest):
     loop = asyncio.get_event_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
+    brain_ctx = get_brain_context(body.prompt or "")
+    effective_system = brain_ctx + SYSTEM_PROMPT if brain_ctx else SYSTEM_PROMPT
+
     def _run():
         try:
             with client.messages.stream(
                 model="claude-opus-4-7",
                 max_tokens=2048,
-                system=SYSTEM_PROMPT,
+                system=effective_system,
                 messages=[
                     {
                         "role": "user",
