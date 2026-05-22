@@ -136,8 +136,7 @@ export function VibeScreen() {
 
     let assetStats: Record<string, unknown> | null = null;
     try {
-      const tickerBase = asset.replace(/-USD$/, "");
-      const r = await fetch(`/api/assets/${tickerBase}/stats?interval=${timeframe}`);
+      const r = await fetch(`/api/assets/${encodeURIComponent(asset)}/stats?interval=${timeframe}`);
       if (r.ok) assetStats = await r.json();
     } catch { /* stats are optional */ }
 
