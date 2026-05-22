@@ -8,7 +8,9 @@ class RunParams(BaseModel):
     sl_mult: float = Field(2.0, ge=0.5, le=10.0)
     tp_mult: float = Field(5.0, ge=1.0, le=20.0)
     active_hours: list[int] = Field([6, 22], min_length=2, max_length=2)
-    risk_per_trade: float = Field(0.01, ge=0.001, le=0.1)
+    # Frontend sends percentage (1.0 = 1%); engine expects decimal (0.01 = 1%).
+    # Accept both forms — normalize_risk converts anything > 0.1 from % to decimal.
+    risk_per_trade: float = Field(0.01, ge=0.0001, le=100.0)
     commission: float = Field(0.0004, ge=0.0, le=0.01)
     slippage: float = Field(0.0001, ge=0.0, le=0.01)
     direction: Literal["ALL", "LONG", "SHORT"] = "ALL"
@@ -16,13 +18,27 @@ class RunParams(BaseModel):
     run_sweep: bool = True
     run_mc: bool = True
     mc_sims: int = Field(1000, ge=100, le=10_000)
-    mc_bars: Optional[int] = Field(None, ge=1, le=100_000)
+    mc_bars: Optional[int] = Field(None, ge=0, le=100_000)
 
     @field_validator("active_hours")
     @classmethod
     def validate_hours(cls, v):
         if len(v) != 2 or not all(0 <= h <= 23 for h in v) or v[0] >= v[1]:
             raise ValueError("active_hours must be [start, end] with 0 <= start < end <= 23")
+        return v
+
+    @field_validator("risk_per_trade")
+    @classmethod
+    def normalize_risk(cls, v: float) -> float:
+        # Convert % form (e.g. 1.0) → decimal (0.01); leave decimal form unchanged.
+        return v / 100 if v > 0.1 else v
+
+    @field_validator("mc_bars", mode="before")
+    @classmethod
+    def normalize_mc_bars(cls, v):
+        # Frontend sends 0 when "auto"; treat 0/None as None (engine picks automatically).
+        if v is None or v == 0:
+            return None
         return v
 
 
