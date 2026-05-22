@@ -129,7 +129,8 @@ export function useRunEquity(runId: string | null) {
         `/runs/${runId}/equity`
       ),
     enabled: isRealRunId(runId),
-    staleTime: 60_000,
+    staleTime: Infinity,   // run results never change — cache forever, but invalidated on new run
+    refetchOnMount: true,  // always load when screen mounts
   });
 }
 
@@ -155,7 +156,8 @@ export function useRunTrades(
       };
     },
     enabled: isRealRunId(runId),
-    staleTime: 60_000,
+    staleTime: Infinity,   // run results never change — cache forever, but invalidated on new run
+    refetchOnMount: true,
   });
 }
 
