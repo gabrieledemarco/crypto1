@@ -1,17 +1,17 @@
-"""DuckDB single-connection wrapper + schema init."""
+"""DuckDB per-thread connection wrapper + schema init."""
 import os
+import threading
 import duckdb
 
 DB_PATH = os.environ.get("DUCKDB_PATH", "/tmp/pareto.db")
-_conn: duckdb.DuckDBPyConnection | None = None
+_local = threading.local()
 
 
 def get_conn() -> duckdb.DuckDBPyConnection:
-    global _conn
-    if _conn is None:
-        _conn = duckdb.connect(DB_PATH)
-        _init_schema(_conn)
-    return _conn
+    if not hasattr(_local, 'conn') or _local.conn is None:
+        _local.conn = duckdb.connect(DB_PATH)
+        _init_schema(_local.conn)
+    return _local.conn
 
 
 def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:

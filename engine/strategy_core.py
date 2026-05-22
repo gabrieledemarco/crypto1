@@ -17,7 +17,9 @@ import pandas as pd
 from arch import arch_model
 import warnings
 
-warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", message=".*Maximum Likelihood.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*covariance of the parameters.*", category=RuntimeWarning)
+warnings.filterwarnings("ignore", message=".*optimization.*", category=UserWarning)
 
 # ── Ticker → filename mapping ──────────────────────────────────────────────────
 
@@ -72,11 +74,13 @@ def compute_garch_regime(h: np.ndarray,
       'MED'  → low_pct <= h <= high_pct (condizioni ottimali)
       'HIGH' → h > high_pct percentile  (volatilità estrema, ridurre size)
     """
-    lo = np.percentile(h, low_pct)
-    hi = np.percentile(h, high_pct)
+    h_s = pd.Series(h)
+    lo = h_s.expanding(min_periods=20).quantile(low_pct / 100)
+    hi = h_s.expanding(min_periods=20).quantile(high_pct / 100)
     regime = np.full(len(h), "MED", dtype=object)
-    regime[h < lo] = "LOW"
-    regime[h > hi] = "HIGH"
+    valid = lo.notna() & hi.notna()
+    regime[valid & (h_s.values < lo.values)] = "LOW"
+    regime[valid & (h_s.values > hi.values)] = "HIGH"
     return regime
 
 
@@ -230,15 +234,30 @@ def backtest_v2(df: pd.DataFrame,
         if in_trade:
             exit_price = exit_reason = None
 
+            check_sl_first = bool(i % 2)
             if direction == 1:
-                if lows[i] <= sl:
+                sl_hit = lows[i] <= sl
+                tp_hit = highs[i] >= tp
+                if sl_hit and tp_hit:
+                    if check_sl_first:
+                        exit_price, exit_reason = sl, "SL"
+                    else:
+                        exit_price, exit_reason = tp, "TP"
+                elif sl_hit:
                     exit_price, exit_reason = sl, "SL"
-                elif highs[i] >= tp:
+                elif tp_hit:
                     exit_price, exit_reason = tp, "TP"
             else:
-                if highs[i] >= sl:
+                sl_hit = highs[i] >= sl
+                tp_hit = lows[i] <= tp
+                if sl_hit and tp_hit:
+                    if check_sl_first:
+                        exit_price, exit_reason = sl, "SL"
+                    else:
+                        exit_price, exit_reason = tp, "TP"
+                elif sl_hit:
                     exit_price, exit_reason = sl, "SL"
-                elif lows[i] <= tp:
+                elif tp_hit:
                     exit_price, exit_reason = tp, "TP"
 
             if exit_price is not None:

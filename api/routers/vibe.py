@@ -15,6 +15,7 @@ from api.models import VibeGenerateRequest
 
 router = APIRouter()
 _executor = ThreadPoolExecutor(max_workers=2)
+_ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 SYSTEM_PROMPT = """You are a quantitative trading strategy assistant for the Pareto Terminal.
 Given an asset's historical statistics and optionally a natural language description, generate a trading strategy configuration and Python code.
@@ -165,7 +166,11 @@ async def _claude_stream(body: VibeGenerateRequest):
     """Real Claude stream via anthropic SDK."""
     import anthropic
 
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    if not _ANTHROPIC_KEY:
+        yield f"data: {json.dumps({'type': 'delta', 'text': '[Error: ANTHROPIC_API_KEY not configured on server]'})}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'config': {}, 'code': ''})}\n\n"
+        return
+    client = anthropic.Anthropic(api_key=_ANTHROPIC_KEY)
     loop = asyncio.get_event_loop()
     queue: asyncio.Queue = asyncio.Queue()
 
