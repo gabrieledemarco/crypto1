@@ -211,8 +211,12 @@ export function SetupScreen() {
         body: JSON.stringify({ params, strategy_id: activeStrategyId ?? undefined }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-        throw new Error(err.detail ?? `HTTP ${res.status}`);
+        const errBody = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        const raw = errBody?.detail ?? `HTTP ${res.status}`;
+        const msg = Array.isArray(raw)
+          ? raw.map((d: Record<string, unknown>) => d?.msg ?? JSON.stringify(d)).join("; ")
+          : String(raw);
+        throw new Error(msg);
       }
       const data = await res.json();
       setRunId(data.id);
