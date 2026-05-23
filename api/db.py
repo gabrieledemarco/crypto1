@@ -1,17 +1,28 @@
-"""DuckDB single-connection wrapper + schema init."""
+"""DuckDB per-thread connection wrapper + schema init."""
 import os
+import threading
 import duckdb
 
 DB_PATH = os.environ.get("DUCKDB_PATH", "/tmp/pareto.db")
-_conn: duckdb.DuckDBPyConnection | None = None
+_local = threading.local()
 
 
 def get_conn() -> duckdb.DuckDBPyConnection:
-    global _conn
-    if _conn is None:
-        _conn = duckdb.connect(DB_PATH)
-        _init_schema(_conn)
-    return _conn
+    if not hasattr(_local, 'conn') or _local.conn is None:
+        _local.conn = duckdb.connect(DB_PATH)
+        _init_schema(_local.conn)
+    return _local.conn
+
+
+def close_conn() -> None:
+    """Close the thread-local DuckDB connection if open."""
+    conn = getattr(_local, 'conn', None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _local.conn = None
 
 
 def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
@@ -65,5 +76,14 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             status        TEXT DEFAULT 'research',
             run_ref       TEXT,
             created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS brain_chunks (
+            id         TEXT PRIMARY KEY,
+            title      TEXT,
+            content    TEXT,
+            tags       JSON,
+            synced_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)

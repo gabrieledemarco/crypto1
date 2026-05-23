@@ -291,6 +291,14 @@
   align-items: center;
 }
 
+.brainStatus {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  opacity: 0.7;
+}
+
 .loadBtn {
   background: transparent;
   border: 1px solid var(--border-l);

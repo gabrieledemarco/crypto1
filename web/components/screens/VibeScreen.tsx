@@ -87,6 +87,25 @@ export function VibeScreen() {
   const [strategies, setStrategies] = useState<SavedStrategy[]>([]);
   const [selectedStratId, setSelectedStratId] = useState("");
 
+  // Second brain sync
+  const [brainSyncing, setBrainSyncing] = useState(false);
+  const [brainStatus, setBrainStatus] = useState<{ synced: number; errors: number } | null>(null);
+
+  const handleBrainSync = async () => {
+    setBrainSyncing(true);
+    try {
+      const res = await fetch("/api/brain/sync", { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setBrainStatus({ synced: data.synced, errors: data.errors });
+      setToast(`Brain synced: ${data.synced} chapters loaded`);
+    } catch (e) {
+      setToast(`Brain sync failed: ${e instanceof Error ? e.message : "unknown error"}`);
+    } finally {
+      setBrainSyncing(false);
+    }
+  };
+
   // Save flow
   const [showSaveInput, setShowSaveInput] = useState(false);
   const [saveName, setSaveName] = useState("");
@@ -115,18 +134,23 @@ export function VibeScreen() {
     setShowSaveInput(false);
     setOutputTab("explanation");
 
-    let assetStats: Record<string, unknown> | null = null;
-    try {
-      const tickerBase = asset.replace(/-USD$/, "");
-      const r = await fetch(`/api/assets/${tickerBase}/stats?interval=${timeframe}`);
-      if (r.ok) assetStats = await r.json();
-    } catch { /* stats are optional */ }
+    const enc = encodeURIComponent(asset);
+    const [assetStats, quantAnalysis, garchForecast] = await Promise.all([
+      fetch(`/api/assets/${enc}/stats?interval=${timeframe}`).then((r) => r.ok ? r.json() : null).catch(() => null),
+      fetch(`/api/assets/${enc}/quant?interval=${timeframe}`).then((r) => r.ok ? r.json() : null).catch(() => null),
+      fetch(`/api/assets/${enc}/garch-forecast?interval=${timeframe}`).then((r) => r.ok ? r.json() : null).catch(() => null),
+    ]);
 
     try {
       const res = await fetch("/api/vibe/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: prompt.trim(), asset, timeframe, n_candidates: 1, asset_stats: assetStats }),
+        body: JSON.stringify({
+          prompt: prompt.trim(), asset, timeframe, n_candidates: 1,
+          asset_stats: assetStats,
+          quant_analysis: quantAnalysis,
+          garch_forecast: garchForecast,
+        }),
       });
 
       if (!res.body) throw new Error("No stream body");
@@ -288,6 +312,28 @@ export function VibeScreen() {
 
           <div className={styles.hint}>
             Powered by Claude · ⌘↵ to generate · results are illustrative
+          </div>
+
+          {/* Knowledge base sync */}
+          <div className={styles.loadSection}>
+            <div className={styles.label}>KNOWLEDGE BASE</div>
+            <div className={styles.loadRow}>
+              <span className={styles.brainStatus}>
+                {brainStatus
+                  ? `${brainStatus.synced} chapters${brainStatus.errors > 0 ? ` · ${brainStatus.errors} errors` : ""}`
+                  : "not synced"}
+              </span>
+              <button
+                className={styles.loadBtn}
+                onClick={handleBrainSync}
+                disabled={brainSyncing}
+              >
+                {brainSyncing ? "SYNCING…" : "SYNC"}
+              </button>
+            </div>
+            <div className={styles.hint} style={{ marginTop: 4 }}>
+              Downloads ML-trading book chapters for smarter strategy generation
+            </div>
           </div>
 
           {/* Load previous strategy */}

@@ -9,9 +9,11 @@ export function useSSE(url: string | null, onMessage: (data: unknown) => void) {
     const es = new EventSource(url);
     es.onmessage = (e) => {
       try {
-        cbRef.current(JSON.parse(e.data));
-      } catch {
-        /* ignore */
+        const parsed = JSON.parse(e.data);
+        cbRef.current(parsed);
+      } catch (parseErr) {
+        console.warn('[SSE] Failed to parse message:', e.data, parseErr);
+        // do NOT rethrow — keep the stream alive
       }
     };
     return () => es.close();

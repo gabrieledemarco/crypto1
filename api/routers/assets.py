@@ -59,10 +59,26 @@ def list_ticker_series(ticker: str):
 
 @router.post("/fetch")
 def fetch_asset(body: AssetFetch):
-    from engine.providers.yfinance_client import fetch as yf_fetch
+    VALID_INTERVALS = {"1m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
+    if body.interval not in VALID_INTERVALS:
+        raise HTTPException(400, f"Invalid interval '{body.interval}'. Must be one of: {sorted(VALID_INTERVALS)}")
 
     try:
-        df = yf_fetch(body.ticker, period=body.period, interval=body.interval)
+        from engine.providers.ccxt_client import is_crypto_ticker, fetch as ccxt_fetch
+        from engine.providers.yfinance_client import fetch as yf_fetch
+        if is_crypto_ticker(body.ticker):
+            try:
+                df = ccxt_fetch(body.ticker, period=body.period, interval=body.interval)
+            except Exception as ccxt_exc:
+                # fallback to yfinance if ccxt fails
+                try:
+                    df = yf_fetch(body.ticker, period=body.period, interval=body.interval)
+                except Exception as yf_exc:
+                    raise HTTPException(400, f"Fetch failed (ccxt: {ccxt_exc}; yfinance: {yf_exc})")
+        else:
+            df = yf_fetch(body.ticker, period=body.period, interval=body.interval)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(400, f"Fetch failed: {exc}")
 
@@ -87,6 +103,9 @@ def fetch_asset(body: AssetFetch):
 
 @router.get("/{ticker}/bars")
 def get_bars(ticker: str, limit: int = 1000, interval: str = "1d"):
+    VALID_INTERVALS = {"1m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
+    if interval not in VALID_INTERVALS:
+        raise HTTPException(400, f"Invalid interval '{interval}'")
     source_key = f"yfinance:{interval}"
     conn = get_conn()
     # backward compat: 1d also matches legacy source="yfinance"
@@ -113,6 +132,9 @@ def get_bars(ticker: str, limit: int = 1000, interval: str = "1d"):
 
 @router.get("/{ticker}/stats")
 def get_stats(ticker: str, interval: str = "1d"):
+    VALID_INTERVALS = {"1m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
+    if interval not in VALID_INTERVALS:
+        raise HTTPException(400, f"Invalid interval '{interval}'")
     BARS_PER_YEAR = {
         "1m": 60*24*365, "5m": 12*24*365, "15m": 4*24*365,
         "30m": 2*24*365, "1h": 24*365, "4h": 6*365,
@@ -145,8 +167,9 @@ def get_stats(ticker: str, interval: str = "1d"):
     sharpe = (mean / std * np.sqrt(ann_factor)) if std > 0 else 0
     # CAGR
     total_ret = closes[-1] / closes[0]
-    n_hours   = len(closes)
-    cagr      = (total_ret ** (ann_factor / n_hours) - 1) * 100
+    n_hours   = max(len(closes), 1)
+    raw_cagr  = (total_ret ** (ann_factor / n_hours) - 1) * 100
+    cagr      = max(min(raw_cagr, 999.0), -99.9)
     # MaxDD
     peak_arr = np.maximum.accumulate(closes)
     dd_arr   = (closes - peak_arr) / peak_arr * 100
@@ -201,9 +224,10 @@ def get_quant_stats(ticker: str, interval: str = Query("1h")):
     from engine.quant_stats import compute_hurst, test_stationarity, compute_var_cvar, rolling_metrics
     conn = get_conn()
     try:
+        source_key = f"yfinance:{interval}"
         rows = conn.execute(
-            "SELECT close FROM assets WHERE ticker = ? AND interval = ? ORDER BY ts ASC",
-            [ticker.replace("-USD", ""), interval]
+            "SELECT close FROM assets WHERE ticker = ? AND source = ? ORDER BY ts ASC",
+            [ticker, source_key]
         ).fetchall()
     except Exception:
         rows = []
@@ -237,27 +261,38 @@ def get_garch_forecast(ticker: str, interval: str = Query("1h")):
     ann_factor = BARS_PER_YEAR.get(interval, 365)
     source_key = f"yfinance:{interval}"
     conn = get_conn()
-    if interval == "1d":
+    # Query all stored sources for this ticker/interval so ccxt-fetched data is also found
+    rows = conn.execute(
+        "SELECT close FROM assets WHERE ticker=? AND source LIKE ? ORDER BY ts",
+        [ticker, f"%:{interval}"]
+    ).fetchall()
+    if interval == "1d" and not rows:
         rows = conn.execute(
-            "SELECT close FROM assets WHERE ticker=? AND (source=? OR source=?) ORDER BY ts",
+            "SELECT close FROM assets WHERE ticker=? AND source IN (?, ?) ORDER BY ts",
             [ticker, source_key, "yfinance"]
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT close FROM assets WHERE ticker=? AND source=? ORDER BY ts",
-            [ticker, source_key]
         ).fetchall()
     if not rows or len(rows) < 100:
         raise HTTPException(404, f"Not enough data for {ticker}/{interval} (need ≥100 bars)")
 
     prices = np.array([r[0] for r in rows], dtype=float)
+    prices = prices[np.isfinite(prices) & (prices > 0)]
+    if len(prices) < 100:
+        raise HTTPException(404, f"Insufficient valid prices for {ticker}/{interval}")
+
     rets_pct = np.diff(np.log(prices)) * 100  # percentage log-returns
+    # Remove zero-return runs that can cause GARCH degeneracy (e.g. forex weekends)
+    rets_pct = rets_pct[np.isfinite(rets_pct)]
+
+    garch_error: str | None = None
+    omega = alpha = beta = persistence = 0.0
+    half_life = None
+    current_vol = vol_1d = vol_5d = vol_22d = 0.0
 
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            model = arch_model(rets_pct, p=1, q=1, vol="Garch", dist="normal", rescale=False)
-            res = model.fit(disp="off", options={"maxiter": 200})
+            model = arch_model(rets_pct, p=1, q=1, vol="Garch", dist="normal", rescale=True)
+            res = model.fit(disp="off", options={"maxiter": 500})
 
         params = res.params
         omega = float(params.get("omega", 0))
@@ -266,17 +301,19 @@ def get_garch_forecast(ticker: str, interval: str = Query("1h")):
         persistence = alpha + beta
         half_life = float(np.log(0.5) / np.log(persistence)) if 0 < persistence < 1 else None
 
-        fc = res.forecast(horizon=22, reindex=False)
-        var_fc = fc.variance.values[-1]  # shape (22,)
-        vol_1d  = float(np.sqrt(max(var_fc[0], 0)))
-        vol_5d  = float(np.sqrt(max(var_fc[4], 0)))
-        vol_22d = float(np.sqrt(max(var_fc[21], 0)))
+        try:
+            fc = res.forecast(horizon=22, reindex=False)
+            var_fc = fc.variance.values[-1]
+            vol_1d  = float(np.sqrt(max(var_fc[0], 0)))
+            vol_5d  = float(np.sqrt(max(var_fc[4], 0)))
+            vol_22d = float(np.sqrt(max(var_fc[21], 0)))
+        except Exception:
+            pass
 
-        # Current conditional vol (last fitted value)
         current_vol = float(np.sqrt(max(res.conditional_volatility.iloc[-1] ** 2, 0)))
 
     except Exception as e:
-        raise HTTPException(500, f"GARCH fit failed: {e}")
+        garch_error = str(e)
 
     # Ljung-Box on returns and squared returns (lag=10)
     try:
@@ -289,13 +326,11 @@ def get_garch_forecast(ticker: str, interval: str = Query("1h")):
     except Exception:
         lb_ret_stat = lb_ret_pval = lb_sq_stat = lb_sq_pval = 0.0
 
-    # Convert vol from percentage to decimal for frontend consistency
-    scale = 1.0  # keep as pct for display
-
     return {
         "ticker":   ticker,
         "interval": interval,
         "n_bars":   len(prices),
+        "garch_error": garch_error,
         "params": {
             "omega":          round(omega, 8),
             "alpha":          round(alpha, 4),

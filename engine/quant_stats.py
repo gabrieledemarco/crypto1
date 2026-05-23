@@ -2,7 +2,12 @@
 import numpy as np
 import pandas as pd
 import warnings
-warnings.filterwarnings("ignore")
+
+warnings.filterwarnings("ignore", message=".*Maximum Likelihood.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*covariance of the parameters.*", category=RuntimeWarning)
+warnings.filterwarnings("ignore", message=".*optimization.*", category=UserWarning)
+
+HOURLY_PERIODS = 24 * 365  # annualisation factor for hourly bars
 
 
 def compute_hurst(prices: np.ndarray) -> dict:
@@ -25,7 +30,7 @@ def compute_hurst(prices: np.ndarray) -> dict:
 
 def test_stationarity(prices: np.ndarray) -> dict:
     """
-    ADF and KPSS stationarity tests on log-returns.
+    ADF and KPSS stationarity tests on log-returns (statsmodels).
     ADF H0: unit root (non-stationary). Small p-value → stationary.
     KPSS H0: stationary. Small p-value → non-stationary.
     """
@@ -57,33 +62,57 @@ def test_stationarity(prices: np.ndarray) -> dict:
 
 def compute_var_cvar(returns: np.ndarray, confidence: float = 0.95) -> dict:
     """
-    Historical VaR and CVaR (Expected Shortfall) at given confidence level.
-    Returns values as percentages of portfolio.
+    Historical VaR and CVaR (Expected Shortfall) via quantstats.
+    Returns values as positive percentages (loss convention).
     """
-    returns = np.asarray(returns, dtype=float)
-    returns = returns[np.isfinite(returns)]
-    if len(returns) < 10:
-        return {"var": None, "cvar": None, "error": "Insufficient data"}
-    sorted_r = np.sort(returns)
-    idx = int(np.floor(len(sorted_r) * (1 - confidence)))
-    idx = max(idx, 1)
-    var  = -sorted_r[idx] * 100          # positive = loss %
-    cvar = -sorted_r[:idx].mean() * 100  # mean of worst tail
-    return {
-        "var":  round(float(var), 4),
-        "cvar": round(float(cvar), 4),
-        "confidence": confidence,
-    }
+    try:
+        import quantstats as qs
+        r = pd.Series(np.asarray(returns, dtype=float)).dropna()
+        if len(r) < 10:
+            return {"var": None, "cvar": None, "error": "Insufficient data"}
+        var = float(qs.stats.value_at_risk(r, confidence=confidence)) * -100
+        cvar = float(qs.stats.conditional_value_at_risk(r, confidence=confidence)) * -100
+        return {
+            "var": round(var, 4),
+            "cvar": round(cvar, 4),
+            "confidence": confidence,
+        }
+    except Exception:
+        # fallback: historical percentile method
+        r = np.asarray(returns, dtype=float)
+        r = r[np.isfinite(r)]
+        if len(r) < 10:
+            return {"var": None, "cvar": None, "error": "Insufficient data"}
+        sorted_r = np.sort(r)
+        idx = max(int(np.floor(len(sorted_r) * (1 - confidence))), 1)
+        return {
+            "var": round(float(-sorted_r[idx] * 100), 4),
+            "cvar": round(float(-sorted_r[:idx].mean() * 100), 4),
+            "confidence": confidence,
+        }
 
 
 def rolling_metrics(prices: np.ndarray, window: int = 30) -> dict:
-    """Rolling volatility and Sharpe estimate for the given price series."""
-    prices = np.asarray(prices, dtype=float)
-    rets = np.diff(np.log(prices[prices > 0]))
-    rets = rets[np.isfinite(rets)]
-    if len(rets) < window:
-        return {"ann_vol": None, "sharpe": None}
-    ann_factor = np.sqrt(365 * 24)  # hourly default
-    ann_vol = float(np.std(rets[-window:]) * ann_factor * 100)
-    sharpe  = float((np.mean(rets[-window:]) / np.std(rets[-window:])) * ann_factor) if np.std(rets[-window:]) > 0 else 0.0
-    return {"ann_vol": round(ann_vol, 4), "sharpe": round(sharpe, 4)}
+    """Rolling volatility and Sharpe estimate via quantstats (hourly annualisation)."""
+    try:
+        import quantstats as qs
+        prices = np.asarray(prices, dtype=float)
+        rets = pd.Series(np.diff(np.log(prices[prices > 0]))).dropna()
+        if len(rets) < window:
+            return {"ann_vol": None, "sharpe": None}
+        r = rets.iloc[-window:]
+        ann_vol = float(r.std() * np.sqrt(HOURLY_PERIODS) * 100)
+        sharpe = float(qs.stats.sharpe(r, periods=HOURLY_PERIODS))
+        return {"ann_vol": round(ann_vol, 4), "sharpe": round(sharpe, 4)}
+    except Exception:
+        # fallback: raw numpy
+        prices = np.asarray(prices, dtype=float)
+        rets = np.diff(np.log(prices[prices > 0]))
+        rets = rets[np.isfinite(rets)]
+        if len(rets) < window:
+            return {"ann_vol": None, "sharpe": None}
+        r = rets[-window:]
+        ann_factor = np.sqrt(HOURLY_PERIODS)
+        ann_vol = float(np.std(r) * ann_factor * 100)
+        sharpe = float(np.mean(r) / np.std(r) * ann_factor) if np.std(r) > 0 else 0.0
+        return {"ann_vol": round(ann_vol, 4), "sharpe": round(sharpe, 4)}

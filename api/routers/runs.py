@@ -40,11 +40,14 @@ _sse_queues: dict[str, asyncio.Queue] = {}
 async def stream_run(run_id: str):
     queue = _sse_queues.setdefault(run_id, asyncio.Queue())
     async def generator():
-        while True:
-            event = await queue.get()
-            yield f"data: {json.dumps(event)}\n\n"
-            if event.get("phase") == "done" or event.get("phase") == "error":
-                break
+        try:
+            while True:
+                event = await queue.get()
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("phase") in ("done", "error"):
+                    break
+        finally:
+            _sse_queues.pop(run_id, None)
     return StreamingResponse(generator(), media_type="text/event-stream",
                               headers={"Cache-Control": "no-cache",
                                        "X-Accel-Buffering": "no"})
@@ -54,16 +57,21 @@ async def stream_run(run_id: str):
 @router.get("")
 def list_runs(strategy_id: Optional[str] = Query(None)):
     conn = get_conn()
-    where = "WHERE r.strategy_id = ?" if strategy_id else ""
-    args  = [strategy_id] if strategy_id else []
-    rows = conn.execute(f"""
-        SELECT r.id, r.name, r.ticker, r.timeframe, r.status, r.params, r.created_at,
-               r.strategy_id, rr.metrics, rr.equity
-        FROM runs r
-        LEFT JOIN run_results rr ON r.id = rr.run_id
-        {where}
-        ORDER BY r.created_at DESC
-    """, args).fetchall()
+    if strategy_id:
+        rows = conn.execute(
+            "SELECT r.id, r.name, r.ticker, r.timeframe, r.status, r.params, r.created_at,"
+            " r.strategy_id, rr.metrics, rr.equity"
+            " FROM runs r LEFT JOIN run_results rr ON r.id = rr.run_id"
+            " WHERE r.strategy_id = ? ORDER BY r.created_at DESC",
+            [strategy_id]
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT r.id, r.name, r.ticker, r.timeframe, r.status, r.params, r.created_at,"
+            " r.strategy_id, rr.metrics, rr.equity"
+            " FROM runs r LEFT JOIN run_results rr ON r.id = rr.run_id"
+            " ORDER BY r.created_at DESC"
+        ).fetchall()
     result = []
     for r in rows:
         run_id, name, ticker, timeframe, status, params_str, created_at, strat_id, metrics_str, equity_str = r
@@ -110,9 +118,9 @@ def delete_unlinked_runs():
         "SELECT id FROM runs WHERE strategy_id IS NULL OR strategy_id = ''"
     ).fetchall()]
     if ids:
-        placeholders = ",".join(["?" for _ in ids])
-        conn.execute(f"DELETE FROM run_results WHERE run_id IN ({placeholders})", ids)
-        conn.execute(f"DELETE FROM runs WHERE id IN ({placeholders})", ids)
+        for run_id_del in ids:
+            conn.execute("DELETE FROM run_results WHERE run_id = ?", [run_id_del])
+            conn.execute("DELETE FROM runs WHERE id = ?", [run_id_del])
     return {"deleted": len(ids), "ids": ids}
 
 
@@ -243,22 +251,25 @@ def get_bootstrap_ci(run_id: str):
             )
         sharpe_ci = (float(bs_sharpe.confidence_interval.low), float(bs_sharpe.confidence_interval.high))
         cagr_ci   = (float(bs_cagr.confidence_interval.low),   float(bs_cagr.confidence_interval.high))
-    except Exception:
-        sharpe_ci = (sharpe_point * 0.7, sharpe_point * 1.3)
-        cagr_ci   = (cagr_point * 0.7,   cagr_point * 1.3)
+    except Exception as e:
+        import logging
+        logging.warning(f"Bootstrap CI failed: {e}")
+        sharpe_ci = (None, None)
+        cagr_ci = (None, None)
+        ci_method = "unavailable"
 
     return {
         "run_id":    run_id,
         "n_returns": n,
         "sharpe": {
-            "point": round(sharpe_point, 3),
-            "ci_low":  round(sharpe_ci[0], 3),
-            "ci_high": round(sharpe_ci[1], 3),
+            "point":   round(sharpe_point, 3),
+            "ci_low":  round(sharpe_ci[0], 3) if sharpe_ci[0] is not None else None,
+            "ci_high": round(sharpe_ci[1], 3) if sharpe_ci[1] is not None else None,
         },
         "cagr_pct": {
-            "point": round(cagr_point, 2),
-            "ci_low":  round(cagr_ci[0], 2),
-            "ci_high": round(cagr_ci[1], 2),
+            "point":   round(cagr_point, 2),
+            "ci_low":  round(cagr_ci[0], 2) if cagr_ci[0] is not None else None,
+            "ci_high": round(cagr_ci[1], 2) if cagr_ci[1] is not None else None,
         },
     }
 
@@ -266,7 +277,7 @@ def get_bootstrap_ci(run_id: str):
 
 @router.post("")
 async def create_run(body: RunCreate):
-    run_id = str(uuid.uuid4())[:8]
+    run_id = str(uuid.uuid4()).replace('-', '')[:12]
     name   = body.name or f"run-{run_id}"
     params = body.params.model_dump()
 
@@ -316,7 +327,7 @@ async def _run_backtest(run_id: str, params: dict):
 
         # Run in thread pool to avoid blocking event loop
         import concurrent.futures
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         with concurrent.futures.ThreadPoolExecutor() as pool:
             result = await loop.run_in_executor(
@@ -442,7 +453,14 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
         mc_bars_raw = params.get("mc_bars")
         n_bars  = int(mc_bars_raw) if (mc_bars_raw and int(mc_bars_raw) > 0) else None
 
-        bs     = run_bootstrap(pnl_arr, n_sims=n_sims, n_bars=n_bars, initial_capital=INITIAL_CAPITAL)
+        # Compute actual backtest duration in days for CAGR annualization
+        mc_days = 365.0
+        if equity_s is not None and len(equity_s) >= 2:
+            try:
+                mc_days = max((equity_s.index[-1] - equity_s.index[0]).days, 1)
+            except Exception:
+                mc_days = 365.0
+        bs     = run_bootstrap(pnl_arr, n_sims=n_sims, n_bars=n_bars, initial_capital=INITIAL_CAPITAL, days_in_period=mc_days)
         stress = run_stress(pnl_arr, initial_capital=INITIAL_CAPITAL)
 
         # Trade stats from original trades
@@ -514,7 +532,7 @@ async def preview_run(body: RunParams):
 
     try:
         import concurrent.futures
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         params = body.model_dump()
         result = await loop.run_in_executor(None, _sync_preview, df, params)
         return result

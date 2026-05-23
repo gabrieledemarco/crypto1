@@ -11,3 +11,7 @@ anthropic>=0.49.0
 arch>=6.3.0
 statsmodels>=0.14.0
 hurst>=0.0.5
+slowapi==0.1.9
+structlog>=23.0.0
+quantstats>=0.0.62
+ccxt>=4.0.0

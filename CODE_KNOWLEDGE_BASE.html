@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>Pareto Terminal — Code Knowledge Base</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0d1117;color:#c9d1d9;font-size:13px}
+h1{padding:18px 24px;font-size:20px;color:#f0f6ff;border-bottom:1px solid #21262d;background:#161b22}
+.topbar{display:flex;gap:16px;padding:10px 24px;background:#161b22;border-bottom:1px solid #21262d;align-items:center}
+.topbar span{font-size:12px;color:#8b949e}
+.badge{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600}
+.b-python{background:#3572A5;color:#fff}.b-typescript{background:#2b7489;color:#fff}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.layout{display:grid;grid-template-columns:360px 1fr;height:calc(100vh - 100px)}
+#sidebar{overflow-y:auto;border-right:1px solid #21262d}
+#main{display:flex;flex-direction:column;overflow:hidden}
+#graph-container{flex:1;min-height:0;background:#0d1117;position:relative}
+canvas#graph{width:100%;height:100%}
+#detail-panel{height:200px;border-top:1px solid #21262d;overflow-y:auto;padding:12px 16px;background:#161b22}
+.tabs{display:flex;border-bottom:1px solid #21262d;background:#161b22}
+.tab{padding:8px 16px;cursor:pointer;color:#8b949e;border-bottom:2px solid transparent;font-size:12px}
+.tab.active{color:#f0f6ff;border-bottom-color:#58a6ff}
+.tab-pane{display:none}.tab-pane.active{display:block}
+table{width:100%;border-collapse:collapse}
+th{padding:6px 10px;text-align:left;color:#8b949e;font-weight:500;border-bottom:1px solid #21262d;font-size:11px;position:sticky;top:0;background:#161b22}
+td{padding:5px 10px;border-bottom:1px solid #161b22;vertical-align:top}
+tr:hover td{background:#1c2128;cursor:pointer}
+.num{text-align:right;color:#8b949e}
+.sym{color:#a5d6ff;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#search{width:100%;padding:8px 12px;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:12px;outline:none}
+#search:focus{border-color:#58a6ff}
+.search-wrap{padding:10px 12px;border-bottom:1px solid #21262d}
+.legend{display:flex;flex-wrap:wrap;gap:8px;padding:8px 24px;background:#161b22;border-bottom:1px solid #21262d}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:11px;color:#8b949e}
+.detail-title{font-size:14px;color:#f0f6ff;margin-bottom:8px;font-weight:600}
+.detail-section h4{font-size:11px;color:#8b949e;text-transform:uppercase;margin-bottom:3px}
+.detail-section p{color:#a5d6ff;font-size:12px;line-height:1.6}
+.fn-name{color:#79c0ff;font-family:monospace;font-size:12px}
+.fn-file{color:#8b949e;font-size:11px}
+#fn-search{width:100%;padding:6px 10px;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:12px;outline:none;margin:8px 12px;width:calc(100% - 24px);display:block}
+</style>
+</head>
+<body>
+<h1>&#x1F5FA; Pareto Terminal &mdash; Code Knowledge Base</h1>
+<div class="topbar">
+  <span>&#x1F4E6; 60 modules</span>
+  <span>&#x1F517; 18 dependency edges</span>
+  <span>Generated: 2026-05-22</span>
+  <span style="color:#e8844a">&#9888; Consulta questo file prima di ogni intervento sulla codebase</span>
+</div>
+<div class="legend"><div class="leg-item"><span class="dot" style="background:#4f86c6"></span>api</div><div class="leg-item"><span class="dot" style="background:#e8844a"></span>engine</div><div class="leg-item"><span class="dot" style="background:#7dc97d"></span>web/app</div><div class="leg-item"><span class="dot" style="background:#b07dd4"></span>web/components</div><div class="leg-item"><span class="dot" style="background:#e8c84a"></span>web/hooks</div><div class="leg-item"><span class="dot" style="background:#4acce8"></span>web/lib</div><div class="leg-item"><span class="dot" style="background:#e84a7d"></span>web/store</div></div>
+<div class="layout">
+  <div id="sidebar">
+    <div class="search-wrap">
+      <input id="search" type="text" placeholder="Filter modules&hellip;" oninput="filterTable(this.value)"/>
+    </div>
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('modules',this)">Modules</div>
+      <div class="tab" onclick="switchTab('functions',this)">Functions</div>
+    </div>
+    <div id="tab-modules" class="tab-pane active">
+      <table id="mod-table">
+        <thead><tr><th>File</th><th>Lang</th><th>Lines</th><th>Symbols</th></tr></thead>
+        <tbody id="mod-tbody"><tr onclick="selectNode('api/db.py')"><td><span class="dot" style="background:#4f86c6"></span>api/db.py</td><td><span class="badge b-python">python</span></td><td class="num">69</td><td class="sym">get_conn, _init_schema</td></tr>
+<tr onclick="selectNode('api/main.py')"><td><span class="dot" style="background:#4f86c6"></span>api/main.py</td><td><span class="badge b-python">python</span></td><td class="num">31</td><td class="sym">startup, health</td></tr>
+<tr onclick="selectNode('api/models.py')"><td><span class="dot" style="background:#4f86c6"></span>api/models.py</td><td><span class="badge b-python">python</span></td><td class="num">48</td><td class="sym">RunParams, RunCreate, AssetFetch, StrategyCreate, VibeGenerateRequest</td></tr>
+<tr onclick="selectNode('api/routers/__init__.py')"><td><span class="dot" style="background:#4f86c6"></span>api/routers/__init__.py</td><td><span class="badge b-python">python</span></td><td class="num">0</td><td class="sym">—</td></tr>
+<tr onclick="selectNode('api/routers/assets.py')"><td><span class="dot" style="background:#4f86c6"></span>api/routers/assets.py</td><td><span class="badge b-python">python</span></td><td class="num">317</td><td class="sym">list_assets, list_ticker_series, fetch_asset, get_bars, get_stats, get_quant_stats, get_garch_forecast</td></tr>
+<tr onclick="selectNode('api/routers/runs.py')"><td><span class="dot" style="background:#4f86c6"></span>api/routers/runs.py</td><td><span class="badge b-python">python</span></td><td class="num">559</td><td class="sym">stream_run, list_runs, delete_unlinked_runs, delete_run, get_run, get_equity, get_trades, get_wfo…</td></tr>
+<tr onclick="selectNode('api/routers/strategies.py')"><td><span class="dot" style="background:#4f86c6"></span>api/routers/strategies.py</td><td><span class="badge b-python">python</span></td><td class="num">52</td><td class="sym">list_strategies, create_strategy, toggle_star, delete_strategy</td></tr>
+<tr onclick="selectNode('api/routers/vibe.py')"><td><span class="dot" style="background:#4f86c6"></span>api/routers/vibe.py</td><td><span class="badge b-python">python</span></td><td class="num">224</td><td class="sym">_extract_config, _extract_code, _mock_stream, _build_user_message, _claude_stream, vibe_generate, vibe_improve, _run</td></tr>
+<tr onclick="selectNode('engine/__init__.py')"><td><span class="dot" style="background:#e8844a"></span>engine/__init__.py</td><td><span class="badge b-python">python</span></td><td class="num">0</td><td class="sym">—</td></tr>
+<tr onclick="selectNode('engine/backtest.py')"><td><span class="dot" style="background:#e8844a"></span>engine/backtest.py</td><td><span class="badge b-python">python</span></td><td class="num">244</td><td class="sym">_apply_direction_filter, _apply_cfg_overrides, run_versions, _best_params_on_is, run_wfo, run_optimization</td></tr>
+<tr onclick="selectNode('engine/montecarlo.py')"><td><span class="dot" style="background:#e8844a"></span>engine/montecarlo.py</td><td><span class="badge b-python">python</span></td><td class="num">75</td><td class="sym">run_bootstrap, run_stress</td></tr>
+<tr onclick="selectNode('engine/providers/__init__.py')"><td><span class="dot" style="background:#e8844a"></span>engine/providers/__init__.py</td><td><span class="badge b-python">python</span></td><td class="num">0</td><td class="sym">—</td></tr>
+<tr onclick="selectNode('engine/providers/yfinance_client.py')"><td><span class="dot" style="background:#e8844a"></span>engine/providers/yfinance_client.py</td><td><span class="badge b-python">python</span></td><td class="num">20</td><td class="sym">fetch</td></tr>
+<tr onclick="selectNode('engine/quant_stats.py')"><td><span class="dot" style="background:#e8844a"></span>engine/quant_stats.py</td><td><span class="badge b-python">python</span></td><td class="num">89</td><td class="sym">compute_hurst, test_stationarity, compute_var_cvar, rolling_metrics</td></tr>
+<tr onclick="selectNode('engine/strategy_core.py')"><td><span class="dot" style="background:#e8844a"></span>engine/strategy_core.py</td><td><span class="badge b-python">python</span></td><td class="num">388</td><td class="sym">ticker_to_fname, fit_garch11, compute_garch_regime, compute_indicators_v2, generate_signals_v2, backtest_v2, compute_metrics</td></tr>
+<tr onclick="selectNode('web/next-env.d.ts')"><td><span class="dot" style="background:#aaa"></span>web/next-env.d.ts</td><td><span class="badge b-typescript">typescript</span></td><td class="num">5</td><td class="sym">—</td></tr>
+<tr onclick="selectNode('web/app/api/[...path]/route.ts')"><td><span class="dot" style="background:#7dc97d"></span>web/app/api/[...path]/route.ts</td><td><span class="badge b-typescript">typescript</span></td><td class="num">47</td><td class="sym">apiBase, proxy</td></tr>
+<tr onclick="selectNode('web/app/dashboard/page.tsx')"><td><span class="dot" style="background:#7dc97d"></span>web/app/dashboard/page.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">118</td><td class="sym">ScreenContent, DashboardPage</td></tr>
+<tr onclick="selectNode('web/app/layout.tsx')"><td><span class="dot" style="background:#7dc97d"></span>web/app/layout.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">22</td><td class="sym">RootLayout</td></tr>
+<tr onclick="selectNode('web/app/page.tsx')"><td><span class="dot" style="background:#7dc97d"></span>web/app/page.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">5</td><td class="sym">Home</td></tr>
+<tr onclick="selectNode('web/app/providers.tsx')"><td><span class="dot" style="background:#7dc97d"></span>web/app/providers.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">8</td><td class="sym">Providers</td></tr>
+<tr onclick="selectNode('web/components/ErrorBoundary.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/ErrorBoundary.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">39</td><td class="sym">Props, State</td></tr>
+<tr onclick="selectNode('web/components/charts/ACFPlot.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/charts/ACFPlot.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">166</td><td class="sym">computeACF, ACFPlot, toY</td></tr>
+<tr onclick="selectNode('web/components/charts/CandlestickChart.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/charts/CandlestickChart.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">328</td><td class="sym">computeEMA, CandlestickChart, findBarIdx, py, volY, volBarH, emaPath, formatPrice…</td></tr>
+<tr onclick="selectNode('web/components/charts/DrawdownChart.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/charts/DrawdownChart.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">96</td><td class="sym">DrawdownChart</td></tr>
+<tr onclick="selectNode('web/components/charts/EquityChart.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/charts/EquityChart.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">156</td><td class="sym">EquityChart</td></tr>
+<tr onclick="selectNode('web/components/charts/FanChart.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/charts/FanChart.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">96</td><td class="sym">FanChart, xOf, yOf, line, band</td></tr>
+<tr onclick="selectNode('web/components/charts/HeatmapGrid.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/charts/HeatmapGrid.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">86</td><td class="sym">lerp, cellColor, HeatmapGrid</td></tr>
+<tr onclick="selectNode('web/components/charts/Histogram.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/charts/Histogram.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">82</td><td class="sym">Histogram</td></tr>
+<tr onclick="selectNode('web/components/charts/MonthlyHeat.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/charts/MonthlyHeat.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">75</td><td class="sym">lerp, cellColor, MonthlyHeat</td></tr>
+<tr onclick="selectNode('web/components/charts/QQPlot.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/charts/QQPlot.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">185</td><td class="sym">normalInv, QQPlot, toX, toY</td></tr>
+<tr onclick="selectNode('web/components/charts/Sparkline.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/charts/Sparkline.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">31</td><td class="sym">Sparkline</td></tr>
+<tr onclick="selectNode('web/components/screens/AssetsScreen.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/screens/AssetsScreen.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">979</td><td class="sym">getKind, hurstRS, jarqueBera, RollingHurstChart, fmtDate, AssetsScreen, StatRow, StdResidualsChart…</td></tr>
+<tr onclick="selectNode('web/components/screens/CompareScreen.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/screens/CompareScreen.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">164</td><td class="sym">colorFor, CompareScreen, linePath, xy, ret, corr</td></tr>
+<tr onclick="selectNode('web/components/screens/DashboardScreen.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/screens/DashboardScreen.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">306</td><td class="sym">DashboardScreen</td></tr>
+<tr onclick="selectNode('web/components/screens/EquityScreen.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/screens/EquityScreen.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">495</td><td class="sym">annFactorForTimeframe, computeRollingSharpe, RollingSharpePanel, ACFEquityPanel, BootstrapCIPanel, ExitReasonChips, EquityScreen, toY…</td></tr>
+<tr onclick="selectNode('web/components/screens/LibraryScreen.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/screens/LibraryScreen.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">462</td><td class="sym">buildRunStub, LibraryScreen, RunRow, StatusBadge, handleStar, handleLoad, handleSelectEntry, handleDeleteRun…</td></tr>
+<tr onclick="selectNode('web/components/screens/MonteCarloScreen.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/screens/MonteCarloScreen.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">575</td><td class="sym">humanLabel, MonteCarloScreen, MetricCell, at, cvar5, kelly, ddSignIsNegative, pDDExceeds</td></tr>
+<tr onclick="selectNode('web/components/screens/SetupScreen.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/screens/SetupScreen.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">481</td><td class="sym">SetupScreen, SliderRow, PreviewMetric, normalizeTicker, handleRun, hourLabel</td></tr>
+<tr onclick="selectNode('web/components/screens/SweepScreen.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/screens/SweepScreen.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">374</td><td class="sym">SweepScreen, MetricCell, SensitivityChart, r1, toX, toY</td></tr>
+<tr onclick="selectNode('web/components/screens/TradeAnalysisScreen.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/screens/TradeAnalysisScreen.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">786</td><td class="sym">mean, fmt1, fmtPct, computeDirStats, computeStreaks, computeDrift, computeHeatmap, computePnlHistogram…</td></tr>
+<tr onclick="selectNode('web/components/screens/TradesScreen.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/screens/TradesScreen.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">370</td><td class="sym">lerp3, wrColor, computeDow, DowHeatmap, durBin, HoldingHistogram, PnlCdf, TradesScreen…</td></tr>
+<tr onclick="selectNode('web/components/screens/UnderwaterScreen.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/screens/UnderwaterScreen.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">254</td><td class="sym">computeDdPeriods, UnderwaterSVG, UnderwaterScreen, StatCell, toX, toY</td></tr>
+<tr onclick="selectNode('web/components/screens/VibeScreen.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/screens/VibeScreen.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">473</td><td class="sym">VibeScreen, fetchStrategies, handleGenerate, handleApply, handleSave, handleLoad, handleCopyCode, formatConfigVal</td></tr>
+<tr onclick="selectNode('web/components/screens/WFOScreen.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/screens/WFOScreen.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">541</td><td class="sym">fmtN, fmtPct, SummaryBar, SumCell, FoldTable, ScatterPanel, FoldChartsPanel, WFOScreen…</td></tr>
+<tr onclick="selectNode('web/components/shell/HelpToast.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/shell/HelpToast.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">98</td><td class="sym">HelpToast</td></tr>
+<tr onclick="selectNode('web/components/shell/Palette.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/shell/Palette.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">221</td><td class="sym">Palette, handleKey</td></tr>
+<tr onclick="selectNode('web/components/shell/Sidebar.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/shell/Sidebar.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">74</td><td class="sym">Sidebar</td></tr>
+<tr onclick="selectNode('web/components/shell/StatusBar.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/shell/StatusBar.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">66</td><td class="sym">StatusBar, tick</td></tr>
+<tr onclick="selectNode('web/components/shell/Toast.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/shell/Toast.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">11</td><td class="sym">Toast</td></tr>
+<tr onclick="selectNode('web/components/shell/TopBar.tsx')"><td><span class="dot" style="background:#b07dd4"></span>web/components/shell/TopBar.tsx</td><td><span class="badge b-typescript">typescript</span></td><td class="num">84</td><td class="sym">RibbonStat, TopBar</td></tr>
+<tr onclick="selectNode('web/hooks/useAssets.ts')"><td><span class="dot" style="background:#e8c84a"></span>web/hooks/useAssets.ts</td><td><span class="badge b-typescript">typescript</span></td><td class="num">101</td><td class="sym">useAssets, useAssetBars, useAssetStats, useGarchForecast</td></tr>
+<tr onclick="selectNode('web/hooks/useHotkeys.ts')"><td><span class="dot" style="background:#e8c84a"></span>web/hooks/useHotkeys.ts</td><td><span class="badge b-typescript">typescript</span></td><td class="num">120</td><td class="sym">useHotkeys, onKey</td></tr>
+<tr onclick="selectNode('web/hooks/useLibrary.ts')"><td><span class="dot" style="background:#e8c84a"></span>web/hooks/useLibrary.ts</td><td><span class="badge b-typescript">typescript</span></td><td class="num">46</td><td class="sym">useLibrary, useStarStrategy</td></tr>
+<tr onclick="selectNode('web/hooks/usePreview.ts')"><td><span class="dot" style="background:#e8c84a"></span>web/hooks/usePreview.ts</td><td><span class="badge b-typescript">typescript</span></td><td class="num">38</td><td class="sym">usePreview</td></tr>
+<tr onclick="selectNode('web/hooks/useRun.ts')"><td><span class="dot" style="background:#e8c84a"></span>web/hooks/useRun.ts</td><td><span class="badge b-typescript">typescript</span></td><td class="num">207</td><td class="sym">normalizeApiTrade, useRuns, useRunList, useDeleteRun, useDeleteUnlinkedRuns, isRealRunId, useRun, useRunEquity…</td></tr>
+<tr onclick="selectNode('web/hooks/useSSE.ts')"><td><span class="dot" style="background:#e8c84a"></span>web/hooks/useSSE.ts</td><td><span class="badge b-typescript">typescript</span></td><td class="num">19</td><td class="sym">useSSE</td></tr>
+<tr onclick="selectNode('web/lib/api.ts')"><td><span class="dot" style="background:#4acce8"></span>web/lib/api.ts</td><td><span class="badge b-typescript">typescript</span></td><td class="num">23</td><td class="sym">—</td></tr>
+<tr onclick="selectNode('web/lib/fixtures.ts')"><td><span class="dot" style="background:#4acce8"></span>web/lib/fixtures.ts</td><td><span class="badge b-typescript">typescript</span></td><td class="num">984</td><td class="sym">mulberry32, gauss, genEquity, findDDPeriods, genTrades, genSweep, genMC, computeMetrics…</td></tr>
+<tr onclick="selectNode('web/store/index.ts')"><td><span class="dot" style="background:#e84a7d"></span>web/store/index.ts</td><td><span class="badge b-typescript">typescript</span></td><td class="num">106</td><td class="sym">SetupParams, PendingVibeParams, Store</td></tr></tbody>
+      </table>
+    </div>
+    <div id="tab-functions" class="tab-pane">
+      <input id="fn-search" type="text" placeholder="Search function&hellip;" oninput="filterFn(this.value)"/>
+      <table><thead><tr><th>Function</th><th>Location</th></tr></thead>
+        <tbody id="fn-tbody"><tr><td class='fn-name'>get_conn</td><td class='fn-file'>api/db.py:9</td></tr>
+<tr><td class='fn-name'>_init_schema</td><td class='fn-file'>api/db.py:17</td></tr>
+<tr><td class='fn-name'>startup</td><td class='fn-file'>api/main.py:19</td></tr>
+<tr><td class='fn-name'>health</td><td class='fn-file'>api/main.py:24</td></tr>
+<tr><td class='fn-name'>list_assets</td><td class='fn-file'>api/routers/assets.py:23</td></tr>
+<tr><td class='fn-name'>list_ticker_series</td><td class='fn-file'>api/routers/assets.py:41</td></tr>
+<tr><td class='fn-name'>fetch_asset</td><td class='fn-file'>api/routers/assets.py:61</td></tr>
+<tr><td class='fn-name'>get_bars</td><td class='fn-file'>api/routers/assets.py:89</td></tr>
+<tr><td class='fn-name'>get_stats</td><td class='fn-file'>api/routers/assets.py:115</td></tr>
+<tr><td class='fn-name'>get_quant_stats</td><td class='fn-file'>api/routers/assets.py:199</td></tr>
+<tr><td class='fn-name'>get_garch_forecast</td><td class='fn-file'>api/routers/assets.py:226</td></tr>
+<tr><td class='fn-name'>stream_run</td><td class='fn-file'>api/routers/runs.py:40</td></tr>
+<tr><td class='fn-name'>list_runs</td><td class='fn-file'>api/routers/runs.py:55</td></tr>
+<tr><td class='fn-name'>delete_unlinked_runs</td><td class='fn-file'>api/routers/runs.py:106</td></tr>
+<tr><td class='fn-name'>delete_run</td><td class='fn-file'>api/routers/runs.py:120</td></tr>
+<tr><td class='fn-name'>get_run</td><td class='fn-file'>api/routers/runs.py:130</td></tr>
+<tr><td class='fn-name'>get_equity</td><td class='fn-file'>api/routers/runs.py:145</td></tr>
+<tr><td class='fn-name'>get_trades</td><td class='fn-file'>api/routers/runs.py:153</td></tr>
+<tr><td class='fn-name'>get_wfo</td><td class='fn-file'>api/routers/runs.py:173</td></tr>
+<tr><td class='fn-name'>get_sweep</td><td class='fn-file'>api/routers/runs.py:181</td></tr>
+<tr><td class='fn-name'>get_mc</td><td class='fn-file'>api/routers/runs.py:189</td></tr>
+<tr><td class='fn-name'>get_bootstrap_ci</td><td class='fn-file'>api/routers/runs.py:197</td></tr>
+<tr><td class='fn-name'>create_run</td><td class='fn-file'>api/routers/runs.py:268</td></tr>
+<tr><td class='fn-name'>_run_backtest</td><td class='fn-file'>api/routers/runs.py:283</td></tr>
+<tr><td class='fn-name'>_sync_backtest_pipeline</td><td class='fn-file'>api/routers/runs.py:356</td></tr>
+<tr><td class='fn-name'>preview_run</td><td class='fn-file'>api/routers/runs.py:495</td></tr>
+<tr><td class='fn-name'>_sync_preview</td><td class='fn-file'>api/routers/runs.py:525</td></tr>
+<tr><td class='fn-name'>generator</td><td class='fn-file'>api/routers/runs.py:42</td></tr>
+<tr><td class='fn-name'>sharpe_fn</td><td class='fn-file'>api/routers/runs.py:222</td></tr>
+<tr><td class='fn-name'>cagr_fn</td><td class='fn-file'>api/routers/runs.py:226</td></tr>
+<tr><td class='fn-name'>push</td><td class='fn-file'>api/routers/runs.py:288</td></tr>
+<tr><td class='fn-name'>list_strategies</td><td class='fn-file'>api/routers/strategies.py:13</td></tr>
+<tr><td class='fn-name'>create_strategy</td><td class='fn-file'>api/routers/strategies.py:27</td></tr>
+<tr><td class='fn-name'>toggle_star</td><td class='fn-file'>api/routers/strategies.py:38</td></tr>
+<tr><td class='fn-name'>delete_strategy</td><td class='fn-file'>api/routers/strategies.py:49</td></tr>
+<tr><td class='fn-name'>_extract_config</td><td class='fn-file'>api/routers/vibe.py:76</td></tr>
+<tr><td class='fn-name'>_extract_code</td><td class='fn-file'>api/routers/vibe.py:93</td></tr>
+<tr><td class='fn-name'>_mock_stream</td><td class='fn-file'>api/routers/vibe.py:101</td></tr>
+<tr><td class='fn-name'>_build_user_message</td><td class='fn-file'>api/routers/vibe.py:146</td></tr>
+<tr><td class='fn-name'>_claude_stream</td><td class='fn-file'>api/routers/vibe.py:164</td></tr>
+<tr><td class='fn-name'>vibe_generate</td><td class='fn-file'>api/routers/vibe.py:216</td></tr>
+<tr><td class='fn-name'>vibe_improve</td><td class='fn-file'>api/routers/vibe.py:223</td></tr>
+<tr><td class='fn-name'>_run</td><td class='fn-file'>api/routers/vibe.py:172</td></tr>
+<tr><td class='fn-name'>_apply_direction_filter</td><td class='fn-file'>engine/backtest.py:17</td></tr>
+<tr><td class='fn-name'>_apply_cfg_overrides</td><td class='fn-file'>engine/backtest.py:26</td></tr>
+<tr><td class='fn-name'>run_versions</td><td class='fn-file'>engine/backtest.py:39</td></tr>
+<tr><td class='fn-name'>_best_params_on_is</td><td class='fn-file'>engine/backtest.py:91</td></tr>
+<tr><td class='fn-name'>run_wfo</td><td class='fn-file'>engine/backtest.py:117</td></tr>
+<tr><td class='fn-name'>run_optimization</td><td class='fn-file'>engine/backtest.py:211</td></tr>
+<tr><td class='fn-name'>run_bootstrap</td><td class='fn-file'>engine/montecarlo.py:5</td></tr>
+<tr><td class='fn-name'>run_stress</td><td class='fn-file'>engine/montecarlo.py:47</td></tr>
+<tr><td class='fn-name'>fetch</td><td class='fn-file'>engine/providers/yfinance_client.py:5</td></tr>
+<tr><td class='fn-name'>compute_hurst</td><td class='fn-file'>engine/quant_stats.py:8</td></tr>
+<tr><td class='fn-name'>test_stationarity</td><td class='fn-file'>engine/quant_stats.py:26</td></tr>
+<tr><td class='fn-name'>compute_var_cvar</td><td class='fn-file'>engine/quant_stats.py:58</td></tr>
+<tr><td class='fn-name'>rolling_metrics</td><td class='fn-file'>engine/quant_stats.py:79</td></tr>
+<tr><td class='fn-name'>ticker_to_fname</td><td class='fn-file'>engine/strategy_core.py:27</td></tr>
+<tr><td class='fn-name'>fit_garch11</td><td class='fn-file'>engine/strategy_core.py:36</td></tr>
+<tr><td class='fn-name'>compute_garch_regime</td><td class='fn-file'>engine/strategy_core.py:66</td></tr>
+<tr><td class='fn-name'>compute_indicators_v2</td><td class='fn-file'>engine/strategy_core.py:85</td></tr>
+<tr><td class='fn-name'>generate_signals_v2</td><td class='fn-file'>engine/strategy_core.py:152</td></tr>
+<tr><td class='fn-name'>backtest_v2</td><td class='fn-file'>engine/strategy_core.py:194</td></tr>
+<tr><td class='fn-name'>compute_metrics</td><td class='fn-file'>engine/strategy_core.py:299</td></tr>
+<tr><td class='fn-name'>apiBase</td><td class='fn-file'>web/app/api/[...path]/route.ts:4</td></tr>
+<tr><td class='fn-name'>proxy</td><td class='fn-file'>web/app/api/[...path]/route.ts:14</td></tr>
+<tr><td class='fn-name'>ScreenContent</td><td class='fn-file'>web/app/dashboard/page.tsx:27</td></tr>
+<tr><td class='fn-name'>DashboardPage</td><td class='fn-file'>web/app/dashboard/page.tsx:73</td></tr>
+<tr><td class='fn-name'>RootLayout</td><td class='fn-file'>web/app/layout.tsx:10</td></tr>
+<tr><td class='fn-name'>Home</td><td class='fn-file'>web/app/page.tsx:3</td></tr>
+<tr><td class='fn-name'>Providers</td><td class='fn-file'>web/app/providers.tsx:5</td></tr>
+<tr><td class='fn-name'>computeACF</td><td class='fn-file'>web/components/charts/ACFPlot.tsx:11</td></tr>
+<tr><td class='fn-name'>ACFPlot</td><td class='fn-file'>web/components/charts/ACFPlot.tsx:27</td></tr>
+<tr><td class='fn-name'>toY</td><td class='fn-file'>web/components/charts/ACFPlot.tsx:68</td></tr>
+<tr><td class='fn-name'>computeEMA</td><td class='fn-file'>web/components/charts/CandlestickChart.tsx:32</td></tr>
+<tr><td class='fn-name'>CandlestickChart</td><td class='fn-file'>web/components/charts/CandlestickChart.tsx:41</td></tr>
+<tr><td class='fn-name'>findBarIdx</td><td class='fn-file'>web/components/charts/CandlestickChart.tsx:67</td></tr>
+<tr><td class='fn-name'>py</td><td class='fn-file'>web/components/charts/CandlestickChart.tsx:105</td></tr>
+<tr><td class='fn-name'>volY</td><td class='fn-file'>web/components/charts/CandlestickChart.tsx:112</td></tr>
+<tr><td class='fn-name'>volBarH</td><td class='fn-file'>web/components/charts/CandlestickChart.tsx:116</td></tr>
+<tr><td class='fn-name'>emaPath</td><td class='fn-file'>web/components/charts/CandlestickChart.tsx:126</td></tr>
+<tr><td class='fn-name'>formatPrice</td><td class='fn-file'>web/components/charts/CandlestickChart.tsx:143</td></tr>
+<tr><td class='fn-name'>formatDate</td><td class='fn-file'>web/components/charts/CandlestickChart.tsx:157</td></tr>
+<tr><td class='fn-name'>DrawdownChart</td><td class='fn-file'>web/components/charts/DrawdownChart.tsx:20</td></tr>
+<tr><td class='fn-name'>EquityChart</td><td class='fn-file'>web/components/charts/EquityChart.tsx:30</td></tr>
+<tr><td class='fn-name'>FanChart</td><td class='fn-file'>web/components/charts/FanChart.tsx:15</td></tr>
+<tr><td class='fn-name'>xOf</td><td class='fn-file'>web/components/charts/FanChart.tsx:40</td></tr>
+<tr><td class='fn-name'>yOf</td><td class='fn-file'>web/components/charts/FanChart.tsx:41</td></tr>
+<tr><td class='fn-name'>line</td><td class='fn-file'>web/components/charts/FanChart.tsx:44</td></tr>
+<tr><td class='fn-name'>band</td><td class='fn-file'>web/components/charts/FanChart.tsx:48</td></tr>
+<tr><td class='fn-name'>lerp</td><td class='fn-file'>web/components/charts/HeatmapGrid.tsx:12</td></tr>
+<tr><td class='fn-name'>cellColor</td><td class='fn-file'>web/components/charts/HeatmapGrid.tsx:14</td></tr>
+<tr><td class='fn-name'>HeatmapGrid</td><td class='fn-file'>web/components/charts/HeatmapGrid.tsx:27</td></tr>
+<tr><td class='fn-name'>Histogram</td><td class='fn-file'>web/components/charts/Histogram.tsx:12</td></tr>
+<tr><td class='fn-name'>lerp</td><td class='fn-file'>web/components/charts/MonthlyHeat.tsx:10</td></tr>
+<tr><td class='fn-name'>cellColor</td><td class='fn-file'>web/components/charts/MonthlyHeat.tsx:14</td></tr>
+<tr><td class='fn-name'>MonthlyHeat</td><td class='fn-file'>web/components/charts/MonthlyHeat.tsx:34</td></tr>
+<tr><td class='fn-name'>normalInv</td><td class='fn-file'>web/components/charts/QQPlot.tsx:10</td></tr>
+<tr><td class='fn-name'>QQPlot</td><td class='fn-file'>web/components/charts/QQPlot.tsx:19</td></tr>
+<tr><td class='fn-name'>toX</td><td class='fn-file'>web/components/charts/QQPlot.tsx:90</td></tr>
+<tr><td class='fn-name'>toY</td><td class='fn-file'>web/components/charts/QQPlot.tsx:91</td></tr>
+<tr><td class='fn-name'>Sparkline</td><td class='fn-file'>web/components/charts/Sparkline.tsx:8</td></tr>
+<tr><td class='fn-name'>getKind</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:24</td></tr>
+<tr><td class='fn-name'>hurstRS</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:84</td></tr>
+<tr><td class='fn-name'>jarqueBera</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:103</td></tr>
+<tr><td class='fn-name'>RollingHurstChart</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:124</td></tr>
+<tr><td class='fn-name'>fmtDate</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:169</td></tr>
+<tr><td class='fn-name'>AssetsScreen</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:175</td></tr>
+<tr><td class='fn-name'>StatRow</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:894</td></tr>
+<tr><td class='fn-name'>StdResidualsChart</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:916</td></tr>
+<tr><td class='fn-name'>toX</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:137</td></tr>
+<tr><td class='fn-name'>toY</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:138</td></tr>
+<tr><td class='fn-name'>handler</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:194</td></tr>
+<tr><td class='fn-name'>handleFetch</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:295</td></tr>
+<tr><td class='fn-name'>selectTicker</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:331</td></tr>
+<tr><td class='fn-name'>selectSeries</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:337</td></tr>
+<tr><td class='fn-name'>cx</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:928</td></tr>
+<tr><td class='fn-name'>cy</td><td class='fn-file'>web/components/screens/AssetsScreen.tsx:929</td></tr>
+<tr><td class='fn-name'>colorFor</td><td class='fn-file'>web/components/screens/CompareScreen.tsx:10</td></tr>
+<tr><td class='fn-name'>CompareScreen</td><td class='fn-file'>web/components/screens/CompareScreen.tsx:14</td></tr>
+<tr><td class='fn-name'>linePath</td><td class='fn-file'>web/components/screens/CompareScreen.tsx:42</td></tr>
+<tr><td class='fn-name'>xy</td><td class='fn-file'>web/components/screens/CompareScreen.tsx:37</td></tr>
+<tr><td class='fn-name'>ret</td><td class='fn-file'>web/components/screens/CompareScreen.tsx:68</td></tr>
+<tr><td class='fn-name'>corr</td><td class='fn-file'>web/components/screens/CompareScreen.tsx:69</td></tr>
+<tr><td class='fn-name'>DashboardScreen</td><td class='fn-file'>web/components/screens/DashboardScreen.tsx:13</td></tr>
+<tr><td class='fn-name'>annFactorForTimeframe</td><td class='fn-file'>web/components/screens/EquityScreen.tsx:17</td></tr>
+<tr><td class='fn-name'>computeRollingSharpe</td><td class='fn-file'>web/components/screens/EquityScreen.tsx:29</td></tr>
+<tr><td class='fn-name'>RollingSharpePanel</td><td class='fn-file'>web/components/screens/EquityScreen.tsx:52</td></tr>
+<tr><td class='fn-name'>ACFEquityPanel</td><td class='fn-file'>web/components/screens/EquityScreen.tsx:182</td></tr>
+<tr><td class='fn-name'>BootstrapCIPanel</td><td class='fn-file'>web/components/screens/EquityScreen.tsx:217</td></tr>
+<tr><td class='fn-name'>ExitReasonChips</td><td class='fn-file'>web/components/screens/EquityScreen.tsx:293</td></tr>
+<tr><td class='fn-name'>EquityScreen</td><td class='fn-file'>web/components/screens/EquityScreen.tsx:315</td></tr>
+<tr><td class='fn-name'>toY</td><td class='fn-file'>web/components/screens/EquityScreen.tsx:80</td></tr>
+<tr><td class='fn-name'>toX</td><td class='fn-file'>web/components/screens/EquityScreen.tsx:235</td></tr>
+<tr><td class='fn-name'>buildRunStub</td><td class='fn-file'>web/components/screens/LibraryScreen.tsx:14</td></tr>
+<tr><td class='fn-name'>LibraryScreen</td><td class='fn-file'>web/components/screens/LibraryScreen.tsx:51</td></tr>
+<tr><td class='fn-name'>RunRow</td><td class='fn-file'>web/components/screens/LibraryScreen.tsx:363</td></tr>
+<tr><td class='fn-name'>StatusBadge</td><td class='fn-file'>web/components/screens/LibraryScreen.tsx:454</td></tr>
+<tr><td class='fn-name'>handleStar</td><td class='fn-file'>web/components/screens/LibraryScreen.tsx:85</td></tr>
+<tr><td class='fn-name'>handleLoad</td><td class='fn-file'>web/components/screens/LibraryScreen.tsx:90</td></tr>
+<tr><td class='fn-name'>handleSelectEntry</td><td class='fn-file'>web/components/screens/LibraryScreen.tsx:97</td></tr>
+<tr><td class='fn-name'>handleDeleteRun</td><td class='fn-file'>web/components/screens/LibraryScreen.tsx:101</td></tr>
+<tr><td class='fn-name'>handleLoadRun</td><td class='fn-file'>web/components/screens/LibraryScreen.tsx:109</td></tr>
+<tr><td class='fn-name'>handleLoadInVibe</td><td class='fn-file'>web/components/screens/LibraryScreen.tsx:116</td></tr>
+<tr><td class='fn-name'>handleReRun</td><td class='fn-file'>web/components/screens/LibraryScreen.tsx:178</td></tr>
+<tr><td class='fn-name'>humanLabel</td><td class='fn-file'>web/components/screens/MonteCarloScreen.tsx:39</td></tr>
+<tr><td class='fn-name'>MonteCarloScreen</td><td class='fn-file'>web/components/screens/MonteCarloScreen.tsx:43</td></tr>
+<tr><td class='fn-name'>MetricCell</td><td class='fn-file'>web/components/screens/MonteCarloScreen.tsx:568</td></tr>
+<tr><td class='fn-name'>at</td><td class='fn-file'>web/components/screens/MonteCarloScreen.tsx:124</td></tr>
+<tr><td class='fn-name'>cvar5</td><td class='fn-file'>web/components/screens/MonteCarloScreen.tsx:169</td></tr>
+<tr><td class='fn-name'>kelly</td><td class='fn-file'>web/components/screens/MonteCarloScreen.tsx:188</td></tr>
+<tr><td class='fn-name'>ddSignIsNegative</td><td class='fn-file'>web/components/screens/MonteCarloScreen.tsx:216</td></tr>
+<tr><td class='fn-name'>pDDExceeds</td><td class='fn-file'>web/components/screens/MonteCarloScreen.tsx:223</td></tr>
+<tr><td class='fn-name'>SetupScreen</td><td class='fn-file'>web/components/screens/SetupScreen.tsx:31</td></tr>
+<tr><td class='fn-name'>SliderRow</td><td class='fn-file'>web/components/screens/SetupScreen.tsx:457</td></tr>
+<tr><td class='fn-name'>PreviewMetric</td><td class='fn-file'>web/components/screens/SetupScreen.tsx:474</td></tr>
+<tr><td class='fn-name'>normalizeTicker</td><td class='fn-file'>web/components/screens/SetupScreen.tsx:62</td></tr>
+<tr><td class='fn-name'>handleRun</td><td class='fn-file'>web/components/screens/SetupScreen.tsx:204</td></tr>
+<tr><td class='fn-name'>hourLabel</td><td class='fn-file'>web/components/screens/SetupScreen.tsx:239</td></tr>
+<tr><td class='fn-name'>SweepScreen</td><td class='fn-file'>web/components/screens/SweepScreen.tsx:14</td></tr>
+<tr><td class='fn-name'>MetricCell</td><td class='fn-file'>web/components/screens/SweepScreen.tsx:189</td></tr>
+<tr><td class='fn-name'>SensitivityChart</td><td class='fn-file'>web/components/screens/SweepScreen.tsx:208</td></tr>
+<tr><td class='fn-name'>r1</td><td class='fn-file'>web/components/screens/SweepScreen.tsx:49</td></tr>
+<tr><td class='fn-name'>toX</td><td class='fn-file'>web/components/screens/SweepScreen.tsx:236</td></tr>
+<tr><td class='fn-name'>toY</td><td class='fn-file'>web/components/screens/SweepScreen.tsx:237</td></tr>
+<tr><td class='fn-name'>mean</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:11</td></tr>
+<tr><td class='fn-name'>fmt1</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:16</td></tr>
+<tr><td class='fn-name'>fmtPct</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:20</td></tr>
+<tr><td class='fn-name'>computeDirStats</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:37</td></tr>
+<tr><td class='fn-name'>computeStreaks</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:68</td></tr>
+<tr><td class='fn-name'>computeDrift</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:107</td></tr>
+<tr><td class='fn-name'>computeHeatmap</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:142</td></tr>
+<tr><td class='fn-name'>computePnlHistogram</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:173</td></tr>
+<tr><td class='fn-name'>lerpColor</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:195</td></tr>
+<tr><td class='fn-name'>heatmapCellColor</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:210</td></tr>
+<tr><td class='fn-name'>DirectionTable</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:224</td></tr>
+<tr><td class='fn-name'>HourlyHeatmap</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:278</td></tr>
+<tr><td class='fn-name'>PnlHistogram</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:365</td></tr>
+<tr><td class='fn-name'>StreakPanel</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:447</td></tr>
+<tr><td class='fn-name'>DriftChart</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:530</td></tr>
+<tr><td class='fn-name'>TradeAnalysisPanels</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:638</td></tr>
+<tr><td class='fn-name'>TradeAnalysisScreen</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:684</td></tr>
+<tr><td class='fn-name'>toY</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:466</td></tr>
+<tr><td class='fn-name'>toX</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:467</td></tr>
+<tr><td class='fn-name'>toY</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:559</td></tr>
+<tr><td class='fn-name'>toX</td><td class='fn-file'>web/components/screens/TradeAnalysisScreen.tsx:560</td></tr>
+<tr><td class='fn-name'>lerp3</td><td class='fn-file'>web/components/screens/TradesScreen.tsx:17</td></tr>
+<tr><td class='fn-name'>wrColor</td><td class='fn-file'>web/components/screens/TradesScreen.tsx:24</td></tr>
+<tr><td class='fn-name'>computeDow</td><td class='fn-file'>web/components/screens/TradesScreen.tsx:34</td></tr>
+<tr><td class='fn-name'>DowHeatmap</td><td class='fn-file'>web/components/screens/TradesScreen.tsx:45</td></tr>
+<tr><td class='fn-name'>durBin</td><td class='fn-file'>web/components/screens/TradesScreen.tsx:87</td></tr>
+<tr><td class='fn-name'>HoldingHistogram</td><td class='fn-file'>web/components/screens/TradesScreen.tsx:92</td></tr>
+<tr><td class='fn-name'>PnlCdf</td><td class='fn-file'>web/components/screens/TradesScreen.tsx:121</td></tr>
+<tr><td class='fn-name'>TradesScreen</td><td class='fn-file'>web/components/screens/TradesScreen.tsx:163</td></tr>
+<tr><td class='fn-name'>SortHeader</td><td class='fn-file'>web/components/screens/TradesScreen.tsx:233</td></tr>
+<tr><td class='fn-name'>xOf</td><td class='fn-file'>web/components/screens/TradesScreen.tsx:131</td></tr>
+<tr><td class='fn-name'>yOf</td><td class='fn-file'>web/components/screens/TradesScreen.tsx:132</td></tr>
+<tr><td class='fn-name'>onKey</td><td class='fn-file'>web/components/screens/TradesScreen.tsx:218</td></tr>
+<tr><td class='fn-name'>computeDdPeriods</td><td class='fn-file'>web/components/screens/UnderwaterScreen.tsx:13</td></tr>
+<tr><td class='fn-name'>UnderwaterSVG</td><td class='fn-file'>web/components/screens/UnderwaterScreen.tsx:51</td></tr>
+<tr><td class='fn-name'>UnderwaterScreen</td><td class='fn-file'>web/components/screens/UnderwaterScreen.tsx:100</td></tr>
+<tr><td class='fn-name'>StatCell</td><td class='fn-file'>web/components/screens/UnderwaterScreen.tsx:247</td></tr>
+<tr><td class='fn-name'>toX</td><td class='fn-file'>web/components/screens/UnderwaterScreen.tsx:71</td></tr>
+<tr><td class='fn-name'>toY</td><td class='fn-file'>web/components/screens/UnderwaterScreen.tsx:72</td></tr>
+<tr><td class='fn-name'>VibeScreen</td><td class='fn-file'>web/components/screens/VibeScreen.tsx:36</td></tr>
+<tr><td class='fn-name'>fetchStrategies</td><td class='fn-file'>web/components/screens/VibeScreen.tsx:95</td></tr>
+<tr><td class='fn-name'>handleGenerate</td><td class='fn-file'>web/components/screens/VibeScreen.tsx:110</td></tr>
+<tr><td class='fn-name'>handleApply</td><td class='fn-file'>web/components/screens/VibeScreen.tsx:167</td></tr>
+<tr><td class='fn-name'>handleSave</td><td class='fn-file'>web/components/screens/VibeScreen.tsx:172</td></tr>
+<tr><td class='fn-name'>handleLoad</td><td class='fn-file'>web/components/screens/VibeScreen.tsx:199</td></tr>
+<tr><td class='fn-name'>handleCopyCode</td><td class='fn-file'>web/components/screens/VibeScreen.tsx:210</td></tr>
+<tr><td class='fn-name'>formatConfigVal</td><td class='fn-file'>web/components/screens/VibeScreen.tsx:215</td></tr>
+<tr><td class='fn-name'>fmtN</td><td class='fn-file'>web/components/screens/WFOScreen.tsx:31</td></tr>
+<tr><td class='fn-name'>fmtPct</td><td class='fn-file'>web/components/screens/WFOScreen.tsx:36</td></tr>
+<tr><td class='fn-name'>SummaryBar</td><td class='fn-file'>web/components/screens/WFOScreen.tsx:43</td></tr>
+<tr><td class='fn-name'>SumCell</td><td class='fn-file'>web/components/screens/WFOScreen.tsx:91</td></tr>
+<tr><td class='fn-name'>FoldTable</td><td class='fn-file'>web/components/screens/WFOScreen.tsx:115</td></tr>
+<tr><td class='fn-name'>ScatterPanel</td><td class='fn-file'>web/components/screens/WFOScreen.tsx:189</td></tr>
+<tr><td class='fn-name'>FoldChartsPanel</td><td class='fn-file'>web/components/screens/WFOScreen.tsx:354</td></tr>
+<tr><td class='fn-name'>WFOScreen</td><td class='fn-file'>web/components/screens/WFOScreen.tsx:483</td></tr>
+<tr><td class='fn-name'>toX</td><td class='fn-file'>web/components/screens/WFOScreen.tsx:203</td></tr>
+<tr><td class='fn-name'>toY</td><td class='fn-file'>web/components/screens/WFOScreen.tsx:204</td></tr>
+<tr><td class='fn-name'>toX1</td><td class='fn-file'>web/components/screens/WFOScreen.tsx:368</td></tr>
+<tr><td class='fn-name'>toY1</td><td class='fn-file'>web/components/screens/WFOScreen.tsx:369</td></tr>
+<tr><td class='fn-name'>toX2</td><td class='fn-file'>web/components/screens/WFOScreen.tsx:386</td></tr>
+<tr><td class='fn-name'>toY2</td><td class='fn-file'>web/components/screens/WFOScreen.tsx:387</td></tr>
+<tr><td class='fn-name'>HelpToast</td><td class='fn-file'>web/components/shell/HelpToast.tsx:62</td></tr>
+<tr><td class='fn-name'>Palette</td><td class='fn-file'>web/components/shell/Palette.tsx:15</td></tr>
+<tr><td class='fn-name'>handleKey</td><td class='fn-file'>web/components/shell/Palette.tsx:146</td></tr>
+<tr><td class='fn-name'>Sidebar</td><td class='fn-file'>web/components/shell/Sidebar.tsx:50</td></tr>
+<tr><td class='fn-name'>StatusBar</td><td class='fn-file'>web/components/shell/StatusBar.tsx:6</td></tr>
+<tr><td class='fn-name'>tick</td><td class='fn-file'>web/components/shell/StatusBar.tsx:13</td></tr>
+<tr><td class='fn-name'>Toast</td><td class='fn-file'>web/components/shell/Toast.tsx:8</td></tr>
+<tr><td class='fn-name'>RibbonStat</td><td class='fn-file'>web/components/shell/TopBar.tsx:11</td></tr>
+<tr><td class='fn-name'>TopBar</td><td class='fn-file'>web/components/shell/TopBar.tsx:28</td></tr>
+<tr><td class='fn-name'>useAssets</td><td class='fn-file'>web/hooks/useAssets.ts:40</td></tr>
+<tr><td class='fn-name'>useAssetBars</td><td class='fn-file'>web/hooks/useAssets.ts:50</td></tr>
+<tr><td class='fn-name'>useAssetStats</td><td class='fn-file'>web/hooks/useAssets.ts:61</td></tr>
+<tr><td class='fn-name'>useGarchForecast</td><td class='fn-file'>web/hooks/useAssets.ts:91</td></tr>
+<tr><td class='fn-name'>useHotkeys</td><td class='fn-file'>web/hooks/useHotkeys.ts:33</td></tr>
+<tr><td class='fn-name'>onKey</td><td class='fn-file'>web/hooks/useHotkeys.ts:56</td></tr>
+<tr><td class='fn-name'>useLibrary</td><td class='fn-file'>web/hooks/useLibrary.ts:27</td></tr>
+<tr><td class='fn-name'>useStarStrategy</td><td class='fn-file'>web/hooks/useLibrary.ts:37</td></tr>
+<tr><td class='fn-name'>usePreview</td><td class='fn-file'>web/hooks/usePreview.ts:15</td></tr>
+<tr><td class='fn-name'>normalizeApiTrade</td><td class='fn-file'>web/hooks/useRun.ts:38</td></tr>
+<tr><td class='fn-name'>useRuns</td><td class='fn-file'>web/hooks/useRun.ts:60</td></tr>
+<tr><td class='fn-name'>useRunList</td><td class='fn-file'>web/hooks/useRun.ts:69</td></tr>
+<tr><td class='fn-name'>useDeleteRun</td><td class='fn-file'>web/hooks/useRun.ts:83</td></tr>
+<tr><td class='fn-name'>useDeleteUnlinkedRuns</td><td class='fn-file'>web/hooks/useRun.ts:96</td></tr>
+<tr><td class='fn-name'>isRealRunId</td><td class='fn-file'>web/hooks/useRun.ts:109</td></tr>
+<tr><td class='fn-name'>useRun</td><td class='fn-file'>web/hooks/useRun.ts:114</td></tr>
+<tr><td class='fn-name'>useRunEquity</td><td class='fn-file'>web/hooks/useRun.ts:124</td></tr>
+<tr><td class='fn-name'>useRunTrades</td><td class='fn-file'>web/hooks/useRun.ts:137</td></tr>
+<tr><td class='fn-name'>useRunWFO</td><td class='fn-file'>web/hooks/useRun.ts:163</td></tr>
+<tr><td class='fn-name'>useRunSweep</td><td class='fn-file'>web/hooks/useRun.ts:173</td></tr>
+<tr><td class='fn-name'>useRunMC</td><td class='fn-file'>web/hooks/useRun.ts:183</td></tr>
+<tr><td class='fn-name'>useRunBootstrapCI</td><td class='fn-file'>web/hooks/useRun.ts:199</td></tr>
+<tr><td class='fn-name'>useSSE</td><td class='fn-file'>web/hooks/useSSE.ts:4</td></tr>
+<tr><td class='fn-name'>mulberry32</td><td class='fn-file'>web/lib/fixtures.ts:185</td></tr>
+<tr><td class='fn-name'>gauss</td><td class='fn-file'>web/lib/fixtures.ts:195</td></tr>
+<tr><td class='fn-name'>genEquity</td><td class='fn-file'>web/lib/fixtures.ts:205</td></tr>
+<tr><td class='fn-name'>findDDPeriods</td><td class='fn-file'>web/lib/fixtures.ts:230</td></tr>
+<tr><td class='fn-name'>genTrades</td><td class='fn-file'>web/lib/fixtures.ts:279</td></tr>
+<tr><td class='fn-name'>genSweep</td><td class='fn-file'>web/lib/fixtures.ts:322</td></tr>
+<tr><td class='fn-name'>genMC</td><td class='fn-file'>web/lib/fixtures.ts:336</td></tr>
+<tr><td class='fn-name'>computeMetrics</td><td class='fn-file'>web/lib/fixtures.ts:396</td></tr>
+<tr><td class='fn-name'>monthlyPnL</td><td class='fn-file'>web/lib/fixtures.ts:440</td></tr>
+<tr><td class='fn-name'>probit</td><td class='fn-file'>web/lib/fixtures.ts:455</td></tr>
+<tr><td class='fn-name'>genAsset</td><td class='fn-file'>web/lib/fixtures.ts:500</td></tr>
+<tr><td class='fn-name'>computeAssetStats</td><td class='fn-file'>web/lib/fixtures.ts:539</td></tr>
+<tr><td class='fn-name'>acf</td><td class='fn-file'>web/lib/fixtures.ts:586</td></tr>
+<tr><td class='fn-name'>buildRun</td><td class='fn-file'>web/lib/fixtures.ts:662</td></tr>
+<tr><td class='fn-name'>makeSparkline</td><td class='fn-file'>web/lib/fixtures.ts:748</td></tr>
+<tr><td class='fn-name'>fmt</td><td class='fn-file'>web/lib/fixtures.ts:715</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  <div id="main">
+    <div id="graph-container"><canvas id="graph"></canvas></div>
+    <div id="detail-panel">
+      <div id="detail-content"><span style="color:#8b949e">Click a node in the graph or a row in the table to inspect a module.</span></div>
+    </div>
+  </div>
+</div>
+<script>
+const NODES = [{"id": "api/main.py", "label": "main.py", "layer": "api", "color": "#4f86c6", "lines": 31, "type": "python", "functions": ["startup", "health"], "classes": [], "interfaces": [], "imports": ["sys", "os", "fastapi", "fastapi.middleware.cors", "api.db", "api.routers"]}, {"id": "api/models.py", "label": "models.py", "layer": "api", "color": "#4f86c6", "lines": 48, "type": "python", "functions": [], "classes": ["RunParams", "RunCreate", "AssetFetch", "StrategyCreate", "VibeGenerateRequest"], "interfaces": [], "imports": ["pydantic", "typing"]}, {"id": "api/db.py", "label": "db.py", "layer": "api", "color": "#4f86c6", "lines": 69, "type": "python", "functions": ["get_conn", "_init_schema"], "classes": [], "interfaces": [], "imports": ["os", "duckdb"]}, {"id": "api/routers/__init__.py", "label": "__init__.py", "layer": "api", "color": "#4f86c6", "lines": 0, "type": "python", "functions": [], "classes": [], "interfaces": [], "imports": []}, {"id": "api/routers/vibe.py", "label": "vibe.py", "layer": "api", "color": "#4f86c6", "lines": 224, "type": "python", "functions": ["_extract_config", "_extract_code", "_mock_stream", "_build_user_message", "_claude_stream", "vibe_generate", "vibe_improve", "_run"], "classes": [], "interfaces": [], "imports": ["asyncio", "json", "os", "re", "concurrent.futures", "fastapi", "fastapi.responses", "api.models", "anthropic"]}, {"id": "api/routers/assets.py", "label": "assets.py", "layer": "api", "color": "#4f86c6", "lines": 317, "type": "python", "functions": ["list_assets", "list_ticker_series", "fetch_asset", "get_bars", "get_stats", "get_quant_stats", "get_garch_forecast"], "classes": [], "interfaces": [], "imports": ["json", "sys", "os", "fastapi", "pandas", "numpy", "api.db", "api.models", "engine.providers.yfinance_client", "engine.quant_stats", "warnings", "arch", "statsmodels.stats.diagnostic"]}, {"id": "api/routers/runs.py", "label": "runs.py", "layer": "api", "color": "#4f86c6", "lines": 559, "type": "python", "functions": ["stream_run", "list_runs", "delete_unlinked_runs", "delete_run", "get_run", "get_equity", "get_trades", "get_wfo", "get_sweep", "get_mc", "get_bootstrap_ci", "create_run", "_run_backtest", "_sync_backtest_pipeline", "preview_run", "_sync_preview", "generator", "sharpe_fn", "cagr_fn", "push"], "classes": [], "interfaces": [], "imports": ["asyncio", "json", "uuid", "sys", "os", "datetime", "typing", "numpy", "fastapi", "fastapi.responses", "api.db", "api.models", "warnings", "scipy.stats", "engine.strategy_core", "engine.backtest", "engine.montecarlo", "pandas", "concurrent.futures"]}, {"id": "api/routers/strategies.py", "label": "strategies.py", "layer": "api", "color": "#4f86c6", "lines": 52, "type": "python", "functions": ["list_strategies", "create_strategy", "toggle_star", "delete_strategy"], "classes": [], "interfaces": [], "imports": ["json", "uuid", "fastapi", "api.db", "api.models"]}, {"id": "engine/__init__.py", "label": "__init__.py", "layer": "engine", "color": "#e8844a", "lines": 0, "type": "python", "functions": [], "classes": [], "interfaces": [], "imports": []}, {"id": "engine/backtest.py", "label": "backtest.py", "layer": "engine", "color": "#e8844a", "lines": 244, "type": "python", "functions": ["_apply_direction_filter", "_apply_cfg_overrides", "run_versions", "_best_params_on_is", "run_wfo", "run_optimization"], "classes": [], "interfaces": [], "imports": ["numpy", "pandas", "strategy_core"]}, {"id": "engine/quant_stats.py", "label": "quant_stats.py", "layer": "engine", "color": "#e8844a", "lines": 89, "type": "python", "functions": ["compute_hurst", "test_stationarity", "compute_var_cvar", "rolling_metrics"], "classes": [], "interfaces": [], "imports": ["numpy", "pandas", "warnings", "hurst", "statsmodels.tsa.stattools"]}, {"id": "engine/montecarlo.py", "label": "montecarlo.py", "layer": "engine", "color": "#e8844a", "lines": 75, "type": "python", "functions": ["run_bootstrap", "run_stress"], "classes": [], "interfaces": [], "imports": ["numpy"]}, {"id": "engine/strategy_core.py", "label": "strategy_core.py", "layer": "engine", "color": "#e8844a", "lines": 388, "type": "python", "functions": ["ticker_to_fname", "fit_garch11", "compute_garch_regime", "compute_indicators_v2", "generate_signals_v2", "backtest_v2", "compute_metrics"], "classes": [], "interfaces": [], "imports": ["re", "numpy", "pandas", "arch", "warnings"]}, {"id": "engine/providers/yfinance_client.py", "label": "yfinance_client.py", "layer": "engine", "color": "#e8844a", "lines": 20, "type": "python", "functions": ["fetch"], "classes": [], "interfaces": [], "imports": ["pandas", "yfinance"]}, {"id": "engine/providers/__init__.py", "label": "__init__.py", "layer": "engine", "color": "#e8844a", "lines": 0, "type": "python", "functions": [], "classes": [], "interfaces": [], "imports": []}, {"id": "web/next-env.d.ts", "label": "next-env.d.ts", "layer": "other", "color": "#aaa", "lines": 5, "type": "typescript", "functions": [], "classes": [], "interfaces": [], "imports": []}, {"id": "web/hooks/useHotkeys.ts", "label": "useHotkeys.ts", "layer": "web/hooks", "color": "#e8c84a", "lines": 120, "type": "typescript", "functions": ["useHotkeys", "onKey"], "classes": [], "interfaces": [], "imports": ["react", "@/store"]}, {"id": "web/hooks/useSSE.ts", "label": "useSSE.ts", "layer": "web/hooks", "color": "#e8c84a", "lines": 19, "type": "typescript", "functions": ["useSSE"], "classes": [], "interfaces": [], "imports": ["react"]}, {"id": "web/hooks/usePreview.ts", "label": "usePreview.ts", "layer": "web/hooks", "color": "#e8c84a", "lines": 38, "type": "typescript", "functions": ["usePreview"], "classes": [], "interfaces": ["PreviewResult"], "imports": ["react", "@/lib/api"]}, {"id": "web/hooks/useAssets.ts", "label": "useAssets.ts", "layer": "web/hooks", "color": "#e8c84a", "lines": 101, "type": "typescript", "functions": ["useAssets", "useAssetBars", "useAssetStats", "useGarchForecast"], "classes": [], "interfaces": ["AssetListItem", "Bar", "AssetStatsApi", "GarchForecast"], "imports": ["@tanstack/react-query", "@/lib/api"]}, {"id": "web/hooks/useLibrary.ts", "label": "useLibrary.ts", "layer": "web/hooks", "color": "#e8c84a", "lines": 46, "type": "typescript", "functions": ["useLibrary", "useStarStrategy"], "classes": [], "interfaces": ["LibraryEntryApi"], "imports": ["@tanstack/react-query", "@/lib/api"]}, {"id": "web/hooks/useRun.ts", "label": "useRun.ts", "layer": "web/hooks", "color": "#e8c84a", "lines": 207, "type": "typescript", "functions": ["normalizeApiTrade", "useRuns", "useRunList", "useDeleteRun", "useDeleteUnlinkedRuns", "isRealRunId", "useRun", "useRunEquity", "useRunTrades", "useRunWFO", "useRunSweep", "useRunMC", "useRunBootstrapCI"], "classes": [], "interfaces": ["RunListItem", "ApiTrade", "BootstrapCI"], "imports": ["@tanstack/react-query", "@/lib/api", "@/lib/fixtures"]}, {"id": "web/app/api/[...path]/route.ts", "label": "route.ts", "layer": "web/app", "color": "#7dc97d", "lines": 47, "type": "typescript", "functions": ["apiBase", "proxy"], "classes": [], "interfaces": [], "imports": ["next/server"]}, {"id": "web/store/index.ts", "label": "index.ts", "layer": "web/store", "color": "#e84a7d", "lines": 106, "type": "typescript", "functions": [], "classes": [], "interfaces": ["SetupParams", "PendingVibeParams", "Store"], "imports": ["zustand", "@/lib/fixtures"]}, {"id": "web/lib/api.ts", "label": "api.ts", "layer": "web/lib", "color": "#4acce8", "lines": 23, "type": "typescript", "functions": [], "classes": [], "interfaces": [], "imports": []}, {"id": "web/lib/fixtures.ts", "label": "fixtures.ts", "layer": "web/lib", "color": "#4acce8", "lines": 984, "type": "typescript", "functions": ["mulberry32", "gauss", "genEquity", "findDDPeriods", "genTrades", "genSweep", "genMC", "computeMetrics", "monthlyPnL", "probit", "genAsset", "computeAssetStats", "acf", "buildRun", "makeSparkline", "fmt"], "classes": [], "interfaces": ["EquityPoint", "Trade", "DDPeriod", "RunMetrics", "Run", "RunParams", "RunDates", "MCData", "MonthlyBucket", "QQPoint", "AssetStats", "Asset", "Bar", "LibraryEntry", "ParetoData"], "imports": []}, {"id": "web/components/ErrorBoundary.tsx", "label": "ErrorBoundary.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 39, "type": "typescript", "functions": [], "classes": [], "interfaces": ["Props", "State"], "imports": ["react"]}, {"id": "web/components/shell/HelpToast.tsx", "label": "HelpToast.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 98, "type": "typescript", "functions": ["HelpToast"], "classes": [], "interfaces": ["HotkeyRow", "HotkeySection"], "imports": ["@/store", "./HelpToast.module.css"]}, {"id": "web/components/shell/Toast.tsx", "label": "Toast.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 11, "type": "typescript", "functions": ["Toast"], "classes": [], "interfaces": ["Props"], "imports": ["./Toast.module.css"]}, {"id": "web/components/shell/TopBar.tsx", "label": "TopBar.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 84, "type": "typescript", "functions": ["RibbonStat", "TopBar"], "classes": [], "interfaces": ["RibbonStatProps", "Props"], "imports": ["@/lib/fixtures", "./TopBar.module.css"]}, {"id": "web/components/shell/Palette.tsx", "label": "Palette.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 221, "type": "typescript", "functions": ["Palette", "handleKey"], "classes": [], "interfaces": ["PaletteAction"], "imports": ["react", "@/store", "./Palette.module.css"]}, {"id": "web/components/shell/Sidebar.tsx", "label": "Sidebar.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 74, "type": "typescript", "functions": ["Sidebar"], "classes": [], "interfaces": ["NavItem", "NavGroup"], "imports": ["@/store", "./Sidebar.module.css"]}, {"id": "web/components/shell/StatusBar.tsx", "label": "StatusBar.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 66, "type": "typescript", "functions": ["StatusBar", "tick"], "classes": [], "interfaces": [], "imports": ["@/store", "react", "./StatusBar.module.css"]}, {"id": "web/components/screens/LibraryScreen.tsx", "label": "LibraryScreen.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 462, "type": "typescript", "functions": ["buildRunStub", "LibraryScreen", "RunRow", "StatusBadge", "handleStar", "handleLoad", "handleSelectEntry", "handleDeleteRun", "handleLoadRun", "handleLoadInVibe", "handleReRun"], "classes": [], "interfaces": [], "imports": ["react", "@/store", "@/lib/fixtures", "@/hooks/useLibrary", "@/hooks/useRun", "./LibraryScreen.module.css"]}, {"id": "web/components/screens/SetupScreen.tsx", "label": "SetupScreen.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 481, "type": "typescript", "functions": ["SetupScreen", "SliderRow", "PreviewMetric", "normalizeTicker", "handleRun", "hourLabel"], "classes": [], "interfaces": ["Params"], "imports": ["react", "@/store", "@/lib/fixtures", "@/hooks/useSSE", "@/hooks/usePreview", "@/hooks/useAssets", "@/components/charts/EquityChart", "./SetupScreen.module.css"]}, {"id": "web/components/screens/AssetsScreen.tsx", "label": "AssetsScreen.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 979, "type": "typescript", "functions": ["getKind", "hurstRS", "jarqueBera", "RollingHurstChart", "fmtDate", "AssetsScreen", "StatRow", "StdResidualsChart", "toX", "toY", "handler", "handleFetch", "selectTicker", "selectSeries", "cx", "cy"], "classes": [], "interfaces": ["RollingHurstProps"], "imports": ["react", "@tanstack/react-query", "@/lib/fixtures", "@/hooks/useAssets", "@/components/charts/CandlestickChart", "@/components/charts/Histogram", "@/components/charts/QQPlot", "@/components/charts/ACFPlot", "./AssetsScreen.module.css"]}, {"id": "web/components/screens/MonteCarloScreen.tsx", "label": "MonteCarloScreen.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 575, "type": "typescript", "functions": ["humanLabel", "MonteCarloScreen", "MetricCell", "at", "cvar5", "kelly", "ddSignIsNegative", "pDDExceeds"], "classes": [], "interfaces": ["StressScenario", "MCTradeStats"], "imports": ["@/store", "@/lib/fixtures", "@/hooks/useRun", "@/components/charts/FanChart", "@/components/charts/Histogram", "./MonteCarloScreen.module.css"]}, {"id": "web/components/screens/TradesScreen.tsx", "label": "TradesScreen.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 370, "type": "typescript", "functions": ["lerp3", "wrColor", "computeDow", "DowHeatmap", "durBin", "HoldingHistogram", "PnlCdf", "TradesScreen", "SortHeader", "xOf", "yOf", "onKey"], "classes": [], "interfaces": [], "imports": ["react", "@/store", "@/lib/fixtures", "@/hooks/useRun", "@/hooks/useAssets", "@/components/charts/CandlestickChart", "@/components/charts/Sparkline", "./TradeAnalysisScreen", "./TradesScreen.module.css"]}, {"id": "web/components/screens/TradeAnalysisScreen.tsx", "label": "TradeAnalysisScreen.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 786, "type": "typescript", "functions": ["mean", "fmt1", "fmtPct", "computeDirStats", "computeStreaks", "computeDrift", "computeHeatmap", "computePnlHistogram", "lerpColor", "heatmapCellColor", "DirectionTable", "HourlyHeatmap", "PnlHistogram", "StreakPanel", "DriftChart", "TradeAnalysisPanels", "TradeAnalysisScreen", "toY", "toX", "toY", "toX"], "classes": [], "interfaces": ["DirStats", "StreakData", "DriftData", "HourCell", "HistBin"], "imports": ["react", "@/store", "@/lib/fixtures", "@/hooks/useRun", "./TradeAnalysisScreen.module.css"]}, {"id": "web/components/screens/UnderwaterScreen.tsx", "label": "UnderwaterScreen.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 254, "type": "typescript", "functions": ["computeDdPeriods", "UnderwaterSVG", "UnderwaterScreen", "StatCell", "toX", "toY"], "classes": [], "interfaces": [], "imports": ["react", "@/store", "@/lib/fixtures", "@/hooks/useRun", "@/components/charts/Histogram", "@/components/charts/Sparkline", "./UnderwaterScreen.module.css"]}, {"id": "web/components/screens/DashboardScreen.tsx", "label": "DashboardScreen.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 306, "type": "typescript", "functions": ["DashboardScreen"], "classes": [], "interfaces": [], "imports": ["react", "@/store", "@/lib/fixtures", "@/hooks/useRun", "@/components/charts/EquityChart", "@/components/charts/DrawdownChart", "@/components/charts/MonthlyHeat", "@/components/charts/Sparkline", "./DashboardScreen.module.css"]}, {"id": "web/components/screens/CompareScreen.tsx", "label": "CompareScreen.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 164, "type": "typescript", "functions": ["colorFor", "CompareScreen", "linePath", "xy", "ret", "corr"], "classes": [], "interfaces": [], "imports": ["react", "@/store", "./CompareScreen.module.css", "@/lib/fixtures"]}, {"id": "web/components/screens/EquityScreen.tsx", "label": "EquityScreen.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 495, "type": "typescript", "functions": ["annFactorForTimeframe", "computeRollingSharpe", "RollingSharpePanel", "ACFEquityPanel", "BootstrapCIPanel", "ExitReasonChips", "EquityScreen", "toY", "toX"], "classes": [], "interfaces": ["RollingSharpeProps", "ACFEquityProps", "BootstrapCIData", "ExitReasonsProps"], "imports": ["react", "@/store", "@/lib/fixtures", "@/hooks/useRun", "@/components/charts/ACFPlot", "@/components/charts/EquityChart", "@/components/charts/DrawdownChart", "./EquityScreen.module.css"]}, {"id": "web/components/screens/VibeScreen.tsx", "label": "VibeScreen.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 473, "type": "typescript", "functions": ["VibeScreen", "fetchStrategies", "handleGenerate", "handleApply", "handleSave", "handleLoad", "handleCopyCode", "formatConfigVal"], "classes": [], "interfaces": ["StrategyConfig", "SavedStrategy"], "imports": ["react", "@/store", "@/hooks/useAssets", "./VibeScreen.module.css"]}, {"id": "web/components/screens/SweepScreen.tsx", "label": "SweepScreen.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 374, "type": "typescript", "functions": ["SweepScreen", "MetricCell", "SensitivityChart", "r1", "toX", "toY"], "classes": [], "interfaces": ["SensitivityChartProps"], "imports": ["react", "@/store", "@/lib/fixtures", "@/hooks/useRun", "@/components/charts/HeatmapGrid", "./SweepScreen.module.css"]}, {"id": "web/components/screens/WFOScreen.tsx", "label": "WFOScreen.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 541, "type": "typescript", "functions": ["fmtN", "fmtPct", "SummaryBar", "SumCell", "FoldTable", "ScatterPanel", "FoldChartsPanel", "WFOScreen", "toX", "toY", "toX1", "toY1", "toX2", "toY2"], "classes": [], "interfaces": ["WFOFold"], "imports": ["@/store", "@/hooks/useRun", "./WFOScreen.module.css"]}, {"id": "web/components/charts/Sparkline.tsx", "label": "Sparkline.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 31, "type": "typescript", "functions": ["Sparkline"], "classes": [], "interfaces": ["Props"], "imports": []}, {"id": "web/components/charts/HeatmapGrid.tsx", "label": "HeatmapGrid.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 86, "type": "typescript", "functions": ["lerp", "cellColor", "HeatmapGrid"], "classes": [], "interfaces": ["Props"], "imports": []}, {"id": "web/components/charts/DrawdownChart.tsx", "label": "DrawdownChart.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 96, "type": "typescript", "functions": ["DrawdownChart"], "classes": [], "interfaces": ["EquityPoint", "Props"], "imports": ["react", "lightweight-charts", "./DrawdownChart.module.css"]}, {"id": "web/components/charts/FanChart.tsx", "label": "FanChart.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 96, "type": "typescript", "functions": ["FanChart", "xOf", "yOf", "line", "band"], "classes": [], "interfaces": ["MCData", "Props"], "imports": ["react"]}, {"id": "web/components/charts/CandlestickChart.tsx", "label": "CandlestickChart.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 328, "type": "typescript", "functions": ["computeEMA", "CandlestickChart", "findBarIdx", "py", "volY", "volBarH", "emaPath", "formatPrice", "formatDate"], "classes": [], "interfaces": ["Bar", "TradeMarker", "Props"], "imports": ["react"]}, {"id": "web/components/charts/MonthlyHeat.tsx", "label": "MonthlyHeat.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 75, "type": "typescript", "functions": ["lerp", "cellColor", "MonthlyHeat"], "classes": [], "interfaces": ["Bucket", "Props"], "imports": ["react", "./MonthlyHeat.module.css"]}, {"id": "web/components/charts/ACFPlot.tsx", "label": "ACFPlot.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 166, "type": "typescript", "functions": ["computeACF", "ACFPlot", "toY"], "classes": [], "interfaces": ["Props"], "imports": ["react"]}, {"id": "web/components/charts/QQPlot.tsx", "label": "QQPlot.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 185, "type": "typescript", "functions": ["normalInv", "QQPlot", "toX", "toY"], "classes": [], "interfaces": ["Props"], "imports": ["react"]}, {"id": "web/components/charts/EquityChart.tsx", "label": "EquityChart.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 156, "type": "typescript", "functions": ["EquityChart"], "classes": [], "interfaces": ["EquityPoint", "Props"], "imports": ["react", "lightweight-charts", "./EquityChart.module.css"]}, {"id": "web/components/charts/Histogram.tsx", "label": "Histogram.tsx", "layer": "web/components", "color": "#b07dd4", "lines": 82, "type": "typescript", "functions": ["Histogram"], "classes": [], "interfaces": ["Props"], "imports": ["react"]}, {"id": "web/app/page.tsx", "label": "page.tsx", "layer": "web/app", "color": "#7dc97d", "lines": 5, "type": "typescript", "functions": ["Home"], "classes": [], "interfaces": [], "imports": ["next/navigation"]}, {"id": "web/app/providers.tsx", "label": "providers.tsx", "layer": "web/app", "color": "#7dc97d", "lines": 8, "type": "typescript", "functions": ["Providers"], "classes": [], "interfaces": [], "imports": ["@tanstack/react-query", "react"]}, {"id": "web/app/layout.tsx", "label": "layout.tsx", "layer": "web/app", "color": "#7dc97d", "lines": 22, "type": "typescript", "functions": ["RootLayout"], "classes": [], "interfaces": [], "imports": ["next", "./providers"]}, {"id": "web/app/dashboard/page.tsx", "label": "page.tsx", "layer": "web/app", "color": "#7dc97d", "lines": 118, "type": "typescript", "functions": ["ScreenContent", "DashboardPage"], "classes": [], "interfaces": [], "imports": ["react", "@/store", "@/lib/fixtures", "@/components/shell/TopBar", "@/components/shell/Sidebar", "@/components/shell/StatusBar", "@/components/shell/Palette", "@/components/shell/HelpToast", "@/components/shell/Toast", "@/components/screens/DashboardScreen", "@/components/screens/EquityScreen", "@/components/screens/TradesScreen", "@/components/screens/SetupScreen", "@/components/screens/SweepScreen", "@/components/screens/MonteCarloScreen", "@/components/screens/UnderwaterScreen", "@/components/screens/CompareScreen", "@/components/screens/AssetsScreen", "@/components/screens/LibraryScreen", "@/components/screens/VibeScreen", "@/components/screens/WFOScreen", "@/components/ErrorBoundary", "@/hooks/useHotkeys"]}];
+const EDGES = [{"source": "api/main.py", "target": "api/db.py"}, {"source": "api/main.py", "target": "api/routers/vibe.py"}, {"source": "api/routers/vibe.py", "target": "web/components/screens/TradesScreen.tsx"}, {"source": "api/routers/vibe.py", "target": "api/models.py"}, {"source": "api/routers/assets.py", "target": "api/db.py"}, {"source": "api/routers/assets.py", "target": "api/models.py"}, {"source": "api/routers/assets.py", "target": "engine/providers/yfinance_client.py"}, {"source": "api/routers/assets.py", "target": "engine/quant_stats.py"}, {"source": "api/routers/runs.py", "target": "api/db.py"}, {"source": "api/routers/runs.py", "target": "api/models.py"}, {"source": "api/routers/runs.py", "target": "engine/strategy_core.py"}, {"source": "api/routers/runs.py", "target": "engine/backtest.py"}, {"source": "api/routers/runs.py", "target": "engine/montecarlo.py"}, {"source": "api/routers/strategies.py", "target": "api/db.py"}, {"source": "api/routers/strategies.py", "target": "api/models.py"}, {"source": "engine/backtest.py", "target": "engine/strategy_core.py"}, {"source": "engine/strategy_core.py", "target": "web/components/screens/TradesScreen.tsx"}, {"source": "web/app/layout.tsx", "target": "web/next-env.d.ts"}];
+
+const canvas = document.getElementById('graph');
+const ctx = canvas.getContext('2d');
+let W,H, positions={}, velocities={}, selected=null;
+
+function resize(){
+  const c=document.getElementById('graph-container');
+  W=canvas.width=c.clientWidth; H=canvas.height=c.clientHeight;
+}
+window.addEventListener('resize',()=>{resize();initPositions();});
+
+function initPositions(){
+  NODES.forEach((n,i)=>{
+    if(!positions[n.id]){
+      const a=(i/NODES.length)*2*Math.PI, r=Math.min(W,H)*0.35;
+      positions[n.id]={x:W/2+r*Math.cos(a),y:H/2+r*Math.sin(a)};
+      velocities[n.id]={x:0,y:0};
+    }
+  });
+}
+
+let dragging=null,dragOffset={x:0,y:0};
+canvas.addEventListener('mousedown',e=>{
+  const pos=mousePos(e);
+  for(const n of NODES){
+    const p=positions[n.id];
+    if(p&&Math.hypot(pos.x-p.x,pos.y-p.y)<14){
+      dragging=n.id; dragOffset={x:pos.x-p.x,y:pos.y-p.y};
+      selectNode(n.id); return;
+    }
+  }
+  selected=null;
+});
+canvas.addEventListener('mousemove',e=>{
+  if(dragging){const pos=mousePos(e);positions[dragging]={x:pos.x-dragOffset.x,y:pos.y-dragOffset.y};}
+});
+canvas.addEventListener('mouseup',()=>dragging=null);
+
+function mousePos(e){const r=canvas.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top};}
+
+const K_REPEL=5000,K_ATTRACT=0.06,DAMPING=0.82,IDEAL=130;
+function step(){
+  if(dragging)return;
+  NODES.forEach(a=>{
+    const pa=positions[a.id];if(!pa)return;
+    let fx=0,fy=0;
+    NODES.forEach(b=>{
+      if(a.id===b.id)return;
+      const pb=positions[b.id];if(!pb)return;
+      const dx=pa.x-pb.x,dy=pa.y-pb.y,d=Math.max(Math.hypot(dx,dy),1);
+      fx+=K_REPEL*dx/(d*d*d);fy+=K_REPEL*dy/(d*d*d);
+    });
+    fx+=(W/2-pa.x)*0.008;fy+=(H/2-pa.y)*0.008;
+    const v=velocities[a.id];v.x=(v.x+fx)*DAMPING;v.y=(v.y+fy)*DAMPING;
+  });
+  EDGES.forEach(e=>{
+    const pa=positions[e.source],pb=positions[e.target];if(!pa||!pb)return;
+    const dx=pb.x-pa.x,dy=pb.y-pa.y,d=Math.max(Math.hypot(dx,dy),1);
+    const f=K_ATTRACT*(d-IDEAL)/d,fx=f*dx,fy=f*dy;
+    velocities[e.source].x+=fx;velocities[e.source].y+=fy;
+    velocities[e.target].x-=fx;velocities[e.target].y-=fy;
+  });
+  NODES.forEach(n=>{
+    const p=positions[n.id],v=velocities[n.id];if(!p)return;
+    p.x=Math.max(20,Math.min(W-20,p.x+v.x));
+    p.y=Math.max(20,Math.min(H-20,p.y+v.y));
+  });
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  EDGES.forEach(e=>{
+    const pa=positions[e.source],pb=positions[e.target];if(!pa||!pb)return;
+    const sel=selected===e.source||selected===e.target;
+    ctx.strokeStyle=sel?'#58a6ff':'#30363d';ctx.lineWidth=sel?1.5:0.8;ctx.globalAlpha=sel?0.9:0.3;
+    ctx.beginPath();ctx.moveTo(pa.x,pa.y);ctx.lineTo(pb.x,pb.y);ctx.stroke();
+  });
+  ctx.globalAlpha=1;
+  NODES.forEach(n=>{
+    const p=positions[n.id];if(!p)return;
+    const sel=n.id===selected,r=sel?14:10;
+    ctx.beginPath();ctx.arc(p.x,p.y,r,0,2*Math.PI);
+    ctx.fillStyle=n.color;ctx.globalAlpha=sel?1:0.8;ctx.fill();
+    if(sel){ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();}
+    ctx.globalAlpha=1;ctx.fillStyle='#e6edf3';
+    ctx.font=(sel?'bold ':'')+'10px system-ui';
+    ctx.fillText(n.label,p.x+14,p.y+4);
+  });
+}
+
+function loop(){step();draw();requestAnimationFrame(loop);}
+resize();initPositions();loop();
+
+function selectNode(id){
+  selected=id;
+  const n=NODES.find(x=>x.id===id);if(!n)return;
+  const deps=EDGES.filter(e=>e.source===id).map(e=>e.target);
+  const rdeps=EDGES.filter(e=>e.target===id).map(e=>e.source);
+  const fns=(n.functions||[]).join(', ')||'&mdash;';
+  const cls=([...(n.classes||[]),...(n.interfaces||[])]).join(', ')||'&mdash;';
+  document.getElementById('detail-content').innerHTML=
+    '<div class="detail-title">&#x1F4C4; '+n.id+'</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">'+
+      '<div class="detail-section"><h4>Layer</h4><p>'+n.layer+'</p></div>'+
+      '<div class="detail-section"><h4>Type</h4><p>'+n.type+'</p></div>'+
+      '<div class="detail-section"><h4>Lines</h4><p>'+n.lines+'</p></div>'+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">'+
+      '<div class="detail-section"><h4>Functions/Exports ('+( n.functions||[]).length+')</h4><p>'+fns+'</p></div>'+
+      '<div class="detail-section"><h4>Classes/Interfaces ('+(([...(n.classes||[]),...(n.interfaces||[])]).length)+')</h4><p>'+cls+'</p></div>'+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">'+
+      '<div class="detail-section"><h4>Imports from ('+deps.length+')</h4><p style="color:#79c0ff">'+(deps.join('<br>')||'&mdash;')+'</p></div>'+
+      '<div class="detail-section"><h4>Used by ('+rdeps.length+')</h4><p style="color:#79c0ff">'+(rdeps.join('<br>')||'&mdash;')+'</p></div>'+
+    '</div>';
+}
+
+function filterTable(q){
+  document.querySelectorAll('#mod-tbody tr').forEach(r=>{
+    r.style.display=r.textContent.toLowerCase().includes(q.toLowerCase())?'':'none';
+  });
+}
+function filterFn(q){
+  document.querySelectorAll('#fn-tbody tr').forEach(r=>{
+    r.style.display=r.textContent.toLowerCase().includes(q.toLowerCase())?'':'none';
+  });
+}
+function switchTab(name,el){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('tab-'+name).classList.add('active');
+}
+</script>
+</body>
+</html>

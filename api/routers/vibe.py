@@ -12,16 +12,43 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from api.models import VibeGenerateRequest
+from api.routers.brain import get_brain_context, sync_brain
 
 router = APIRouter()
 _executor = ThreadPoolExecutor(max_workers=2)
+_ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
+
+# Auto-sync brain once per process if DB is empty
+_brain_sync_lock = asyncio.Lock()
+_brain_ready = False
+
+
+async def _ensure_brain_ready() -> None:
+    """Sync brain chapters from GitHub if none are in DuckDB yet."""
+    global _brain_ready
+    if _brain_ready:
+        return
+    async with _brain_sync_lock:
+        if _brain_ready:
+            return
+        try:
+            from api.db import get_conn
+            count = get_conn().execute("SELECT COUNT(*) FROM brain_chunks").fetchone()[0]
+            if count == 0:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, sync_brain)
+        except Exception:
+            pass
+        _brain_ready = True
 
 SYSTEM_PROMPT = """You are a quantitative trading strategy assistant for the Pareto Terminal.
 Given an asset's historical statistics and optionally a natural language description, generate a trading strategy configuration and Python code.
 If no strategy idea is provided, analyze the statistics and suggest the most appropriate strategy yourself.
 
 ## Step 1 — Brief explanation (2-4 sentences)
-If no prompt is given, start by explaining what the statistics reveal about the asset and why you chose this strategy.
+If no prompt is given, start by explaining what the statistics and regime analysis reveal about the asset and why you chose this strategy.
+Use the Hurst exponent to decide between trend-following (H>0.55) and mean-reversion (H<0.45).
+Use GARCH persistence and annualised vol to calibrate ATR multipliers and risk-per-trade.
 
 ## Step 2 — JSON config in a ```json block with exactly these fields:
 {
@@ -154,10 +181,43 @@ def _build_user_message(body: VibeGenerateRequest) -> str:
         parts.append("Historical statistics:\n" + "\n".join(stats_lines))
     else:
         parts.append(f"Asset: {body.asset}\nTimeframe: {body.timeframe or '1h'}")
+
+    if body.quant_analysis:
+        q = body.quant_analysis
+        lines = ["Quantitative regime analysis:"]
+        hurst = (q.get("hurst") or {})
+        if hurst.get("hurst") is not None:
+            lines.append(f"  Hurst exponent: {hurst['hurst']} ({hurst.get('regime', '?')})")
+        stat = (q.get("stationarity") or {})
+        if stat.get("adf_pvalue") is not None:
+            verdict = "stationary" if stat.get("adf_stationary") else "non-stationary"
+            lines.append(f"  ADF test: {verdict} (p={stat['adf_pvalue']})")
+        vc = (q.get("var_cvar") or {})
+        if vc.get("var") is not None:
+            lines.append(f"  VaR 95%: {vc['var']}%  CVaR 95%: {vc.get('cvar')}%")
+        roll = (q.get("rolling") or {})
+        if roll.get("ann_vol") is not None:
+            lines.append(f"  Rolling ann. vol: {roll['ann_vol']}%  Sharpe: {roll.get('sharpe')}")
+        parts.append("\n".join(lines))
+
+    if body.garch_forecast:
+        g = body.garch_forecast
+        if not g.get("garch_error"):
+            lines = ["Volatility regime (GARCH):"]
+            lines.append(f"  Current conditional vol: {g.get('current_vol_pct')}%/bar  Annualised: {g.get('ann_vol_pct')}%")
+            fc = g.get("forecast_vol_pct") or {}
+            lines.append(f"  Forecast: h1={fc.get('h1')}%  h5={fc.get('h5')}%  h22={fc.get('h22')}%")
+            p = g.get("params") or {}
+            lines.append(f"  Persistence: {p.get('persistence')}  Half-life: {p.get('half_life_bars')} bars")
+            lb = (g.get("ljung_box") or {}).get("sq_returns") or {}
+            arch_str = "ARCH effects present" if lb.get("significant") else "no significant ARCH effects"
+            lines.append(f"  Squared-returns Ljung-Box: {arch_str} (p={lb.get('pvalue')})")
+            parts.append("\n".join(lines))
+
     if body.prompt and body.prompt.strip():
         parts.append(f"Strategy idea: {body.prompt.strip()}")
     else:
-        parts.append("No strategy idea provided — please analyze the statistics above and suggest the best strategy for this asset.")
+        parts.append("No strategy idea provided — analyze all statistics above and suggest the best strategy.")
     return "\n\n".join(parts)
 
 
@@ -165,16 +225,24 @@ async def _claude_stream(body: VibeGenerateRequest):
     """Real Claude stream via anthropic SDK."""
     import anthropic
 
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    if not _ANTHROPIC_KEY:
+        yield f"data: {json.dumps({'type': 'delta', 'text': '[Error: ANTHROPIC_API_KEY not configured on server]'})}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'config': {}, 'code': ''})}\n\n"
+        return
+    client = anthropic.Anthropic(api_key=_ANTHROPIC_KEY, timeout=60.0)
     loop = asyncio.get_event_loop()
     queue: asyncio.Queue = asyncio.Queue()
+
+    await _ensure_brain_ready()
+    brain_ctx = get_brain_context(body.prompt or "")
+    effective_system = brain_ctx + SYSTEM_PROMPT if brain_ctx else SYSTEM_PROMPT
 
     def _run():
         try:
             with client.messages.stream(
                 model="claude-opus-4-7",
                 max_tokens=2048,
-                system=SYSTEM_PROMPT,
+                system=effective_system,
                 messages=[
                     {
                         "role": "user",
@@ -216,7 +284,20 @@ async def _claude_stream(body: VibeGenerateRequest):
 async def vibe_generate(body: VibeGenerateRequest):
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return StreamingResponse(_mock_stream(body), media_type="text/event-stream")
-    return StreamingResponse(_claude_stream(body), media_type="text/event-stream")
+
+    async def generator():
+        try:
+            async with asyncio.timeout(90):  # 90s hard limit
+                async for chunk in _claude_stream(body):
+                    yield chunk
+        except asyncio.TimeoutError:
+            yield f"data: {json.dumps({'type': 'delta', 'text': '[Error: stream timeout after 90s]'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'config': {}, 'code': ''})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'delta', 'text': f'[Error: {str(e)}]'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'config': {}, 'code': ''})}\n\n"
+
+    return StreamingResponse(generator(), media_type="text/event-stream")
 
 
 @router.post("/improve")
