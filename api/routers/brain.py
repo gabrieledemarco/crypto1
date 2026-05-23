@@ -12,8 +12,10 @@ GET  /brain/query?q=  → show which chapters would be selected for a query
 import json
 import re
 from datetime import datetime
+from typing import Optional
 
 import httpx
+import numpy as np
 from fastapi import APIRouter, HTTPException
 
 from api.db import get_conn

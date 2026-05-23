@@ -360,6 +360,29 @@ async def _run_backtest(run_id: str, params: dict):
         conn.execute("UPDATE runs SET status='done' WHERE id=?", [run_id])
         push("done", 100, "complete")
 
+        # Post-run learning: extract lesson and store in brain_chunks
+        try:
+            from api.routers.learning import save_run_lesson
+            _strategy_code = None
+            _strategy_id = params.get("_strategy_id")
+            if _strategy_id:
+                _srow = conn.execute(
+                    "SELECT code FROM strategies WHERE id=?", [_strategy_id]
+                ).fetchone()
+                _strategy_code = _srow[0] if _srow else None
+            save_run_lesson(
+                run_id=run_id,
+                asset=params.get("ticker", ""),
+                timeframe=params.get("timeframe", "1h"),
+                strategy_code=_strategy_code,
+                params=params,
+                all_metrics=result.get("metrics", {}),
+                wfo_folds=result.get("wfo", []),
+                df_ind=result.get("_df_ind"),
+            )
+        except Exception:
+            pass  # learning never blocks the main pipeline
+
     except Exception as exc:
         conn.execute("UPDATE runs SET status='error' WHERE id=?", [run_id])
         push("error", 0, str(exc))
@@ -445,6 +468,7 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
         "equity": equity_list,
         "trades": trades_list,
     }
+    result["_df_ind"] = df_ind   # passed to learning hook (not serialized)
 
     # WFO
     if params.get("run_wfo", True):
