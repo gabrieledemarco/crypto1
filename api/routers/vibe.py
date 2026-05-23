@@ -244,49 +244,176 @@ def _build_user_message(body: VibeGenerateRequest) -> str:
     return "\n\n".join(parts)
 
 
+# ── Tool definitions for Claude ────────────────────────────────────────────────
+
+_ANALYSIS_TOOLS = [
+    {
+        "name": "get_autocorrelation",
+        "description": (
+            "Compute return autocorrelation to detect momentum or mean-reversion patterns at various lags. "
+            "Call this to understand if the asset has persistent trends or tends to mean-revert."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker":   {"type": "string", "description": "Asset ticker e.g. BTC-USD"},
+                "interval": {"type": "string", "enum": ["5m", "15m", "1h", "4h", "1d"],
+                             "description": "Bar interval matching the strategy timeframe"},
+            },
+            "required": ["ticker", "interval"],
+        },
+    },
+    {
+        "name": "get_seasonality",
+        "description": (
+            "Get intraday (hour UTC) and day-of-week return/volume seasonality. "
+            "Call this to find optimal active_hours and avoid low-liquidity periods."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker":   {"type": "string"},
+                "interval": {"type": "string", "enum": ["5m", "15m", "1h", "4h", "1d"]},
+            },
+            "required": ["ticker", "interval"],
+        },
+    },
+    {
+        "name": "get_volatility_cone",
+        "description": (
+            "Compare current ATR to its historical distribution. "
+            "Call this to calibrate SL multiplier — elevated ATR needs wider stops."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker":   {"type": "string"},
+                "interval": {"type": "string", "enum": ["5m", "15m", "1h", "4h", "1d"]},
+            },
+            "required": ["ticker", "interval"],
+        },
+    },
+    {
+        "name": "get_return_distribution",
+        "description": (
+            "Analyze return distribution: skewness, excess kurtosis, fat tails, VaR. "
+            "Call this to adjust risk_per_trade and SL width for asymmetric distributions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker":   {"type": "string"},
+                "interval": {"type": "string", "enum": ["5m", "15m", "1h", "4h", "1d"]},
+            },
+            "required": ["ticker", "interval"],
+        },
+    },
+]
+
+
+async def _execute_analysis_tool(tool_name: str, tool_input: dict) -> str:
+    """Dispatch Claude tool call to internal analysis functions."""
+    from api.routers.analysis import (
+        get_autocorrelation, get_intraday_seasonality,
+        get_volatility_cone, get_return_distribution,
+    )
+    ticker   = tool_input.get("ticker", "BTC-USD")
+    interval = tool_input.get("interval", "1h")
+    loop = asyncio.get_event_loop()
+    dispatch = {
+        "get_autocorrelation":     lambda: get_autocorrelation(ticker, interval),
+        "get_seasonality":         lambda: get_intraday_seasonality(ticker, interval),
+        "get_volatility_cone":     lambda: get_volatility_cone(ticker, interval),
+        "get_return_distribution": lambda: get_return_distribution(ticker, interval),
+    }
+    fn = dispatch.get(tool_name)
+    if not fn:
+        return json.dumps({"error": f"Unknown tool: {tool_name}"})
+    try:
+        result = await loop.run_in_executor(None, fn)
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 async def _claude_stream(body: VibeGenerateRequest):
-    """Real Claude stream via anthropic SDK."""
-    import anthropic
+    """Real Claude stream with tool-use analysis loop then strategy generation."""
+    import anthropic as _anthropic
 
     if not _ANTHROPIC_KEY:
-        yield f"data: {json.dumps({'type': 'delta', 'text': '[Error: ANTHROPIC_API_KEY not configured on server]'})}\n\n"
+        yield f"data: {json.dumps({'type': 'delta', 'text': '[Error: ANTHROPIC_API_KEY not configured]'})}\n\n"
         yield f"data: {json.dumps({'type': 'done', 'config': {}, 'code': ''})}\n\n"
         return
-    client = anthropic.Anthropic(api_key=_ANTHROPIC_KEY, timeout=60.0)
+
+    client = _anthropic.Anthropic(api_key=_ANTHROPIC_KEY, timeout=60.0)
     loop = asyncio.get_event_loop()
-    queue: asyncio.Queue = asyncio.Queue()
 
     await _ensure_brain_ready()
     brain_ctx = get_brain_context(body.prompt or "")
     effective_system = brain_ctx + SYSTEM_PROMPT if brain_ctx else SYSTEM_PROMPT
 
-    def _run():
+    messages = [{"role": "user", "content": _build_user_message(body)}]
+    tools_used: list[str] = []
+
+    # ── Phase 1: Tool-use analysis loop ──────────────────────────────────────
+    MAX_TOOL_ROUNDS = 4
+    for _round in range(MAX_TOOL_ROUNDS):
+        try:
+            response = await loop.run_in_executor(
+                _executor,
+                lambda msgs=messages: client.messages.create(
+                    model="claude-opus-4-7",
+                    max_tokens=512,
+                    system=effective_system,
+                    tools=_ANALYSIS_TOOLS,
+                    tool_choice={"type": "auto"},
+                    messages=msgs,
+                )
+            )
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'delta', 'text': f'[Analysis error: {e}]'})}\n\n"
+            break
+
+        if response.stop_reason != "tool_use":
+            break
+
+        tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
+        tool_results = []
+        for block in tool_use_blocks:
+            tools_used.append(block.name)
+            yield f"data: {json.dumps({'type': 'analysis_start', 'tool': block.name})}\n\n"
+            result_str = await _execute_analysis_tool(block.name, block.input)
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": result_str,
+            })
+            yield f"data: {json.dumps({'type': 'analysis_done', 'tool': block.name})}\n\n"
+
+        messages.append({"role": "assistant", "content": response.content})
+        messages.append({"role": "user", "content": tool_results})
+
+    # ── Phase 2: Strategy generation (streaming) ──────────────────────────────
+    queue: asyncio.Queue = asyncio.Queue()
+    full_text = ""
+
+    def _run_stream():
         try:
             with client.messages.stream(
                 model="claude-opus-4-7",
                 max_tokens=2048,
                 system=effective_system,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": _build_user_message(body),
-                    }
-                ],
+                messages=messages,
             ) as stream:
                 for text in stream.text_stream:
-                    asyncio.run_coroutine_threadsafe(
-                        queue.put(("delta", text)), loop
-                    )
+                    asyncio.run_coroutine_threadsafe(queue.put(("delta", text)), loop)
         except Exception as exc:
-            asyncio.run_coroutine_threadsafe(
-                queue.put(("error", str(exc))), loop
-            )
+            asyncio.run_coroutine_threadsafe(queue.put(("error", str(exc))), loop)
         finally:
             asyncio.run_coroutine_threadsafe(queue.put(("done", None)), loop)
 
-    loop.run_in_executor(_executor, _run)
+    loop.run_in_executor(_executor, _run_stream)
 
-    full_text = ""
     while True:
         kind, val = await queue.get()
         if kind == "delta":
@@ -294,12 +421,12 @@ async def _claude_stream(body: VibeGenerateRequest):
             yield f"data: {json.dumps({'type': 'delta', 'text': val})}\n\n"
         elif kind == "error":
             yield f"data: {json.dumps({'type': 'delta', 'text': f'[Error: {val}]'})}\n\n"
-            yield f"data: {json.dumps({'type': 'done', 'config': {}, 'code': ''})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'config': {}, 'code': '', 'tools_used': tools_used})}\n\n"
             break
         else:
             config = _extract_config(full_text)
-            code = _extract_code(full_text)
-            yield f"data: {json.dumps({'type': 'done', 'config': config, 'code': code})}\n\n"
+            code   = _extract_code(full_text)
+            yield f"data: {json.dumps({'type': 'done', 'config': config, 'code': code, 'tools_used': tools_used})}\n\n"
             break
 
 
