@@ -11,6 +11,7 @@ GET  /brain/query?q=  → show which chapters would be selected for a query
 """
 import json
 import re
+import requests
 from datetime import datetime
 from typing import Optional
 
@@ -144,17 +145,33 @@ def get_brain_context(
     Returns empty string if no chapters are synced yet.
     Appends empirical lessons in a <strategy_history> block when available.
     """
-    conn = get_conn()
-    chapter_ids = select_chapters(prompt, max_chapters)
+    # TF-IDF semantic search — more precise than keyword scoring
+    try:
+        from api.routers.brain_semantic import semantic_search
+        theory_chunks = semantic_search(
+            query=prompt,
+            top_k=4,
+            source_filter="theory",
+            min_score=0.03,
+        )
+        # Format same as before: list of dicts with 'title' and 'content'
+        selected = theory_chunks
+    except Exception:
+        # Fallback to original keyword scoring if semantic search fails
+        selected = []
+        chapter_ids = select_chapters(prompt, max_chapters)
+        conn = get_conn()
+        for ch_id in chapter_ids:
+            rows = conn.execute(
+                "SELECT title, content FROM brain_chunks WHERE id = ?", [ch_id]
+            ).fetchall()
+            if rows:
+                selected.append({"title": rows[0][0], "content": rows[0][1]})
 
     chunks: list[str] = []
-    for ch_id in chapter_ids:
-        rows = conn.execute(
-            "SELECT title, content FROM brain_chunks WHERE id = ?", [ch_id]
-        ).fetchall()
-        if not rows:
-            continue
-        title, content = rows[0]
+    for item in selected:
+        title = item.get("title", "")
+        content = item.get("content", "")
         body = content[:_CHARS_PER_CHAPTER]
         if len(content) > _CHARS_PER_CHAPTER:
             body += "\n…[truncated — full chapter in knowledge base]"
@@ -221,6 +238,34 @@ def sync_brain():
             synced.append(chapter_id)
         except Exception as exc:
             errors.append({"chapter": chapter_id, "error": str(exc)})
+
+    # Also sync code notebooks (code_01.md … code_22.md)
+    BASE_CODE_URL = "https://raw.githubusercontent.com/gabrieledemarco/Trading_agent_brain/main/ML_for_Algorithmic_Trading/"
+    for i in range(1, 23):
+        code_id = f"code_{i:02d}"
+        try:
+            url = f"{BASE_CODE_URL}code_{i:02d}.md"
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200 and len(resp.text) > 100:
+                existing = conn.execute(
+                    "SELECT id FROM brain_chunks WHERE id=?", [code_id]
+                ).fetchone()
+                if not existing:
+                    conn.execute(
+                        "INSERT INTO brain_chunks (id, title, content, tags, source) VALUES (?,?,?,?,?)",
+                        [code_id, f"Code Implementation: Chapter {i}",
+                         resp.text[:6000], json.dumps(["code", f"chapter_{i}", "implementation"]),
+                         "theory"]
+                    )
+        except Exception:
+            pass  # individual code file failures are non-blocking
+
+    # Invalidate TF-IDF index so next retrieval rebuilds with new content
+    try:
+        from api.routers.brain_semantic import invalidate_index
+        invalidate_index()
+    except Exception:
+        pass
 
     return {
         "synced": len(synced),
