@@ -47,8 +47,8 @@ If no strategy idea is provided, analyze the statistics and suggest the most app
 
 ## Step 1 — Brief explanation (2-4 sentences)
 If no prompt is given, start by explaining what the statistics and regime analysis reveal about the asset and why you chose this strategy.
-Use the Hurst exponent to decide between trend-following (H>0.55) and mean-reversion (H<0.45).
-Use GARCH persistence and annualised vol to calibrate ATR multipliers and risk-per-trade.
+Use the Hurst exponent to decide between trend-following (H>0.55) and mean-reversion (H<0.45). When H≈0.5 (0.45–0.55), the series is near-random-walk — prefer breakout strategies with wide stops.
+Use GARCH persistence and annualised vol to calibrate ATR multipliers: high persistence (>0.95) → wider stops; low vol regime → reduce risk_per_trade.
 
 ## Step 2 — JSON config in a ```json block with exactly these fields:
 {
@@ -64,17 +64,40 @@ Use GARCH persistence and annualised vol to calibrate ATR multipliers and risk-p
 Field constraints:
 - ticker: one of "BTC-USD", "ETH-USD", "SOL-USD", "ARB-USD", "OP-USD", "AVAX-USD"
 - timeframe: one of "5m", "15m", "1h", "4h", "1d"
-- sl_mult: 0.5 – 5.0 (ATR stop loss multiplier)
-- tp_mult: 1.0 – 10.0 (take profit multiplier)
+- sl_mult: 0.5 – 5.0 (ATR stop-loss multiplier for risk sizing — NOT the SL_dist value)
+- tp_mult: 1.0 – 10.0 (take-profit multiplier)
 - active_hours: [start_hour, end_hour] UTC (0-23)
-- risk_per_trade: 0.1 – 3.0 (% of equity)
+- risk_per_trade: 0.1 – 3.0 (% of equity per trade)
 - direction: "ALL", "LONG", or "SHORT"
 
 ## Step 3 — Python agent_fn in a ```python block.
-The function receives a DataFrame with columns: open, high, low, close, volume,
-ATR14, RSI14, EMA20, EMA50, VWAP, BBupper, BBlower.
-It must return the DataFrame with added columns: signal (1/−1/0), SL_dist, TP_dist.
-Use only pandas/numpy. Keep it self-contained.
+
+The function receives:
+- df: DataFrame with columns Open, High, Low, Close, Volume, ATR14, RSI14, EMA50, EMA200,
+  RollHigh6, RollLow6, garch_h, garch_regime (LOW/MED/HIGH), size_mult, ret, hour, dow
+- ind: optional indicator helper — call ind("EMA", 20), ind("BB", 20, 2.0), ind("VWAP"),
+  ind("ATR", 14), ind("MACD", 12, 26, 9), ind("STOCH", 14) etc.
+  BB and MACD/STOCH return tuples: (upper, mid, lower) and (line, signal, hist) respectively.
+
+The function MUST:
+- Return the DataFrame with added columns: signal (1/−1/0), SL_dist, TP_dist
+- Set SL_dist and TP_dist as absolute price distances (e.g. df["ATR14"] * 2.0)
+- NOT use garch_regime or size_mult as bar-by-bar entry signals (lookahead risk) — use them only for position sizing (size_mult is already applied by the engine)
+- Use only pandas/numpy. Keep it self-contained (no external imports beyond pandas/numpy).
+
+Example signature for a strategy that uses ind():
+```python
+import pandas as pd
+import numpy as np
+
+def agent_fn(df: pd.DataFrame, ind=None) -> pd.DataFrame:
+    df = df.copy()
+    ema20 = ind("EMA", 20) if ind else df["EMA50"]  # graceful fallback if ind not provided
+    ...
+    df["SL_dist"] = df["ATR14"] * 2.0   # absolute price distance
+    df["TP_dist"] = df["ATR14"] * 4.0
+    return df
+```
 """
 
 _MOCK_CODE = """\

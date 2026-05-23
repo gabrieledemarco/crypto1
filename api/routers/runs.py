@@ -287,6 +287,7 @@ async def create_run(body: RunCreate):
         [run_id, name, params["ticker"], params["timeframe"], json.dumps(params), "pending", body.strategy_id]
     )
 
+    params["_strategy_id"] = body.strategy_id
     asyncio.create_task(_run_backtest(run_id, params))
     return {"id": run_id, "name": name, "status": "pending"}
 
@@ -385,6 +386,22 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
         "slippage":      params.get("slippage", 0.0001),
         "risk_per_trade": params.get("risk_per_trade", 0.01),
     }
+    # Load and exec strategy code if this run is linked to a strategy
+    strategy_id = params.get("_strategy_id")
+    if strategy_id:
+        try:
+            from api.db import get_conn as _get_conn
+            _conn = _get_conn()
+            _row = _conn.execute(
+                "SELECT code FROM strategies WHERE id=?", [strategy_id]
+            ).fetchone()
+            if _row and _row[0] and _row[0].strip():
+                _ns: dict = {}
+                exec(compile(_row[0], f"strategy_{strategy_id}", "exec"), _ns)
+                if "agent_fn" in _ns:
+                    cfg["agent_fn"] = _ns["agent_fn"]
+        except Exception as _exc:
+            push("versions", 25, f"Strategy code load failed: {_exc}")
     direction = params.get("direction", "ALL")
 
     versions = run_versions(df_ind, cfg, direction=direction, progress_cb=push)

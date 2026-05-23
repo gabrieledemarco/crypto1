@@ -7,8 +7,9 @@ All functions receive DataFrames and config dicts; return dicts/DataFrames.
 import numpy as np
 import pandas as pd
 from .strategy_core import (
-    generate_signals_v2, backtest_v2, compute_metrics,
+    generate_signals_v2, backtest_v2, compute_metrics, apply_garch_to_fold,
 )
+from .indicators import make_ind
 
 INITIAL_CAPITAL = 10_000
 HOURS_MONTH = 24 * 30
@@ -74,7 +75,12 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
         if progress_cb:
             progress_cb("agent", 65)
         try:
-            df_a = _apply_cfg_overrides(_apply_direction_filter(agent_fn(df_ind), direction),
+            import inspect as _inspect
+            from .indicators import make_ind as _make_ind
+            _ind = _make_ind(df_ind)
+            _sig_params = list(_inspect.signature(agent_fn).parameters)
+            _call_args  = (df_ind, _ind) if len(_sig_params) >= 2 else (df_ind,)
+            df_a = _apply_cfg_overrides(_apply_direction_filter(agent_fn(*_call_args), direction),
                                          sl, tp, hrs)
             res_a = backtest_v2(df_a, INITIAL_CAPITAL, risk, commission=comm, slippage=slip)
             results["V_Agent"] = {"result": res_a, "metrics": compute_metrics(res_a, INITIAL_CAPITAL)}
@@ -159,8 +165,14 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
         fold    = 0
         i       = 0
         while i + is_len + oos_len <= len(df_ind):
-            is_data  = df_ind.iloc[i : i + is_len]
-            oos_data = df_ind.iloc[i + is_len : i + is_len + oos_len]
+            is_data  = df_ind.iloc[i : i + is_len].copy()
+            oos_data = df_ind.iloc[i + is_len : i + is_len + oos_len].copy()
+            # Refit GARCH on IS only — eliminates lookahead bias in WFO folds
+            if "garch_h" in df_ind.columns and "Close" in df_ind.columns:
+                try:
+                    is_data, oos_data = apply_garch_to_fold(is_data, oos_data)
+                except Exception:
+                    pass  # fall back to pre-computed garch_h if anything fails
 
             # --- per-fold IS optimisation (optional) ---
             if per_fold_opt:
