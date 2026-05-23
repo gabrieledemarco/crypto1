@@ -87,3 +87,18 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             synced_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Migrate brain_chunks: add learning columns if missing
+    _bc_cols = {row[0] for row in conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name='brain_chunks'"
+    ).fetchall()}
+    for _col, _def in [
+        ("source",         "TEXT DEFAULT 'theory'"),
+        ("scope",          "TEXT DEFAULT 'universal'"),
+        ("asset",          "TEXT"),
+        ("timeframe",      "TEXT"),
+        ("verdict",        "TEXT"),
+        ("regime_vector",  "JSON"),
+        ("run_id",         "TEXT"),
+    ]:
+        if _col not in _bc_cols:
+            conn.execute(f"ALTER TABLE brain_chunks ADD COLUMN {_col} {_def}")
