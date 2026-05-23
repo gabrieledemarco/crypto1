@@ -398,3 +398,54 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
         "skewness":         round(skewness, 4),
         "kurtosis":         round(kurtosis, 4),
     }
+
+
+def apply_garch_to_fold(
+    is_df: pd.DataFrame, oos_df: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Fit GARCH(1,1) on IS data only, then apply IS-fitted params to OOS.
+    Returns (is_df_with_garch, oos_df_with_garch) — both with updated
+    garch_h, garch_regime, size_mult columns.
+    Lookahead-free: OOS never sees future IS returns during fitting.
+    """
+    is_df = is_df.copy()
+    oos_df = oos_df.copy()
+
+    # Fit GARCH on IS log-returns
+    is_ret = np.log(is_df["Close"] / is_df["Close"].shift(1)).fillna(0).values
+    try:
+        omega, alpha, beta, h_is = fit_garch11(is_ret)
+    except Exception:
+        var_is = float(np.var(is_ret)) if np.var(is_ret) > 0 else 1e-6
+        omega, alpha, beta = var_is * 0.03, 0.05, 0.90
+        h_is = np.full(len(is_ret), var_is)
+
+    # IS: regime uses expanding IS percentiles
+    is_df["garch_h"] = h_is[: len(is_df)]
+    is_regime = compute_garch_regime(is_df["garch_h"].values)
+    is_df["garch_regime"] = is_regime
+    is_df["size_mult"] = np.where(is_regime == "LOW", 0.0,
+                          np.where(is_regime == "HIGH", 0.5, 1.0))
+
+    # OOS: recursively forecast using IS-fitted params, seed from last IS h
+    oos_ret = np.log(oos_df["Close"] / oos_df["Close"].shift(1)).fillna(0).values
+    h_prev = h_is[-1] if len(h_is) > 0 else omega / max(1 - alpha - beta, 1e-6)
+    h_oos = np.empty(len(oos_ret))
+    for i, r in enumerate(oos_ret):
+        h_oos[i] = omega + alpha * r ** 2 + beta * h_prev
+        h_prev = h_oos[i]
+
+    oos_df["garch_h"] = h_oos[: len(oos_df)]
+    # Regime thresholds from IS distribution (no OOS data in thresholds)
+    lo_thresh = float(np.percentile(h_is, 25)) if len(h_is) >= 4 else 0.0
+    hi_thresh = float(np.percentile(h_is, 75)) if len(h_is) >= 4 else float("inf")
+    oos_regime = np.where(
+        oos_df["garch_h"].values < lo_thresh, "LOW",
+        np.where(oos_df["garch_h"].values > hi_thresh, "HIGH", "MED")
+    ).astype(object)
+    oos_df["garch_regime"] = oos_regime
+    oos_df["size_mult"] = np.where(oos_regime == "LOW", 0.0,
+                           np.where(oos_regime == "HIGH", 0.5, 1.0))
+
+    return is_df, oos_df
