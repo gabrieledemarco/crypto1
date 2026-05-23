@@ -77,6 +77,7 @@ export function VibeScreen() {
   }, [pendingVibeParams]);
 
   const [generating, setGenerating] = useState(false);
+  const [status, setStatus] = useState("");
   const [text, setText] = useState("");
   const [config, setConfig] = useState<StrategyConfig | null>(null);
   const [code, setCode] = useState<string | null>(null);
@@ -128,6 +129,7 @@ export function VibeScreen() {
 
   const handleGenerate = async () => {
     setGenerating(true);
+    setStatus("");
     setText("");
     setConfig(null);
     setCode(null);
@@ -170,8 +172,15 @@ export function VibeScreen() {
           if (!line.startsWith("data: ")) continue;
           try {
             const ev = JSON.parse(line.slice(6));
+            if (ev.type === "analysis_start") {
+              setStatus(`Analyzing: ${ev.tool.replace(/_/g, " ")}…`);
+            }
+            if (ev.type === "analysis_done") {
+              setStatus(`Analysis complete: ${ev.tool.replace(/_/g, " ")}`);
+            }
             if (ev.type === "delta") setText((t) => t + ev.text);
             if (ev.type === "done") {
+              setStatus("");
               setConfig(ev.config ?? null);
               setCode(ev.code ?? null);
               setGenerating(false);
@@ -370,7 +379,9 @@ export function VibeScreen() {
         <div className={styles.panelHeader}>
           <span className={styles.panelTitle}>OUTPUT</span>
           <span className={styles.panelSub}>
-            {generating ? "streaming…" : config ? "done" : "waiting"}
+            {status
+              ? status
+              : generating ? "streaming…" : config ? "done" : "waiting"}
           </span>
           <span style={{ flex: 1 }} />
           {/* Tab switcher */}
