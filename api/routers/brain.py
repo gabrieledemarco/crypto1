@@ -77,10 +77,72 @@ def select_chapters(prompt: str, max_chapters: int = 3) -> list[str]:
     return selected if selected else list(_DEFAULT_CHAPTERS)
 
 
-def get_brain_context(prompt: str, max_chapters: int = 3) -> str:
+def _cosine_sim(v1: dict, v2: dict) -> float:
+    """Cosine similarity between two regime vectors."""
+    keys = ["hurst", "garch_persistence", "ann_vol_pct", "trending_pct", "high_regime_pct"]
+    a = [float(v1.get(k, 0)) for k in keys]
+    b = [float(v2.get(k, 0)) for k in keys]
+    a, b = np.array(a), np.array(b)
+    # Normalize ann_vol to 0-1 range (typical 0-200%)
+    a[2] /= 100.0
+    b[2] /= 100.0
+    norm_a, norm_b = np.linalg.norm(a), np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(a, b) / (norm_a * norm_b))
+
+
+def _get_empirical_lessons(
+    asset: Optional[str],
+    current_regime: Optional[dict],
+    top_k: int = 3,
+) -> list[dict]:
+    """Retrieve empirical lessons from backtests, weighted by regime similarity."""
+    try:
+        conn = get_conn()
+        rows = conn.execute(
+            "SELECT id, title, content, scope, asset, verdict, regime_vector "
+            "FROM brain_chunks WHERE source='empirical' "
+            "ORDER BY synced_at DESC LIMIT 50"
+        ).fetchall()
+    except Exception:
+        return []
+
+    scored = []
+    for row in rows:
+        chunk_id, title, content, scope, chunk_asset, verdict, rv_json = row
+        # Base score: asset match
+        asset_score = 1.0 if (asset and chunk_asset == asset) else 0.5
+
+        # Regime similarity
+        regime_score = 0.5
+        if current_regime and rv_json:
+            try:
+                chunk_regime = json.loads(rv_json) if isinstance(rv_json, str) else rv_json
+                regime_score = _cosine_sim(current_regime, chunk_regime)
+            except Exception:
+                pass
+
+        # Scope weight
+        scope_w = {"universal": 1.0, "regime": 0.9, "asset": 0.8}.get(scope or "asset", 0.8)
+
+        total = (0.4 * asset_score + 0.4 * regime_score + 0.2 * scope_w)
+        scored.append((total, {"title": title, "content": content, "verdict": verdict}))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [c for _, c in scored[:top_k]]
+
+
+def get_brain_context(
+    prompt: str,
+    max_chapters: int = 3,
+    asset: Optional[str] = None,
+    current_regime: Optional[dict] = None,
+) -> str:
     """
     Build a <second_brain> context block for the given prompt.
     Returns empty string if no chapters are synced yet.
+    Appends empirical lessons in a <strategy_history> block when available.
     """
     conn = get_conn()
     chapter_ids = select_chapters(prompt, max_chapters)
@@ -98,16 +160,35 @@ def get_brain_context(prompt: str, max_chapters: int = 3) -> str:
             body += "\n…[truncated — full chapter in knowledge base]"
         chunks.append(f"#### {title}\n{body}")
 
-    if not chunks:
-        return ""
+    theory_block = ""
+    if chunks:
+        theory_block = (
+            "<second_brain>\n"
+            "Use the following knowledge from your ML-trading knowledge base to inform "
+            "your strategy design. Apply relevant concepts, formulas, and heuristics.\n\n"
+            + "\n\n---\n\n".join(chunks)
+            + "\n</second_brain>\n\n"
+        )
 
-    return (
-        "<second_brain>\n"
-        "Use the following knowledge from your ML-trading knowledge base to inform "
-        "your strategy design. Apply relevant concepts, formulas, and heuristics.\n\n"
-        + "\n\n---\n\n".join(chunks)
-        + "\n</second_brain>\n\n"
-    )
+    empirical_lessons = _get_empirical_lessons(asset, current_regime)
+    history_block = ""
+    if empirical_lessons:
+        lesson_parts = []
+        for lesson in empirical_lessons:
+            verdict_tag = lesson.get("verdict", "unknown")
+            lesson_parts.append(
+                f"[{verdict_tag.upper()}] {lesson['title']}\n{lesson['content']}"
+            )
+        history_block = (
+            "<strategy_history>\n"
+            "Past backtest results for this asset / regime — use these lessons to "
+            "avoid repeating failures and build on what worked.\n\n"
+            + "\n\n---\n\n".join(lesson_parts)
+            + "\n</strategy_history>\n\n"
+        )
+
+    combined = theory_block + history_block
+    return combined
 
 
 # ── REST endpoints ─────────────────────────────────────────────────────────────
