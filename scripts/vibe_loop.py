@@ -48,9 +48,9 @@ from strategies import get_archetype
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 # ── Timeframe metadata ─────────────────────────────────────────────────────────
-_SUB_HOURLY    = {"1min", "5min", "15min"}
+_SUB_HOURLY    = {"1min", "5min"}           # truly unsupported (need real tick data)
 _RESAMPLE_FREQ = {"4h": "4h", "4H": "4h", "1d": "D", "d": "D"}
-_ANN_FACTORS   = {"1h": 8760, "4h": 2190, "1d": 365}
+_ANN_FACTORS   = {"15min": 35040, "1h": 8760, "4h": 2190, "1d": 365}
 
 # ── Archive CSV map ────────────────────────────────────────────────────────────
 _CSV_DIR = os.path.join(_ROOT, "archive", "btc_analysis", "output")
@@ -87,7 +87,11 @@ def _seed_csv(ticker: str) -> None:
     print(f"  Inserted {n} rows")
 
 
-def load_1h(ticker: str) -> pd.DataFrame:
+def load_bars(ticker: str, native_tf: str = "1h") -> pd.DataFrame:
+    """
+    Load the native-resolution bars for ticker from DuckDB.
+    Falls back to seeding from the hourly CSV archive when the table is empty.
+    """
     conn = get_conn()
 
     def _q():
@@ -106,7 +110,7 @@ def load_1h(ticker: str) -> pd.DataFrame:
     df = pd.DataFrame(rows, columns=["Date", "Open", "High", "Low", "Close", "Volume"])
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.set_index("Date").sort_index()
-    print(f"  1h : {len(df):,} bars ({df.index[0].date()} → {df.index[-1].date()})")
+    print(f"  {native_tf} : {len(df):,} bars ({df.index[0].date()} → {df.index[-1].date()})")
     return df
 
 
@@ -122,7 +126,9 @@ def resample(df_1h: pd.DataFrame, tf: str) -> pd.DataFrame:
 
 def _active_hours(tf: str) -> list[int]:
     """Bars are 1 per day at midnight for 1d; open all hours."""
-    return [0, 23] if tf == "1d" else [6, 22]
+    if tf == "1d":
+        return [0, 23]   # daily bars land at midnight, must open all
+    return [6, 22]        # 1h, 4h, 15min all have intraday hour resolution
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -411,11 +417,13 @@ def main() -> None:
     print(f"{'='*70}\n")
 
     print("[*] Loading data...")
-    df_1h = load_1h(ticker)
-    tf_data: dict[str, pd.DataFrame] = {"1h": df_1h}
+    # native_tf = the smallest requested tf (bars already in DuckDB)
+    native_tf = avail[0]
+    df_native = load_bars(ticker, native_tf)
+    tf_data: dict[str, pd.DataFrame] = {native_tf: df_native}
     for tf in avail:
-        if tf != "1h":
-            tf_data[tf] = resample(df_1h, tf)
+        if tf != native_tf:
+            tf_data[tf] = resample(df_native, tf)
 
     best_sharpe = float("-inf")
     best_sid    = None
