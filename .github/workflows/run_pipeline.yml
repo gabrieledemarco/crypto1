@@ -1,50 +1,117 @@
-name: BTC Strategy Pipeline
+name: Run Server-Side Pipeline
 
 on:
-  push:
-    branches:
-      - claude/btc-price-analysis-strategy-zARFu
-      - master
   workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Comma-separated tickers"
+        required: false
+        default: "BTC-USD,ETH-USD,SOL-USD"
+      timeframes:
+        description: "Comma-separated timeframes"
+        required: false
+        default: "1h,4h,1d"
+      max_iter:
+        description: "Max iterations per ticker"
+        required: false
+        default: "30"
+      stop_sharpe:
+        description: "Target Sharpe ratio"
+        required: false
+        default: "1.5"
+      max_dd:
+        description: "Max drawdown % allowed"
+        required: false
+        default: "20"
 
 jobs:
   pipeline:
-    name: Run Analysis Pipeline
+    name: Trigger Railway Pipeline
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: btc_analysis/requirements.txt
-
-      - name: Install dependencies
-        run: pip install -r btc_analysis/requirements.txt
-
-      - name: Run pipeline
-        run: python3 btc_analysis/run_all.py
-
-      - name: Smoke-test Streamlit app
+      - name: Build ticker/timeframe arrays
+        id: params
         run: |
-          timeout 15 streamlit run btc_analysis/app.py \
-            --server.headless true \
-            --server.port 8501 \
-            -- --server.runOnSave false \
-          || true
+          python3 - <<'EOF'
+          import json, os
+          tickers   = [t.strip() for t in "${{ github.event.inputs.tickers }}".split(",")]
+          timeframes = [t.strip() for t in "${{ github.event.inputs.timeframes }}".split(",")]
+          payload = {
+              "tickers":     tickers,
+              "timeframes":  timeframes,
+              "max_iter":    int("${{ github.event.inputs.max_iter }}"),
+              "stop_sharpe": float("${{ github.event.inputs.stop_sharpe }}"),
+              "max_dd":      float("${{ github.event.inputs.max_dd }}"),
+          }
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"payload={json.dumps(payload)}\n")
+          EOF
 
-      - name: Upload output artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pipeline-output-${{ github.run_number }}
-          path: |
-            btc_analysis/output/*.csv
-            btc_analysis/output/*.txt
-            btc_analysis/output/*.png
-          retention-days: 30
+      - name: Start pipeline job
+        id: start
+        run: |
+          RESPONSE=$(curl -sf -X POST "${{ secrets.RAILWAY_API_URL }}/runs/pipeline" \
+            -H 'Content-Type: application/json' \
+            -d '${{ steps.params.outputs.payload }}')
+          echo "response=$RESPONSE"
+          JOB_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
+          echo "job_id=$JOB_ID" >> "$GITHUB_OUTPUT"
+          echo "Started pipeline job: $JOB_ID"
+
+      - name: Stream pipeline events
+        run: |
+          JOB_ID="${{ steps.start.outputs.job_id }}"
+          echo "Streaming events for job $JOB_ID ..."
+          curl -sN "${{ secrets.RAILWAY_API_URL }}/runs/pipeline/$JOB_ID/stream" | \
+          python3 - <<'EOF'
+          import sys, json
+
+          for raw in sys.stdin:
+              raw = raw.strip()
+              if not raw.startswith("data:"):
+                  continue
+              try:
+                  evt = json.loads(raw[5:].strip())
+              except Exception:
+                  continue
+
+              t = evt.get("type", "")
+              if t == "start":
+                  print(f"[start] tickers={evt['tickers']} timeframes={evt['timeframes']}")
+              elif t == "ticker_start":
+                  print(f"\n[{evt['idx']}/{evt['total']}] {evt['ticker']}")
+              elif t == "downloading":
+                  print(f"  downloading {evt['ticker']} {evt['tf']} ({evt['period']})")
+              elif t == "download_done":
+                  print(f"  downloaded  {evt['ticker']} {evt['tf']}: {evt['bars']} bars  {evt['start']} → {evt['end']}")
+              elif t == "download_error":
+                  print(f"  ERROR downloading {evt['ticker']} {evt['tf']}: {evt['msg']}")
+              elif t == "iter_start":
+                  print(f"  [{evt['iter']:>2}] {evt['tf']} arch={evt['arch']}")
+              elif t == "iter_done":
+                  verdict = evt['verdict']
+                  star = " ★" if verdict == "ROBUST" else ""
+                  print(f"       Sharpe={evt['sharpe']:+.3f}  DD={evt['dd']:.1f}%  N={evt['n_trades']}  WR={evt['win_rate']:.1f}%  [{verdict}]{star}")
+              elif t == "iter_error":
+                  print(f"  iter {evt['iter']} ERROR: {evt['msg']}")
+              elif t == "ticker_done":
+                  v = evt['verdict']
+                  if v == "ROBUST":
+                      print(f"  → ROBUST  sid={evt['sid']}  Sharpe={evt['sharpe']}  DD={evt['dd']}%")
+                  else:
+                      print(f"  → {v}")
+              elif t == "complete":
+                  print(f"\n{'='*60}")
+                  print(f"COMPLETE  tickers={evt['total_tickers']}  robust={evt['robust_found']}")
+                  for s in evt.get("summary", []):
+                      flag = "★" if s["verdict"] == "ROBUST" else " "
+                      sid  = s.get("sid") or "-"
+                      sh   = s.get("sharpe") or 0
+                      print(f"  {flag} {s['ticker']:<12} {s.get('tf','?'):<4}  Sharpe={sh:+.3f}  {s['verdict']}")
+                  break
+              elif t == "error":
+                  print(f"PIPELINE ERROR: {evt['msg']}")
+                  sys.exit(1)
+          EOF
