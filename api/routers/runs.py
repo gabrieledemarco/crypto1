@@ -292,6 +292,56 @@ async def create_run(body: RunCreate):
     return {"id": run_id, "name": name, "status": "pending"}
 
 
+def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
+    """
+    Return OHLCV rows for ticker+interval from DuckDB.
+    If the table is empty for this ticker, auto-fetch from ccxt/yfinance
+    and store via bulk_writer before returning — transparent to the caller.
+    """
+    source_key = f"yfinance:{interval}"
+    rows = conn.execute(
+        "SELECT ts, open, high, low, close, volume FROM assets "
+        "WHERE ticker=? AND (source=? OR source=? OR source LIKE ?) ORDER BY ts",
+        [ticker, source_key, "yfinance", f"%:{interval}"]
+    ).fetchall()
+
+    if rows:
+        return rows
+
+    # Auto-fetch — no data in DB yet
+    if push:
+        push("start", 2, f"auto-fetching {ticker} {interval}…")
+
+    try:
+        import pandas as pd
+        from engine.providers.ccxt_client import is_crypto_ticker, fetch as ccxt_fetch
+        from engine.providers.yfinance_client import fetch as yf_fetch
+        from engine.storage.bulk_writer import bulk_store
+
+        period = "2y"
+        if is_crypto_ticker(ticker):
+            try:
+                df = ccxt_fetch(ticker, period=period, interval=interval)
+            except Exception:
+                df = yf_fetch(ticker, period=period, interval=interval)
+        else:
+            df = yf_fetch(ticker, period=period, interval=interval)
+
+        bulk_store(conn, ticker, source_key, df)
+    except Exception as exc:
+        raise ValueError(f"No data for {ticker}/{interval} and auto-fetch failed: {exc}")
+
+    rows = conn.execute(
+        "SELECT ts, open, high, low, close, volume FROM assets "
+        "WHERE ticker=? AND (source=? OR source=? OR source LIKE ?) ORDER BY ts",
+        [ticker, source_key, "yfinance", f"%:{interval}"]
+    ).fetchall()
+
+    if not rows:
+        raise ValueError(f"Auto-fetch returned no data for {ticker}/{interval}.")
+    return rows
+
+
 async def _run_backtest(run_id: str, params: dict):
     """Async backtest pipeline with SSE progress events."""
     import numpy as np
@@ -310,14 +360,9 @@ async def _run_backtest(run_id: str, params: dict):
         ticker = params["ticker"]
         while ticker.endswith("-USD-USD") or ticker.endswith("-USDT-USDT"):
             ticker = ticker[:-4]
+        interval = params.get("timeframe", "1d")
         await asyncio.sleep(0)  # yield to event loop
-        rows = conn.execute(
-            "SELECT ts, open, high, low, close, volume FROM assets WHERE ticker=? ORDER BY ts",
-            [ticker]
-        ).fetchall()
-
-        if not rows:
-            raise ValueError(f"No data for {ticker}. Fetch asset first.")
+        rows = _load_or_fetch(conn, ticker, interval, push)
 
         import pandas as pd
         df = pd.DataFrame(rows, columns=["Date","Open","High","Low","Close","Volume"])
