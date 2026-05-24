@@ -368,6 +368,18 @@ def evaluate(result: dict, stop_sharpe: float, max_dd: float) -> tuple[float, fl
 # 5. Main
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _promote_strategy(sid: str, status: str) -> None:
+    """Mark strategy as starred and update its status in the library."""
+    try:
+        get_conn().execute(
+            "UPDATE strategies SET starred=TRUE, status=? WHERE id=?",
+            [status, sid],
+        )
+        print(f"  [library] strategy {sid} → starred, status={status}")
+    except Exception as e:
+        print(f"  [library] promote failed: {e}")
+
+
 def _print_table(log: list[dict]) -> None:
     if not log:
         return
@@ -383,7 +395,7 @@ def _print_table(log: list[dict]) -> None:
         )
 
 
-def main() -> None:
+def main() -> dict:
     p = argparse.ArgumentParser(description="Multi-TF strategy optimization loop")
     p.add_argument("--ticker",      default="BTC-USD")
     p.add_argument("--timeframes",  default="1h,4h,1d",
@@ -500,19 +512,25 @@ def main() -> None:
             best_sharpe, best_sid, best_tf_ = sharpe, sid, tf
 
         if verdict == "ROBUST":
+            _promote_strategy(sid, "live")
             print(f"\n{'='*70}")
             print(f"  ★  ROBUST STRATEGY FOUND  ★")
             print(f"  Iteration {iteration}  |  {tf}  |  strategy={sid}")
             print(f"  Sharpe={sharpe:.3f}  MaxDD={dd:.1f}%")
             print(f"{'='*70}")
             _print_table(log)
-            return
+            return {"verdict": "ROBUST", "sid": sid, "tf": tf,
+                    "sharpe": sharpe, "dd": dd, "log": log}
 
+    if best_sid:
+        _promote_strategy(best_sid, "marginal")
     print(f"\n{'='*70}")
     print(f"  Loop complete — {max_iter} iterations, no ROBUST strategy found.")
     print(f"  Best Sharpe: {best_sharpe:.3f}  strategy={best_sid}  tf={best_tf_}")
     print(f"{'='*70}")
     _print_table(log)
+    return {"verdict": "none", "sid": best_sid, "tf": best_tf_,
+            "sharpe": best_sharpe, "dd": None, "log": log}
 
 
 if __name__ == "__main__":
