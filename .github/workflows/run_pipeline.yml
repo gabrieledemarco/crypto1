@@ -51,8 +51,10 @@ jobs:
 
       - name: Start pipeline job
         id: start
+        env:
+          API_BASE: "https://illustrious-inspiration-production.up.railway.app"
         run: |
-          RESPONSE=$(curl -sf -X POST "${{ secrets.RAILWAY_API_URL }}/runs/pipeline" \
+          RESPONSE=$(curl -sf -X POST "$API_BASE/runs/pipeline" \
             -H 'Content-Type: application/json' \
             -d '${{ steps.params.outputs.payload }}')
           echo "response=$RESPONSE"
@@ -61,10 +63,12 @@ jobs:
           echo "Started pipeline job: $JOB_ID"
 
       - name: Stream pipeline events
+        env:
+          API_BASE: "https://illustrious-inspiration-production.up.railway.app"
         run: |
           JOB_ID="${{ steps.start.outputs.job_id }}"
           echo "Streaming events for job $JOB_ID ..."
-          curl -sN "${{ secrets.RAILWAY_API_URL }}/runs/pipeline/$JOB_ID/stream" | \
+          curl -sN "$API_BASE/runs/pipeline/$JOB_ID/stream" | \
           python3 - <<'EOF'
           import sys, json
 
