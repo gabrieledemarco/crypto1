@@ -5,12 +5,19 @@ import duckdb
 
 DB_PATH = os.environ.get("DUCKDB_PATH", "/tmp/pareto.db")
 _local = threading.local()
+_schema_lock = threading.Lock()
+_schema_done = False
 
 
 def get_conn() -> duckdb.DuckDBPyConnection:
+    global _schema_done
     if not hasattr(_local, 'conn') or _local.conn is None:
         _local.conn = duckdb.connect(DB_PATH)
-        _init_schema(_local.conn)
+        if not _schema_done:
+            with _schema_lock:
+                if not _schema_done:        # double-checked locking
+                    _init_schema(_local.conn)
+                    _schema_done = True
     return _local.conn
 
 
