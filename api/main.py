@@ -9,7 +9,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from api.db import get_conn, close_conn
-from api.routers import runs, assets, strategies, vibe, brain, analysis
+from api.routers import runs, assets, strategies, vibe, brain, analysis, optimize
 
 structlog.configure(
     processors=[
@@ -54,6 +54,7 @@ def health():
     return {"status": "ok", "version": "0.2.0"}
 
 
+app.include_router(optimize.router,   prefix="/runs/optimize", tags=["optimize"])
 app.include_router(runs.router,       prefix="/runs",       tags=["runs"])
 app.include_router(assets.router,     prefix="/assets",     tags=["assets"])
 app.include_router(strategies.router, prefix="/strategies", tags=["strategies"])
