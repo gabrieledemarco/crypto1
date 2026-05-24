@@ -192,20 +192,5 @@ def _resample_4h(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _store(conn, ticker: str, tf: str, df: pd.DataFrame) -> int:
-    src = f"download:{tf}"
-    count = 0
-    for ts, row in df.iterrows():
-        try:
-            conn.execute(
-                "INSERT OR IGNORE INTO assets "
-                "(ticker,source,ts,open,high,low,close,volume) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                [ticker, src, ts,
-                 float(row["Open"]), float(row["High"]),
-                 float(row["Low"]),  float(row["Close"]),
-                 float(row["Volume"])],
-            )
-            count += 1
-        except Exception:
-            pass
-    return count
+    from engine.storage.bulk_writer import bulk_store
+    return bulk_store(conn, ticker, f"download:{tf}", df)
