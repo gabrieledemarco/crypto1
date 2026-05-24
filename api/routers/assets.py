@@ -84,20 +84,8 @@ def fetch_asset(body: AssetFetch):
 
     conn = get_conn()
     source_key = f"{body.source}:{body.interval}"
-    # Upsert bars
-    inserted = 0
-    for ts, row in df.iterrows():
-        try:
-            conn.execute(
-                "INSERT OR IGNORE INTO assets (ticker, source, ts, open, high, low, close, volume) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                [body.ticker, source_key, ts,
-                 float(row["Open"]), float(row["High"]), float(row["Low"]),
-                 float(row["Close"]), float(row["Volume"])]
-            )
-            inserted += 1
-        except Exception:
-            pass
+    from engine.storage.bulk_writer import bulk_store
+    inserted = bulk_store(conn, body.ticker, source_key, df)
     return {"ticker": body.ticker, "bars": inserted, "source": source_key}
 
 
