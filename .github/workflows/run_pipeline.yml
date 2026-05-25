@@ -64,6 +64,13 @@ jobs:
               f.write(f"payload={payload}\n")
           PYEOF
 
+      - name: Wait for Railway deployment
+        if: github.event_name == 'push'
+        run: |
+          echo "Waiting 6 minutes for Railway to finish building and deploying ..."
+          sleep 360
+          echo "Proceeding."
+
       - name: Start pipeline job on Railway
         id: start
         env:
