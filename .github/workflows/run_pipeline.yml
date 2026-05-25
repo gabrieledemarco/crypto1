@@ -4,23 +4,23 @@ on:
   workflow_dispatch:
     inputs:
       tickers:
-        description: "Comma-separated tickers"
+        description: "Comma-separated tickers (crypto supported)"
         required: false
         default: "BTC-USD,ETH-USD,SOL-USD"
       timeframes:
-        description: "Comma-separated timeframes"
+        description: "Comma-separated timeframes (1m,5m,15m,1h,4h,1d)"
         required: false
-        default: "1h,4h,1d"
+        default: "1m,5m,15m,1h"
       max_iter:
-        description: "Max iterations per ticker"
+        description: "Total iterations per ticker (e.g. 40 = 10 per TF with 4 TFs)"
         required: false
-        default: "30"
+        default: "40"
       stop_sharpe:
-        description: "Target Sharpe ratio"
+        description: "Stop early when Sharpe >= this"
         required: false
         default: "1.5"
       max_dd:
-        description: "Max drawdown % allowed"
+        description: "Max acceptable drawdown %"
         required: false
         default: "20"
 
@@ -28,7 +28,7 @@ jobs:
   pipeline:
     name: Trigger Railway Pipeline
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 350   # Railway does the heavy work; we just stream results
 
     steps:
       - name: Build request payload
@@ -36,7 +36,7 @@ jobs:
         run: |
           python3 -c "
           import json, os
-          tickers   = [t.strip() for t in '${{ github.event.inputs.tickers }}'.split(',')]
+          tickers    = [t.strip() for t in '${{ github.event.inputs.tickers }}'.split(',')]
           timeframes = [t.strip() for t in '${{ github.event.inputs.timeframes }}'.split(',')]
           payload = json.dumps({
               'tickers':     tickers,
@@ -45,24 +45,26 @@ jobs:
               'stop_sharpe': float('${{ github.event.inputs.stop_sharpe }}'),
               'max_dd':      float('${{ github.event.inputs.max_dd }}'),
           })
+          print(f'Payload: {payload}')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f'payload={payload}\n')
           "
 
-      - name: Start pipeline job
+      - name: Start pipeline job on Railway
         id: start
         env:
           API_BASE: "https://illustrious-inspiration-production.up.railway.app"
           PAYLOAD: ${{ steps.params.outputs.payload }}
         run: |
           echo "Posting to $API_BASE/runs/pipeline ..."
-          RESPONSE=$(curl -sf -X POST "$API_BASE/runs/pipeline" \
+          RESPONSE=$(curl -sf --max-time 30 -X POST "$API_BASE/runs/pipeline" \
             -H 'Content-Type: application/json' \
             -d "$PAYLOAD")
           echo "response=$RESPONSE"
           JOB_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
           echo "job_id=$JOB_ID" >> "$GITHUB_OUTPUT"
           echo "Started pipeline job: $JOB_ID"
+          echo "Stream: $API_BASE/runs/pipeline/$JOB_ID/stream"
 
       - name: Stream pipeline events
         env:
@@ -71,7 +73,6 @@ jobs:
         run: |
           echo "Streaming events for job $JOB_ID ..."
 
-          # Write the parser to a temp file — avoids the pipe+heredoc stdin conflict
           cat > /tmp/stream_events.py << 'PYEOF'
 import sys, json
 
@@ -86,40 +87,54 @@ for raw in sys.stdin:
 
     t = evt.get("type", "")
     if t == "start":
-        print(f"[start] tickers={evt['tickers']} timeframes={evt['timeframes']}", flush=True)
+        tfs = evt.get("timeframes", [])
+        n_per_tf = int(evt.get("max_iter", 0)) // max(len(tfs), 1)
+        print(f"[start] tickers={evt['tickers']}", flush=True)
+        print(f"        timeframes={tfs}  max_iter={evt.get('max_iter')}  (~{n_per_tf} iters/TF)", flush=True)
+        print(f"        stop_sharpe={evt.get('stop_sharpe')}  max_dd={evt.get('max_dd')}%", flush=True)
     elif t == "ticker_start":
-        print(f"\n[{evt['idx']}/{evt['total']}] {evt['ticker']}", flush=True)
+        print(f"\n{'='*60}", flush=True)
+        print(f"[{evt['idx']}/{evt['total']}] {evt['ticker']}", flush=True)
+        print(f"{'='*60}", flush=True)
     elif t == "downloading":
-        print(f"  downloading {evt['ticker']} {evt['tf']} ({evt['period']})", flush=True)
+        print(f"  -> download {evt['ticker']} {evt['tf']} ({evt['period']})", flush=True)
     elif t == "download_done":
-        print(f"  downloaded  {evt['ticker']} {evt['tf']}: {evt['bars']} bars  {evt['start']} -> {evt['end']}", flush=True)
+        print(f"  -> OK       {evt['ticker']} {evt['tf']}: {evt['bars']:,} bars  {evt['start']} -> {evt['end']}", flush=True)
     elif t == "download_error":
-        print(f"  ERROR downloading {evt['ticker']} {evt['tf']}: {evt['msg']}", flush=True)
+        print(f"  -> FAIL     {evt['ticker']} {evt['tf']}: {evt['msg']}", flush=True)
     elif t == "iter_start":
-        print(f"  [{evt['iter']:>2}] {evt['tf']} arch={evt['arch']}", flush=True)
+        print(f"  [{evt['iter']:>3}] {evt['tf']:<4} arch={evt['arch']}", flush=True)
     elif t == "iter_done":
         verdict = evt['verdict']
-        star = " *" if verdict == "ROBUST" else ""
-        print(f"       Sharpe={evt['sharpe']:+.3f}  DD={evt['dd']:.1f}%  N={evt['n_trades']}  WR={evt['win_rate']:.1f}%  [{verdict}]{star}", flush=True)
+        star = " ***ROBUST***" if verdict == "ROBUST" else (" ." if verdict == "marginal" else "")
+        print(f"         Sharpe={evt['sharpe']:+.3f}  DD={evt['dd']:+.1f}%  N={evt['n_trades']}  WR={evt['win_rate']:.1f}%  [{verdict}]{star}", flush=True)
     elif t == "iter_error":
-        print(f"  iter {evt['iter']} ERROR: {evt['msg']}", flush=True)
+        print(f"  [{evt['iter']:>3}] ERROR: {evt['msg']}", flush=True)
     elif t == "ticker_done":
         v = evt['verdict']
         if v == "ROBUST":
-            print(f"  -> ROBUST  sid={evt['sid']}  Sharpe={evt['sharpe']}  DD={evt['dd']}%", flush=True)
+            print(f"\n  SAVED -> Library  sid={evt['sid']}  {evt.get('tf','')}  Sharpe={evt['sharpe']}  DD={evt['dd']}%", flush=True)
         else:
-            print(f"  -> {v}", flush=True)
+            best = evt.get('sharpe')
+            print(f"\n  Best: Sharpe={best}  ({v}) — promoted as marginal if available", flush=True)
     elif t == "complete":
         print(f"\n{'='*60}", flush=True)
-        print(f"COMPLETE  tickers={evt['total_tickers']}  robust={evt['robust_found']}", flush=True)
+        print(f"PIPELINE COMPLETE", flush=True)
+        print(f"  Tickers processed : {evt['total_tickers']}", flush=True)
+        print(f"  ROBUST strategies : {evt['robust_found']}", flush=True)
+        print(f"{'='*60}", flush=True)
+        print(f"{'Ticker':<12} {'TF':<5} {'Sharpe':>8}  Verdict", flush=True)
+        print(f"{'-'*45}", flush=True)
         for s in evt.get("summary", []):
             flag = "*" if s["verdict"] == "ROBUST" else " "
-            sh = s.get("sharpe") or 0
-            print(f"  {flag} {s['ticker']:<12} {s.get('tf','?'):<4}  Sharpe={sh:+.3f}  {s['verdict']}", flush=True)
+            sh   = s.get("sharpe") or 0.0
+            tf   = s.get("tf") or "?"
+            print(f"{flag} {s['ticker']:<12} {tf:<5} {sh:>+8.3f}  {s['verdict']}", flush=True)
         break
     elif t == "error":
-        print(f"PIPELINE ERROR: {evt['msg']}", flush=True)
+        print(f"\nPIPELINE ERROR: {evt['msg']}", flush=True)
         sys.exit(1)
 PYEOF
 
-          curl -sN "$API_BASE/runs/pipeline/$JOB_ID/stream" | python3 /tmp/stream_events.py
+          curl -sN --max-time 86400 "$API_BASE/runs/pipeline/$JOB_ID/stream" \
+            | python3 /tmp/stream_events.py

@@ -61,8 +61,8 @@ _ANN_FACTORS = {
 
 class PipelineRequest(BaseModel):
     tickers: list = ["BTC-USD", "ETH-USD", "SOL-USD"]
-    timeframes: list = ["1h", "4h", "1d"]
-    max_iter: int = 30
+    timeframes: list = ["1m", "5m", "15m", "1h"]
+    max_iter: int = 40        # ~10 per timeframe with 4 TFs
     stop_sharpe: float = 1.5
     max_dd: float = 20.0
     period: Optional[str] = None   # override max lookback for all TFs
