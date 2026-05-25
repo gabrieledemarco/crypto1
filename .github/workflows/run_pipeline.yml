@@ -64,12 +64,26 @@ jobs:
               f.write(f"payload={payload}\n")
           PYEOF
 
-      - name: Wait for Railway deployment
+      - name: Wait for Railway pipeline endpoint
         if: github.event_name == 'push'
+        env:
+          API_BASE: "https://illustrious-inspiration-production.up.railway.app"
         run: |
-          echo "Waiting 6 minutes for Railway to finish building and deploying ..."
-          sleep 360
-          echo "Proceeding."
+          echo "Polling until Railway /runs/pipeline is ready (max 25 min)..."
+          READY=false
+          for i in $(seq 1 25); do
+            health=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$API_BASE/health" 2>/dev/null || echo "000")
+            pipe=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 -X POST \
+              "$API_BASE/runs/pipeline" -H 'Content-Type: application/json' -d '{}' 2>/dev/null || echo "000")
+            echo "Attempt $i/25: health=$health  pipeline=$pipe"
+            if [ "$health" = "200" ] && { [ "$pipe" = "422" ] || [ "$pipe" = "200" ]; }; then
+              echo "Railway is ready with pipeline endpoint!"
+              READY=true
+              break
+            fi
+            sleep 60
+          done
+          [ "$READY" = "true" ] || echo "WARNING: Railway not fully ready, attempting anyway..."
 
       - name: Start pipeline job on Railway
         id: start
@@ -77,15 +91,27 @@ jobs:
           API_BASE: "https://illustrious-inspiration-production.up.railway.app"
           PAYLOAD: ${{ steps.params.outputs.payload }}
         run: |
-          echo "Posting to $API_BASE/runs/pipeline ..."
-          RESPONSE=$(curl -sf --max-time 30 -X POST "$API_BASE/runs/pipeline" \
-            -H 'Content-Type: application/json' \
-            -d "$PAYLOAD")
-          echo "response=$RESPONSE"
-          JOB_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
-          echo "job_id=$JOB_ID" >> "$GITHUB_OUTPUT"
-          echo "Started pipeline job: $JOB_ID"
-          echo "Stream: $API_BASE/runs/pipeline/$JOB_ID/stream"
+          JOB_ID=""
+          for attempt in 1 2 3 4 5; do
+            echo "Attempt $attempt/5 — POST $API_BASE/runs/pipeline"
+            RESPONSE=$(curl -s --max-time 60 -X POST "$API_BASE/runs/pipeline" \
+              -H 'Content-Type: application/json' -d "$PAYLOAD" 2>&1)
+            echo "Response: $RESPONSE"
+            JOB_ID=$(echo "$RESPONSE" | python3 -c \
+              "import sys,json; print(json.load(sys.stdin).get('job_id',''))" 2>/dev/null || echo "")
+            if [ -n "$JOB_ID" ]; then
+              echo "job_id=$JOB_ID" >> "$GITHUB_OUTPUT"
+              echo "Started pipeline job: $JOB_ID"
+              echo "Stream: $API_BASE/runs/pipeline/$JOB_ID/stream"
+              break
+            fi
+            echo "  No job_id, waiting 120s before retry..."
+            sleep 120
+          done
+          if [ -z "$JOB_ID" ]; then
+            echo "ERROR: Could not start pipeline after 5 attempts"
+            exit 1
+          fi
 
       - name: Stream pipeline events
         id: stream
