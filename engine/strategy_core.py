@@ -199,7 +199,9 @@ def backtest_v2(df: pd.DataFrame,
                 initial_capital: float = 10_000,
                 risk_per_trade: float = 0.01,
                 commission: float = 0.0004,   # 0.04% Binance taker fee
-                slippage: float = 0.0001      # 0.01% market impact BTC/USDT
+                slippage: float = 0.0001,     # 0.01% market impact BTC/USDT
+                max_positions: int = 1,       # max concurrent open positions
+                cooldown_bars: int = 0,       # bars to skip entry after a SL hit
                 ) -> dict:
     """
     Backtest event-driven 1h con:
@@ -208,15 +210,15 @@ def backtest_v2(df: pd.DataFrame,
       - Position sizing: risk_per_trade % capitale / SL_dist
       - Leverage cap: max 3× il capitale per trade
       - Riduzione size in regime HIGH (size_mult)
+      - max_positions: posizioni aperte contemporaneamente (default 1)
+      - cooldown_bars: barre di pausa dopo un SL (default 0)
     """
     capital = initial_capital
     equity = [capital]
     trades = []
 
-    in_trade = False
-    entry_price = direction = sl = tp = qty = 0.0
-    entry_cost = 0.0
-    entry_time = None
+    open_positions: list = []  # list of active position dicts
+    cooldown_remaining: int = 0
 
     prices = df["Close"].values
     signals = df["signal"].values
@@ -231,57 +233,59 @@ def backtest_v2(df: pd.DataFrame,
     max_leverage = 3.0                 # cap: notionale max 3× capitale
 
     for i in range(len(df)):
-        if in_trade:
+        # ── 1. Process exits for all open positions ────────────────────────────
+        closed_idxs = []
+        for j, pos in enumerate(open_positions):
             exit_price = exit_reason = None
-
             check_sl_first = bool(i % 2)
-            if direction == 1:
-                sl_hit = lows[i] <= sl
-                tp_hit = highs[i] >= tp
-                if sl_hit and tp_hit:
-                    if check_sl_first:
-                        exit_price, exit_reason = sl, "SL"
-                    else:
-                        exit_price, exit_reason = tp, "TP"
-                elif sl_hit:
-                    exit_price, exit_reason = sl, "SL"
-                elif tp_hit:
-                    exit_price, exit_reason = tp, "TP"
+            d = pos["dir"]
+
+            if d == 1:
+                sl_hit = lows[i] <= pos["sl"]
+                tp_hit = highs[i] >= pos["tp"]
             else:
-                sl_hit = highs[i] >= sl
-                tp_hit = lows[i] <= tp
-                if sl_hit and tp_hit:
-                    if check_sl_first:
-                        exit_price, exit_reason = sl, "SL"
-                    else:
-                        exit_price, exit_reason = tp, "TP"
-                elif sl_hit:
-                    exit_price, exit_reason = sl, "SL"
-                elif tp_hit:
-                    exit_price, exit_reason = tp, "TP"
+                sl_hit = highs[i] >= pos["sl"]
+                tp_hit = lows[i] <= pos["tp"]
+
+            if sl_hit and tp_hit:
+                exit_price, exit_reason = (pos["sl"], "SL") if check_sl_first else (pos["tp"], "TP")
+            elif sl_hit:
+                exit_price, exit_reason = pos["sl"], "SL"
+            elif tp_hit:
+                exit_price, exit_reason = pos["tp"], "TP"
 
             if exit_price is not None:
-                gross_pnl = direction * qty * (exit_price - entry_price)
-                exit_cost = exit_price * qty * cost_rate
+                gross_pnl = d * pos["qty"] * (exit_price - pos["entry_price"])
+                exit_cost = exit_price * pos["qty"] * cost_rate
                 pnl = gross_pnl - exit_cost
                 capital += pnl
                 trades.append({
-                    "entry_time": entry_time,
-                    "exit_time": times[i],
-                    "direction": "LONG" if direction == 1 else "SHORT",
-                    "entry_price": entry_price,
-                    "exit_price": exit_price,
-                    "qty": qty,
-                    "gross_pnl": gross_pnl,
-                    "costs": entry_cost + exit_cost,
-                    "pnl": pnl,
-                    "pnl_pct": pnl / (entry_price * qty) * 100 if qty > 0 else 0,
+                    "entry_time":  pos["entry_time"],
+                    "exit_time":   times[i],
+                    "direction":   "LONG" if d == 1 else "SHORT",
+                    "entry_price": pos["entry_price"],
+                    "exit_price":  exit_price,
+                    "qty":         pos["qty"],
+                    "gross_pnl":   gross_pnl,
+                    "costs":       pos["entry_cost"] + exit_cost,
+                    "pnl":         pnl,
+                    "pnl_pct":     pnl / (pos["entry_price"] * pos["qty"]) * 100 if pos["qty"] > 0 else 0,
                     "exit_reason": exit_reason,
                 })
-                in_trade = False
+                closed_idxs.append(j)
+                if exit_reason == "SL":
+                    cooldown_remaining = cooldown_bars
 
-        if not in_trade and signals[i] != 0:
-            direction = int(signals[i])
+        for j in reversed(closed_idxs):
+            open_positions.pop(j)
+
+        # ── 2. Decrement cooldown ─────────────────────────────────────────────
+        if cooldown_remaining > 0:
+            cooldown_remaining -= 1
+
+        # ── 3. Open new position if slot available and no cooldown ────────────
+        if len(open_positions) < max_positions and signals[i] != 0 and cooldown_remaining == 0:
+            dir_new = int(signals[i])
             ep = prices[i]
             sl_d = sl_dists[i]
             tp_d = tp_dists[i]
@@ -289,19 +293,24 @@ def backtest_v2(df: pd.DataFrame,
             if sl_d > 0 and sm > 0:
                 risk_amount = capital * risk_per_trade * sm
                 qty = risk_amount / sl_d
-                # Cap notionale a max_leverage × capitale
                 max_qty = (capital * max_leverage) / ep
                 qty = min(qty, max_qty)
 
                 entry_cost = ep * qty * cost_rate
                 capital -= entry_cost
 
-                sl = ep - sl_d if direction == 1 else ep + sl_d
-                tp = ep + tp_d if direction == 1 else ep - tp_d
+                sl_price = ep - sl_d if dir_new == 1 else ep + sl_d
+                tp_price = ep + tp_d if dir_new == 1 else ep - tp_d
 
-                in_trade = True
-                entry_price = ep
-                entry_time = times[i]
+                open_positions.append({
+                    "dir":         dir_new,
+                    "entry_price": ep,
+                    "sl":          sl_price,
+                    "tp":          tp_price,
+                    "qty":         qty,
+                    "entry_cost":  entry_cost,
+                    "entry_time":  times[i],
+                })
 
         equity.append(capital)
 

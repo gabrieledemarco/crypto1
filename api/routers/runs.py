@@ -447,12 +447,14 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
 
     push("versions", 25, "running strategy versions")
     cfg = {
-        "sl_mult":       params.get("sl_mult", 2.0),
-        "tp_mult":       params.get("tp_mult", 5.0),
-        "active_hours":  params.get("active_hours", [6, 22]),
-        "commission":    params.get("commission", 0.0004),
-        "slippage":      params.get("slippage", 0.0001),
+        "sl_mult":        params.get("sl_mult", 2.0),
+        "tp_mult":        params.get("tp_mult", 5.0),
+        "active_hours":   params.get("active_hours", [6, 22]),
+        "commission":     params.get("commission", 0.0004),
+        "slippage":       params.get("slippage", 0.0001),
         "risk_per_trade": params.get("risk_per_trade", 0.01),
+        "max_positions":  int(params.get("max_positions", 1)),
+        "cooldown_bars":  int(params.get("cooldown_bars", 0)),
     }
     # Load and exec strategy code if this run is linked to a strategy
     strategy_id = params.get("_strategy_id")
@@ -636,14 +638,17 @@ def _sync_preview(df, params: dict) -> dict:
     sl  = params.get("sl_mult", 2.0)
     tp  = params.get("tp_mult", 5.0)
     hrs = tuple(params.get("active_hours", [6, 22]))
-    comm = params.get("commission", 0.0004)
-    slip = params.get("slippage", 0.0001)
-    risk = params.get("risk_per_trade", 0.01)
+    comm     = params.get("commission", 0.0004)
+    slip     = params.get("slippage", 0.0001)
+    risk     = params.get("risk_per_trade", 0.01)
+    max_pos  = int(params.get("max_positions", 1))
+    cooldown = int(params.get("cooldown_bars", 0))
 
     df_s = generate_signals_v2(df_ind, atr_mult_sl=sl, atr_mult_tp=tp,
                                 active_hours=hrs, use_garch_filter=False)
     df_s = _apply_direction_filter(df_s, params.get("direction", "ALL"))
-    res  = backtest_v2(df_s, INITIAL_CAPITAL, risk, commission=comm, slippage=slip)
+    res  = backtest_v2(df_s, INITIAL_CAPITAL, risk, commission=comm, slippage=slip,
+                       max_positions=max_pos, cooldown_bars=cooldown)
     m    = compute_metrics(res, INITIAL_CAPITAL)
     # Sample equity curve (max 120 points) for preview chart
     eq_series = res.get("equity")
