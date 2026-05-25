@@ -26,10 +26,46 @@ limiter = Limiter(key_func=get_remote_address)
 ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
 
 
+def _seed_library_if_empty(conn) -> None:
+    """Insert 3 pipeline strategies on first startup if the Library is empty."""
+    try:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM strategies WHERE strategy_type='pipeline'"
+        ).fetchone()[0]
+        if count > 0:
+            return
+
+        import json, uuid
+        from api.strategies import get_archetype
+
+        TICKERS = [("BTC-USD", "1h"), ("ETH-USD", "1h"), ("SOL-USD", "1h")]
+        for i, (ticker, tf) in enumerate(TICKERS, 1):
+            arch_name, code, sl, tp = get_archetype(i)
+            sid = uuid.uuid4().hex[:8]
+            config = json.dumps({
+                "ticker": ticker, "timeframe": tf,
+                "sl_mult": sl, "tp_mult": tp,
+                "active_hours": [6, 22],
+                "commission": 0.0004, "slippage": 0.0001,
+                "risk_per_trade": 0.01, "direction": "ALL",
+            })
+            conn.execute(
+                "INSERT INTO strategies (id,name,strategy_type,config,code,starred,status)"
+                " VALUES (?,?,?,?,?,true,'live')",
+                [sid, f"pipe_seed_{i:02d}_{tf}_{ticker.replace('-','_')}",
+                 "pipeline", config, code],
+            )
+        conn.commit()
+    except Exception as e:
+        import logging
+        logging.warning(f"Library seed skipped: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        get_conn()
+        conn = get_conn()
+        _seed_library_if_empty(conn)
     except Exception as e:
         import logging
         logging.error(f"DB init failed: {e}")
