@@ -32,9 +32,13 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-_SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "scripts")
-sys.path.insert(0, _SCRIPTS)
+# Use realpath so relative __file__ on Railway resolves to an absolute path
+_HERE    = os.path.dirname(os.path.realpath(__file__))   # .../api/routers
+_ROOT    = os.path.dirname(os.path.dirname(_HERE))        # project root
+_SCRIPTS = os.path.join(_ROOT, "scripts")
+for _p in (_ROOT, _SCRIPTS):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from api.db import get_conn
 
