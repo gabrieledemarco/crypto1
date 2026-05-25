@@ -32,9 +32,13 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-_SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "scripts")
-sys.path.insert(0, _SCRIPTS)
+# Use realpath so relative __file__ on Railway resolves to an absolute path
+_HERE    = os.path.dirname(os.path.realpath(__file__))   # .../api/routers
+_ROOT    = os.path.dirname(os.path.dirname(_HERE))        # project root
+_SCRIPTS = os.path.join(_ROOT, "scripts")
+for _p in (_ROOT, _SCRIPTS):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from api.db import get_conn
 
@@ -68,7 +72,7 @@ class PipelineRequest(BaseModel):
     period: Optional[str] = None   # override max lookback for all TFs
 
 
-# ── Endpoints ──────────────────────────────────────────────────────────────────
+# ── Endpoints ──────────────────────────────────────────────────────────────────────────────
 
 @router.post("")
 async def start_pipeline(body: PipelineRequest):
@@ -104,7 +108,7 @@ async def stream_pipeline(job_id: str):
     )
 
 
-# ── Async coordinator ──────────────────────────────────────────────────────────
+# ── Async coordinator ─────────────────────────────────────────────────────────────────────────────
 
 async def _run_pipeline(job_id: str, body: PipelineRequest):
     queue = _queues[job_id]
@@ -120,7 +124,7 @@ async def _run_pipeline(job_id: str, body: PipelineRequest):
         push({"type": "error", "msg": str(exc)})
 
 
-# ── Sync worker ────────────────────────────────────────────────────────────────
+# ── Sync worker ───────────────────────────────────────────────────────────────────────────────
 
 def _sync_pipeline(body: PipelineRequest, push):
     from strategies import get_archetype
@@ -144,7 +148,7 @@ def _sync_pipeline(body: PipelineRequest, push):
         push({"type": "ticker_start", "ticker": ticker,
               "idx": ticker_idx + 1, "total": total_tickers})
 
-        # ── 1. Download all timeframes for this ticker ─────────────────────────
+        # ── 1. Download all timeframes for this ticker ─────────────────────────────────────
         tf_data: dict[str, pd.DataFrame] = {}
         for tf in tfs:
             period = body.period or _YF_PERIOD.get(tf, "max")
@@ -175,7 +179,7 @@ def _sync_pipeline(body: PipelineRequest, push):
             if tf not in tf_data and tf != native_tf:
                 tf_data[tf] = _resample(df_native, tf)
 
-        # ── 2. Optimization loop ───────────────────────────────────────────────
+        # ── 2. Optimization loop ─────────────────────────────────────────────────────────────────
         best_sharpe = float("-inf")
         best_sid = best_tf = None
         log = []
@@ -245,7 +249,7 @@ def _sync_pipeline(body: PipelineRequest, push):
     })
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────────────────────────────
 
 def _fetch(ticker: str, tf: str, period: str) -> pd.DataFrame:
     from engine.providers.ccxt_client import is_crypto_ticker, fetch as ccxt_fetch
