@@ -61,8 +61,9 @@ def _bulk_store_arrow(conn, ticker: str, source: str, df: pd.DataFrame) -> int:
             "SELECT COUNT(*) FROM assets WHERE ticker=? AND source=?", [ticker, source]
         ).fetchone()[0]
         conn.execute(
-            "INSERT OR IGNORE INTO assets (ticker, source, ts, open, high, low, close, volume) "
-            "SELECT ticker, source, ts, open, high, low, close, volume FROM _staging"
+            "INSERT INTO assets (ticker, source, ts, open, high, low, close, volume) "
+            "SELECT ticker, source, ts, open, high, low, close, volume FROM _staging "
+            "ON CONFLICT DO NOTHING"
         )
         after = conn.execute(
             "SELECT COUNT(*) FROM assets WHERE ticker=? AND source=?", [ticker, source]
@@ -81,8 +82,8 @@ def _bulk_store_fallback(conn, ticker: str, source: str, df: pd.DataFrame) -> in
     for ts, row in df.iterrows():
         try:
             conn.execute(
-                "INSERT OR IGNORE INTO assets (ticker, source, ts, open, high, low, close, volume) "
-                "VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO assets (ticker, source, ts, open, high, low, close, volume) "
+                "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
                 [ticker, source, ts,
                  float(row.get("Open", row.get("open", 0))),
                  float(row.get("High", row.get("high", 0))),
