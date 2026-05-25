@@ -78,7 +78,9 @@ def _bulk_store_arrow(conn, ticker: str, source: str, df: pd.DataFrame) -> int:
 
 def _bulk_store_fallback(conn, ticker: str, source: str, df: pd.DataFrame) -> int:
     """Row-by-row fallback when PyArrow is unavailable."""
-    count = 0
+    before = conn.execute(
+        "SELECT COUNT(*) FROM assets WHERE ticker=? AND source=?", [ticker, source]
+    ).fetchone()[0]
     for ts, row in df.iterrows():
         try:
             conn.execute(
@@ -91,7 +93,9 @@ def _bulk_store_fallback(conn, ticker: str, source: str, df: pd.DataFrame) -> in
                  float(row.get("Close", row.get("close", 0))),
                  float(row.get("Volume", row.get("volume", 0)))]
             )
-            count += 1
         except Exception:
             pass
-    return count
+    after = conn.execute(
+        "SELECT COUNT(*) FROM assets WHERE ticker=? AND source=?", [ticker, source]
+    ).fetchone()[0]
+    return after - before
