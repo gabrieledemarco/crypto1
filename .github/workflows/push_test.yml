@@ -1,0 +1,27 @@
+name: Push Test
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.push-test-trigger'
+
+jobs:
+  push_test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Write and push result
+        run: |
+          echo '{"status":"ok","time":"'$(date -u)'",' > push-test-result.json
+          echo '"railway_health":'$(curl -s --max-time 10 https://illustrious-inspiration-production.up.railway.app/health || echo '"unreachable"')'}' >> push-test-result.json
+          cat push-test-result.json
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+          git add push-test-result.json
+          git commit -m "ci: push test result [skip ci]" || echo "nothing to commit"
+          git push origin HEAD:master
