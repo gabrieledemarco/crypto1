@@ -23,108 +23,94 @@ jobs:
         id: seed
         run: |
           mkdir -p /tmp/out
-
           python3 - << 'PYEOF'
           import json, os, sys, urllib.request, urllib.error
-
           API_BASE = os.environ["API_BASE"]
           result = {"status": "unknown", "created": [], "health": None, "error": None}
-
-          # Health check
           try:
-              req = urllib.request.Request(f"{API_BASE}/health")
-              with urllib.request.urlopen(req, timeout=15) as r:
+              with urllib.request.urlopen(
+                  urllib.request.Request(f"{API_BASE}/health"), timeout=15
+              ) as r:
                   body = json.loads(r.read())
                   result["health"] = {"status": r.status, "body": body}
                   print(f"Health OK: {body}")
           except Exception as e:
               result["health"] = {"error": str(e)}
-              result["error"] = f"Health check failed: {e}"
+              result["error"] = str(e)
               print(f"Health FAILED: {e}")
-              # Still write result and exit
-              with open("/tmp/out/result.json", "w") as f:
-                  json.dump(result, f, indent=2)
+              json.dump(result, open("/tmp/out/result.json", "w"), indent=2)
               sys.exit(1)
-
-          EMA_CODE = """
-def agent_fn(df, ind=None):
-    df = df.copy()
-    fast = ind(\"EMA\", 8) if ind else df[\"EMA50\"]
-    slow = ind(\"EMA\", 21) if ind else df[\"EMA200\"]
-    xu = (fast > slow) & (fast.shift(1) <= slow.shift(1))
-    xd = (fast < slow) & (fast.shift(1) >= slow.shift(1))
-    df[\"signal\"] = 0
-    df.loc[xu, \"signal\"] = 1
-    df.loc[xd, \"signal\"] = -1
-    df[\"SL_dist\"] = df[\"ATR14\"] * 1.5
-    df[\"TP_dist\"] = df[\"ATR14\"] * 2.5
-    return df"""
-
-          RSI_CODE = """
-def agent_fn(df, ind=None):
-    df = df.copy()
-    rsi = df[\"RSI14\"]
-    df[\"signal\"] = 0
-    df.loc[rsi < 30, \"signal\"] = 1
-    df.loc[rsi > 70, \"signal\"] = -1
-    df[\"SL_dist\"] = df[\"ATR14\"] * 1.5
-    df[\"TP_dist\"] = df[\"ATR14\"] * 2.5
-    return df"""
-
-          BRK_CODE = """
-def agent_fn(df, ind=None):
-    df = df.copy()
-    df[\"signal\"] = 0
-    roll_h = df[\"High\"].rolling(20).max()
-    roll_l = df[\"Low\"].rolling(20).min()
-    df.loc[df[\"Close\"] > roll_h.shift(1), \"signal\"] = 1
-    df.loc[df[\"Close\"] < roll_l.shift(1), \"signal\"] = -1
-    df[\"SL_dist\"] = df[\"ATR14\"] * 1.5
-    df[\"TP_dist\"] = df[\"ATR14\"] * 2.5
-    return df"""
-
+          EMA_CODE = "\n".join([
+              "def agent_fn(df, ind=None):",
+              "    df = df.copy()",
+              "    fast = ind('EMA', 8) if ind else df['EMA50']",
+              "    slow = ind('EMA', 21) if ind else df['EMA200']",
+              "    xu = (fast > slow) & (fast.shift(1) <= slow.shift(1))",
+              "    xd = (fast < slow) & (fast.shift(1) >= slow.shift(1))",
+              "    df['signal'] = 0",
+              "    df.loc[xu, 'signal'] = 1",
+              "    df.loc[xd, 'signal'] = -1",
+              "    df['SL_dist'] = df['ATR14'] * 1.5",
+              "    df['TP_dist'] = df['ATR14'] * 2.5",
+              "    return df",
+          ])
+          RSI_CODE = "\n".join([
+              "def agent_fn(df, ind=None):",
+              "    df = df.copy()",
+              "    rsi = df['RSI14']",
+              "    df['signal'] = 0",
+              "    df.loc[rsi < 30, 'signal'] = 1",
+              "    df.loc[rsi > 70, 'signal'] = -1",
+              "    df['SL_dist'] = df['ATR14'] * 1.5",
+              "    df['TP_dist'] = df['ATR14'] * 2.5",
+              "    return df",
+          ])
+          BRK_CODE = "\n".join([
+              "def agent_fn(df, ind=None):",
+              "    df = df.copy()",
+              "    df['signal'] = 0",
+              "    roll_h = df['High'].rolling(20).max()",
+              "    roll_l = df['Low'].rolling(20).min()",
+              "    df.loc[df['Close'] > roll_h.shift(1), 'signal'] = 1",
+              "    df.loc[df['Close'] < roll_l.shift(1), 'signal'] = -1",
+              "    df['SL_dist'] = df['ATR14'] * 1.5",
+              "    df['TP_dist'] = df['ATR14'] * 2.5",
+              "    return df",
+          ])
           STRATEGIES = [
               ("BTC-USD", "1h", "ema_cross_fast", EMA_CODE),
               ("ETH-USD", "1h", "rsi_reversion",  RSI_CODE),
               ("SOL-USD", "1h", "breakout_hi_lo", BRK_CODE),
           ]
-
-          def api(method, path, data=None):
-              body = json.dumps(data).encode() if data else None
-              req = urllib.request.Request(
-                  f"{API_BASE}{path}",
-                  data=body,
-                  headers={"Content-Type": "application/json"} if body else {},
-                  method=method,
-              )
-              with urllib.request.urlopen(req, timeout=30) as r:
-                  return r.status, json.loads(r.read())
-
           for ticker, tf, arch, code in STRATEGIES:
               name = f"pipe_001_{tf}_{ticker.replace('-','_')}"
+              cfg = {"ticker": ticker, "timeframe": tf, "sl_mult": 1.5,
+                     "tp_mult": 2.5, "active_hours": [6, 22], "commission": 0.0004,
+                     "slippage": 0.0001, "risk_per_trade": 0.01, "direction": "ALL"}
               payload = {"name": name, "strategy_type": "pipeline",
-                         "config": {"ticker": ticker, "timeframe": tf,
-                                    "sl_mult": 1.5, "tp_mult": 2.5,
-                                    "active_hours": [6, 22], "commission": 0.0004,
-                                    "slippage": 0.0001, "risk_per_trade": 0.01,
-                                    "direction": "ALL"},
-                         "code": code, "status": "live"}
+                         "config": cfg, "code": code, "status": "live"}
               try:
-                  st, resp = api("POST", "/strategies", payload)
-                  sid = resp["id"]
+                  post_req = urllib.request.Request(
+                      f"{API_BASE}/strategies",
+                      data=json.dumps(payload).encode(),
+                      headers={"Content-Type": "application/json"},
+                      method="POST",
+                  )
+                  with urllib.request.urlopen(post_req, timeout=30) as r:
+                      sid = json.loads(r.read())["id"]
                   print(f"Created {ticker}: sid={sid}")
                   try:
-                      api("PUT", f"/strategies/{sid}/star")
+                      urllib.request.urlopen(
+                          urllib.request.Request(f"{API_BASE}/strategies/{sid}/star",
+                                                 data=b"", method="PUT"), timeout=10)
                   except Exception:
                       pass
-                  result["created"].append({"ticker": ticker, "tf": tf, "sid": sid, "arch": arch})
+                  result["created"].append({"ticker": ticker, "tf": tf, "sid": sid})
               except Exception as e:
                   print(f"FAILED {ticker}: {e}")
-                  result.setdefault("errors", []).append({"ticker": ticker, "error": str(e)})
-
+                  result.setdefault("errors", []).append(str(e))
           result["status"] = "ok" if result["created"] else "error"
-          with open("/tmp/out/result.json", "w") as f:
-              json.dump(result, f, indent=2)
+          json.dump(result, open("/tmp/out/result.json", "w"), indent=2)
           print(f"Done: {len(result['created'])}/3 created")
           PYEOF
 
