@@ -41,6 +41,7 @@ for _p in (_ROOT, _SCRIPTS):
         sys.path.insert(0, _p)
 
 from api.db import get_conn
+from api.strategies import get_archetype   # always available: COPY api/ ./api/
 
 router = APIRouter()
 _queues: dict[str, asyncio.Queue] = {}
@@ -127,8 +128,6 @@ async def _run_pipeline(job_id: str, body: PipelineRequest):
 # ── Sync worker ───────────────────────────────────────────────────────────────────────────────
 
 def _sync_pipeline(body: PipelineRequest, push):
-    from strategies import get_archetype
-
     tickers = body.tickers
     tfs = [_TF_NORM.get(t.strip(), t.strip()) for t in body.timeframes]
     total_tickers = len(tickers)
@@ -278,11 +277,9 @@ def _resample(df: pd.DataFrame, tf: str) -> pd.DataFrame:
 
 
 def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
-    import math
     import numpy as np
     from engine.strategy_core import compute_indicators_v2
-    from engine.backtest import run_versions, run_wfo
-    from strategies import get_archetype
+    from engine.backtest import run_versions
 
     _, code, sl_used, tp_used = get_archetype(iteration)
 

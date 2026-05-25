@@ -4,5 +4,5 @@
   "max_iter": 40,
   "stop_sharpe": 1.5,
   "max_dd": 20.0,
-  "triggered_at": "2026-05-25T12:00:00Z"
+  "triggered_at": "2026-05-25T13:00:00Z"
 }
