@@ -51,6 +51,8 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
     comm = cfg.get("commission", 0.0004)
     slip = cfg.get("slippage",   0.0001)
     risk = cfg.get("risk_per_trade", 0.01)
+    max_pos  = int(cfg.get("max_positions", 1))
+    cooldown = int(cfg.get("cooldown_bars", 0))
 
     results = {}
     versions = [
@@ -66,7 +68,8 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
                                     use_garch_filter=vcfg["use_garch_filter"])
         df_s = _apply_direction_filter(df_s, direction)
         res  = backtest_v2(df_s, INITIAL_CAPITAL, risk,
-                           commission=vcfg["commission"], slippage=vcfg["slippage"])
+                           commission=vcfg["commission"], slippage=vcfg["slippage"],
+                           max_positions=max_pos, cooldown_bars=cooldown)
         results[name] = {"result": res, "metrics": compute_metrics(res, INITIAL_CAPITAL)}
 
     # V_Agent: use provided agent_fn if any
@@ -82,7 +85,8 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
             _call_args  = (df_ind, _ind) if len(_sig_params) >= 2 else (df_ind,)
             df_a = _apply_cfg_overrides(_apply_direction_filter(agent_fn(*_call_args), direction),
                                          sl, tp, hrs)
-            res_a = backtest_v2(df_a, INITIAL_CAPITAL, risk, commission=comm, slippage=slip)
+            res_a = backtest_v2(df_a, INITIAL_CAPITAL, risk, commission=comm, slippage=slip,
+                                max_positions=max_pos, cooldown_bars=cooldown)
             results["V_Agent"] = {"result": res_a, "metrics": compute_metrics(res_a, INITIAL_CAPITAL)}
         except Exception as exc:
             results["V_Agent"] = {"error": str(exc)}
@@ -140,6 +144,8 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
     sl   = cfg.get("sl_mult", 2.0)
     tp   = cfg.get("tp_mult", 5.0)
     hrs  = tuple(cfg.get("active_hours", [6, 22]))
+    max_pos  = int(cfg.get("max_positions", 1))
+    cooldown = int(cfg.get("cooldown_bars", 0))
 
     if agent_fn is None:
         # fallback: use generate_signals_v2
@@ -184,14 +190,16 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
                 _apply_direction_filter(agent_fn(is_data), direction),
                 fold_sl, fold_tp, hrs,
             )
-            res_is = backtest_v2(df_is,  INITIAL_CAPITAL, risk, comm, slip)
+            res_is = backtest_v2(df_is,  INITIAL_CAPITAL, risk, comm, slip,
+                                 max_positions=max_pos, cooldown_bars=cooldown)
             m_is   = compute_metrics(res_is, INITIAL_CAPITAL)
 
             df_os  = _apply_cfg_overrides(
                 _apply_direction_filter(agent_fn(oos_data), direction),
                 fold_sl, fold_tp, hrs,
             )
-            res_os = backtest_v2(df_os, INITIAL_CAPITAL, risk, comm, slip)
+            res_os = backtest_v2(df_os, INITIAL_CAPITAL, risk, comm, slip,
+                                 max_positions=max_pos, cooldown_bars=cooldown)
             m_os   = compute_metrics(res_os, INITIAL_CAPITAL)
 
             row: dict = {

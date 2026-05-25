@@ -27,6 +27,8 @@ interface Params {
   wfo_oos_window: number;
   mc_sims: number;
   mc_bars: number;  // 0 = auto (use actual trade count)
+  max_positions: number;
+  cooldown_bars: number;
 }
 
 export function SetupScreen() {
@@ -53,6 +55,8 @@ export function SetupScreen() {
     wfo_oos_window: 100,
     mc_sims:        1000,
     mc_bars:        0,
+    max_positions:  1,
+    cooldown_bars:  0,
   });
 
   const [runId, setRunId] = useState<string | null>(null);
@@ -388,6 +392,21 @@ export function SetupScreen() {
                 </div>
               </div>
             )}
+
+            <SliderRow
+              label="MAX POS"
+              min={1} max={5} step={1}
+              value={params.max_positions}
+              onChange={(v) => update("max_positions", v)}
+              valueLabel={String(params.max_positions)}
+            />
+            <SliderRow
+              label="COOLDOWN"
+              min={0} max={10} step={1}
+              value={params.cooldown_bars}
+              onChange={(v) => update("cooldown_bars", v)}
+              valueLabel={params.cooldown_bars === 0 ? "OFF" : `${params.cooldown_bars}b`}
+            />
 
             <div className={styles.formRow} style={{ marginTop: 4 }}>
               <span className={styles.rowLabel}>FEES · SLIP</span>
