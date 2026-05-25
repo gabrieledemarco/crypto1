@@ -185,6 +185,7 @@ _SL_TP: list[tuple[float, float]] = [
     (2.5, 7.5),
     (3.0, 9.0),
     (1.5, 4.5),
+    (1.2, 2.4),   # tight scalping
 ]
 
 

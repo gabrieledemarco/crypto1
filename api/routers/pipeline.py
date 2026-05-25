@@ -71,6 +71,7 @@ class PipelineRequest(BaseModel):
     stop_sharpe: float = 1.5
     max_dd: float = 20.0
     period: Optional[str] = None   # override max lookback for all TFs
+    iter_offset: int = 0     # start archetype search from this iteration (0 = default)
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────────────────
@@ -189,13 +190,14 @@ def _sync_pipeline(body: PipelineRequest, push):
             if df is None or df.empty:
                 continue
 
-            arch_name, _, sl, tp = get_archetype(iteration)
+            effective_iter = iteration + body.iter_offset
+            arch_name, _, sl, tp = get_archetype(effective_iter)
             push({"type": "iter_start", "ticker": ticker, "iter": iteration,
-                  "tf": tf, "arch": arch_name})
+                  "tf": tf, "arch": arch_name, "effective_iter": effective_iter})
 
             try:
                 sid, sharpe, dd, n_trades, win_rate = _run_iteration(
-                    ticker, tf, df, iteration, arch_name, sl, tp
+                    ticker, tf, df, effective_iter, arch_name, sl, tp
                 )
             except Exception as exc:
                 push({"type": "iter_error", "ticker": ticker, "iter": iteration,
@@ -289,6 +291,7 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
         "active_hours": _ACTIVE_HOURS.get(tf, [6, 22]),
         "commission": 0.0004, "slippage": 0.0001,
         "risk_per_trade": 0.01, "direction": "ALL",
+        "max_positions": 1, "cooldown_bars": 0,
     }
 
     df_ind = compute_indicators_v2(df, fit_garch=True)
@@ -301,7 +304,7 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
         pass
 
     versions = run_versions(df_ind, config, direction=config["direction"])
-    best_key = next((k for k in ["V_Agent", "V1 Base", "V_Base"]
+    best_key = next((k for k in ["V_Agent", "V4 +GARCH+Costi", "V2 +Costi", "V1 Base"]
                      if k in versions and "metrics" in versions[k]), "")
     if not best_key and versions:
         best_key = next(iter(versions))
@@ -311,6 +314,16 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
     dd = float(m.get("max_drawdown_pct", m.get("max_dd", 0)) or 0)
     n_trades = int(m.get("n_trades", 0) or 0)
     win_rate = float(m.get("win_rate_pct", 0) or 0)
+
+    # Enrich config with best-version info and achieved metrics
+    config.pop("agent_fn", None)   # not JSON-serialisable
+    config["best_version"] = best_key
+    config["perf"] = {
+        "sharpe": round(sharpe, 3),
+        "dd": round(dd, 2),
+        "n_trades": n_trades,
+        "win_rate": round(win_rate, 1),
+    }
 
     # Save strategy + run to DB
     conn = get_conn()

@@ -1,0 +1,191 @@
+name: Batch Pipeline — 10 runs (forex + 15m)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Comma-separated tickers"
+        required: false
+        default: "BTC-USD,ETH-USD,SOL-USD,EURUSD=X,GBPUSD=X,JPYUSD=X"
+      timeframes:
+        description: "Comma-separated timeframes"
+        required: false
+        default: "15m,1h,4h,1d"
+      iters_per_run:
+        description: "Iterations per run (12 = 3 per TF with 4 TFs)"
+        required: false
+        default: "12"
+      stop_sharpe:
+        description: "Stop early when Sharpe >= this (use -999 to explore all)"
+        required: false
+        default: "-999"
+      max_dd:
+        description: "Max acceptable drawdown %"
+        required: false
+        default: "100"
+
+jobs:
+  batch:
+    name: Batch Pipeline (10 × ${{ github.event.inputs.iters_per_run || '12' }} iters)
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run 10 sequential pipeline batches
+        env:
+          API_BASE: "https://illustrious-inspiration-production.up.railway.app"
+          TICKERS:  ${{ github.event.inputs.tickers || 'BTC-USD,ETH-USD,SOL-USD,EURUSD=X,GBPUSD=X,JPYUSD=X' }}
+          TFS:      ${{ github.event.inputs.timeframes || '15m,1h,4h,1d' }}
+          MAX_ITER: ${{ github.event.inputs.iters_per_run || '12' }}
+          STOP_SH:  ${{ github.event.inputs.stop_sharpe || '-999' }}
+          MAX_DD:   ${{ github.event.inputs.max_dd || '100' }}
+        run: |
+          mkdir -p /tmp/batch_out
+          python3 << 'PYEOF'
+          import json, os, sys, time
+          import urllib.request, urllib.error
+
+          API_BASE  = os.environ["API_BASE"]
+          TICKERS   = [t.strip() for t in os.environ["TICKERS"].split(",")]
+          TFS       = [t.strip() for t in os.environ["TFS"].split(",")]
+          MAX_ITER  = int(os.environ["MAX_ITER"])
+          STOP_SH   = float(os.environ["STOP_SH"])
+          MAX_DD    = float(os.environ["MAX_DD"])
+
+          all_results = []
+
+          for batch_num in range(10):
+              iter_offset = batch_num * MAX_ITER
+              print(f"\n{'='*60}", flush=True)
+              print(f"BATCH {batch_num+1}/10  iter_offset={iter_offset}", flush=True)
+              print(f"{'='*60}", flush=True)
+
+              payload = json.dumps({
+                  "tickers":     TICKERS,
+                  "timeframes":  TFS,
+                  "max_iter":    MAX_ITER,
+                  "stop_sharpe": STOP_SH,
+                  "max_dd":      MAX_DD,
+                  "iter_offset": iter_offset,
+              }).encode()
+
+              # ── Start pipeline job (5 retries) ─────────────────────────
+              job_id = None
+              for attempt in range(5):
+                  try:
+                      req = urllib.request.Request(
+                          f"{API_BASE}/runs/pipeline",
+                          data=payload,
+                          headers={"Content-Type": "application/json"},
+                          method="POST",
+                      )
+                      with urllib.request.urlopen(req, timeout=60) as r:
+                          resp = json.loads(r.read())
+                          job_id = resp.get("job_id")
+                  except Exception as e:
+                      print(f"  start attempt {attempt+1}/5 failed: {e}", flush=True)
+                      time.sleep(30 * (2 ** attempt))
+                      continue
+                  if job_id:
+                      print(f"  job_id={job_id}", flush=True)
+                      break
+
+              if not job_id:
+                  print(f"  ERROR: could not start batch {batch_num+1}, skipping", flush=True)
+                  all_results.append({"batch": batch_num+1, "status": "start_failed"})
+                  continue
+
+              # ── Stream SSE events ──────────────────────────────────────
+              log_lines = []
+              summary = None
+              batch_status = "incomplete"
+
+              try:
+                  stream_url = f"{API_BASE}/runs/pipeline/{job_id}/stream"
+                  req = urllib.request.Request(stream_url, headers={"Accept": "text/event-stream"})
+                  with urllib.request.urlopen(req, timeout=86400) as r:
+                      for raw_bytes in r:
+                          raw = raw_bytes.decode("utf-8", errors="replace").strip()
+                          if not raw.startswith("data:"):
+                              continue
+                          try:
+                              evt = json.loads(raw[5:].strip())
+                          except Exception:
+                              continue
+
+                          t = evt.get("type", "")
+                          if t == "iter_done":
+                              v = evt["verdict"]
+                              star = " ***ROBUST***" if v == "ROBUST" else ""
+                              line = (f"  [{evt['iter']:>3}] {evt['tf']:<5} {evt['arch']:<25}"
+                                      f" Sh={evt['sharpe']:+.3f} DD={evt['dd']:+.1f}%"
+                                      f" N={evt['n_trades']} [{v}]{star}")
+                              print(line, flush=True)
+                              log_lines.append(line)
+                          elif t == "ticker_start":
+                              line = f"\n  {evt['idx']}/{evt['total']} {evt['ticker']}"
+                              print(line, flush=True)
+                              log_lines.append(line)
+                          elif t == "download_done":
+                              line = f"  -> {evt['ticker']} {evt['tf']}: {evt['bars']:,} bars"
+                              print(line, flush=True)
+                              log_lines.append(line)
+                          elif t == "download_error":
+                              line = f"  -> FAIL {evt['ticker']} {evt['tf']}: {evt['msg']}"
+                              print(line, flush=True)
+                              log_lines.append(line)
+                          elif t == "ticker_done":
+                              v = evt["verdict"]
+                              if v == "ROBUST":
+                                  line = f"  SAVED sid={evt['sid']} Sh={evt['sharpe']} DD={evt['dd']}%"
+                                  print(line, flush=True)
+                                  log_lines.append(line)
+                          elif t == "complete":
+                              summary = evt
+                              batch_status = "complete"
+                              print(f"\n  BATCH {batch_num+1} DONE — robust={evt['robust_found']}/{evt['total_tickers']}", flush=True)
+                              break
+                          elif t == "error":
+                              print(f"  PIPELINE ERROR: {evt['msg']}", flush=True)
+                              batch_status = "error"
+                              break
+              except Exception as e:
+                  print(f"  stream error: {e}", flush=True)
+                  batch_status = "stream_error"
+
+              all_results.append({
+                  "batch":       batch_num + 1,
+                  "iter_offset": iter_offset,
+                  "status":      batch_status,
+                  "robust":      summary.get("robust_found", 0) if summary else 0,
+                  "log":         log_lines,
+              })
+
+          # ── Write consolidated result ──────────────────────────────────
+          with open("/tmp/batch_out/result.json", "w") as f:
+              json.dump({"batches": all_results}, f, indent=2)
+
+          total_robust = sum(r.get("robust", 0) for r in all_results)
+          print(f"\n{'='*60}", flush=True)
+          print(f"ALL BATCHES COMPLETE — total ROBUST strategies: {total_robust}", flush=True)
+          PYEOF
+
+      - name: Commit batch results
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f /tmp/batch_out/result.json ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+            git pull --rebase origin master || true
+            cp /tmp/batch_out/result.json batch-pipeline-last-result.json
+            git add batch-pipeline-last-result.json
+            git diff --cached --quiet || git commit -m "ci: batch pipeline result $(date -u +%Y-%m-%dT%H:%M:%SZ) [skip ci]"
+            git push origin HEAD:master
+          else
+            echo "No result file — pipeline did not complete."
+          fi
