@@ -31,32 +31,34 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Build ticker/timeframe arrays
+      - name: Build request payload
         id: params
         run: |
-          python3 - <<'EOF'
+          python3 -c "
           import json, os
-          tickers   = [t.strip() for t in "${{ github.event.inputs.tickers }}".split(",")]
-          timeframes = [t.strip() for t in "${{ github.event.inputs.timeframes }}".split(",")]
-          payload = {
-              "tickers":     tickers,
-              "timeframes":  timeframes,
-              "max_iter":    int("${{ github.event.inputs.max_iter }}"),
-              "stop_sharpe": float("${{ github.event.inputs.stop_sharpe }}"),
-              "max_dd":      float("${{ github.event.inputs.max_dd }}"),
-          }
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"payload={json.dumps(payload)}\n")
-          EOF
+          tickers   = [t.strip() for t in '${{ github.event.inputs.tickers }}'.split(',')]
+          timeframes = [t.strip() for t in '${{ github.event.inputs.timeframes }}'.split(',')]
+          payload = json.dumps({
+              'tickers':     tickers,
+              'timeframes':  timeframes,
+              'max_iter':    int('${{ github.event.inputs.max_iter }}'),
+              'stop_sharpe': float('${{ github.event.inputs.stop_sharpe }}'),
+              'max_dd':      float('${{ github.event.inputs.max_dd }}'),
+          })
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'payload={payload}\n')
+          "
 
       - name: Start pipeline job
         id: start
         env:
           API_BASE: "https://illustrious-inspiration-production.up.railway.app"
+          PAYLOAD: ${{ steps.params.outputs.payload }}
         run: |
+          echo "Posting to $API_BASE/runs/pipeline ..."
           RESPONSE=$(curl -sf -X POST "$API_BASE/runs/pipeline" \
             -H 'Content-Type: application/json' \
-            -d '${{ steps.params.outputs.payload }}')
+            -d "$PAYLOAD")
           echo "response=$RESPONSE"
           JOB_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
           echo "job_id=$JOB_ID" >> "$GITHUB_OUTPUT"
@@ -65,57 +67,59 @@ jobs:
       - name: Stream pipeline events
         env:
           API_BASE: "https://illustrious-inspiration-production.up.railway.app"
+          JOB_ID: ${{ steps.start.outputs.job_id }}
         run: |
-          JOB_ID="${{ steps.start.outputs.job_id }}"
           echo "Streaming events for job $JOB_ID ..."
-          curl -sN "$API_BASE/runs/pipeline/$JOB_ID/stream" | \
-          python3 - <<'EOF'
-          import sys, json
 
-          for raw in sys.stdin:
-              raw = raw.strip()
-              if not raw.startswith("data:"):
-                  continue
-              try:
-                  evt = json.loads(raw[5:].strip())
-              except Exception:
-                  continue
+          # Write the parser to a temp file — avoids the pipe+heredoc stdin conflict
+          cat > /tmp/stream_events.py << 'PYEOF'
+import sys, json
 
-              t = evt.get("type", "")
-              if t == "start":
-                  print(f"[start] tickers={evt['tickers']} timeframes={evt['timeframes']}")
-              elif t == "ticker_start":
-                  print(f"\n[{evt['idx']}/{evt['total']}] {evt['ticker']}")
-              elif t == "downloading":
-                  print(f"  downloading {evt['ticker']} {evt['tf']} ({evt['period']})")
-              elif t == "download_done":
-                  print(f"  downloaded  {evt['ticker']} {evt['tf']}: {evt['bars']} bars  {evt['start']} → {evt['end']}")
-              elif t == "download_error":
-                  print(f"  ERROR downloading {evt['ticker']} {evt['tf']}: {evt['msg']}")
-              elif t == "iter_start":
-                  print(f"  [{evt['iter']:>2}] {evt['tf']} arch={evt['arch']}")
-              elif t == "iter_done":
-                  verdict = evt['verdict']
-                  star = " ★" if verdict == "ROBUST" else ""
-                  print(f"       Sharpe={evt['sharpe']:+.3f}  DD={evt['dd']:.1f}%  N={evt['n_trades']}  WR={evt['win_rate']:.1f}%  [{verdict}]{star}")
-              elif t == "iter_error":
-                  print(f"  iter {evt['iter']} ERROR: {evt['msg']}")
-              elif t == "ticker_done":
-                  v = evt['verdict']
-                  if v == "ROBUST":
-                      print(f"  → ROBUST  sid={evt['sid']}  Sharpe={evt['sharpe']}  DD={evt['dd']}%")
-                  else:
-                      print(f"  → {v}")
-              elif t == "complete":
-                  print(f"\n{'='*60}")
-                  print(f"COMPLETE  tickers={evt['total_tickers']}  robust={evt['robust_found']}")
-                  for s in evt.get("summary", []):
-                      flag = "★" if s["verdict"] == "ROBUST" else " "
-                      sid  = s.get("sid") or "-"
-                      sh   = s.get("sharpe") or 0
-                      print(f"  {flag} {s['ticker']:<12} {s.get('tf','?'):<4}  Sharpe={sh:+.3f}  {s['verdict']}")
-                  break
-              elif t == "error":
-                  print(f"PIPELINE ERROR: {evt['msg']}")
-                  sys.exit(1)
-          EOF
+for raw in sys.stdin:
+    raw = raw.strip()
+    if not raw.startswith("data:"):
+        continue
+    try:
+        evt = json.loads(raw[5:].strip())
+    except Exception:
+        continue
+
+    t = evt.get("type", "")
+    if t == "start":
+        print(f"[start] tickers={evt['tickers']} timeframes={evt['timeframes']}", flush=True)
+    elif t == "ticker_start":
+        print(f"\n[{evt['idx']}/{evt['total']}] {evt['ticker']}", flush=True)
+    elif t == "downloading":
+        print(f"  downloading {evt['ticker']} {evt['tf']} ({evt['period']})", flush=True)
+    elif t == "download_done":
+        print(f"  downloaded  {evt['ticker']} {evt['tf']}: {evt['bars']} bars  {evt['start']} -> {evt['end']}", flush=True)
+    elif t == "download_error":
+        print(f"  ERROR downloading {evt['ticker']} {evt['tf']}: {evt['msg']}", flush=True)
+    elif t == "iter_start":
+        print(f"  [{evt['iter']:>2}] {evt['tf']} arch={evt['arch']}", flush=True)
+    elif t == "iter_done":
+        verdict = evt['verdict']
+        star = " *" if verdict == "ROBUST" else ""
+        print(f"       Sharpe={evt['sharpe']:+.3f}  DD={evt['dd']:.1f}%  N={evt['n_trades']}  WR={evt['win_rate']:.1f}%  [{verdict}]{star}", flush=True)
+    elif t == "iter_error":
+        print(f"  iter {evt['iter']} ERROR: {evt['msg']}", flush=True)
+    elif t == "ticker_done":
+        v = evt['verdict']
+        if v == "ROBUST":
+            print(f"  -> ROBUST  sid={evt['sid']}  Sharpe={evt['sharpe']}  DD={evt['dd']}%", flush=True)
+        else:
+            print(f"  -> {v}", flush=True)
+    elif t == "complete":
+        print(f"\n{'='*60}", flush=True)
+        print(f"COMPLETE  tickers={evt['total_tickers']}  robust={evt['robust_found']}", flush=True)
+        for s in evt.get("summary", []):
+            flag = "*" if s["verdict"] == "ROBUST" else " "
+            sh = s.get("sharpe") or 0
+            print(f"  {flag} {s['ticker']:<12} {s.get('tf','?'):<4}  Sharpe={sh:+.3f}  {s['verdict']}", flush=True)
+        break
+    elif t == "error":
+        print(f"PIPELINE ERROR: {evt['msg']}", flush=True)
+        sys.exit(1)
+PYEOF
+
+          curl -sN "$API_BASE/runs/pipeline/$JOB_ID/stream" | python3 /tmp/stream_events.py
