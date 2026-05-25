@@ -1,0 +1,169 @@
+name: Diagnose and Seed Library
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.diag-trigger'
+
+jobs:
+  diag_seed:
+    name: Check Railway and seed Library
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      API_BASE: "https://illustrious-inspiration-production.up.railway.app"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Diagnose Railway API
+        id: diag
+        run: |
+          echo "=== Railway API Diagnostics ==="
+          echo "Time: $(date -u)"
+          echo ""
+
+          echo "--- /health ---"
+          curl -sv --max-time 15 "$API_BASE/health" 2>&1 || true
+          echo ""
+
+          echo "--- GET /strategies ---"
+          curl -sv --max-time 15 "$API_BASE/strategies" 2>&1 | tail -50 || true
+          echo ""
+
+          echo "--- POST /runs/pipeline (empty) ---"
+          curl -sv --max-time 15 -X POST "$API_BASE/runs/pipeline" \
+            -H 'Content-Type: application/json' -d '{}' 2>&1 || true
+          echo ""
+
+      - name: Seed Library
+        id: seed
+        run: |
+          mkdir -p /tmp/out
+
+          cat > /tmp/seed.py << 'PYEOF'
+          import json, sys, os, urllib.request, urllib.error
+
+          API_BASE = os.environ["API_BASE"]
+
+          # Strategy code (self-contained, no engine imports needed)
+          EMA_CROSS_CODE = """
+def agent_fn(df, ind=None):
+    df = df.copy()
+    fast = ind("EMA", 8) if ind else df["EMA50"]
+    slow = ind("EMA", 21) if ind else df["EMA200"]
+    xu = (fast > slow) & (fast.shift(1) <= slow.shift(1))
+    xd = (fast < slow) & (fast.shift(1) >= slow.shift(1))
+    df["signal"] = 0
+    df.loc[xu, "signal"] = 1
+    df.loc[xd, "signal"] = -1
+    df["SL_dist"] = df["ATR14"] * 1.5
+    df["TP_dist"] = df["ATR14"] * 2.5
+    return df"""
+
+          RSI_CODE = """
+def agent_fn(df, ind=None):
+    df = df.copy()
+    rsi = df["RSI14"]
+    df["signal"] = 0
+    df.loc[rsi < 30, "signal"] = 1
+    df.loc[rsi > 70, "signal"] = -1
+    df["SL_dist"] = df["ATR14"] * 1.5
+    df["TP_dist"] = df["ATR14"] * 2.5
+    return df"""
+
+          BREAKOUT_CODE = """
+def agent_fn(df, ind=None):
+    df = df.copy()
+    roll_h = df["High"].rolling(20).max()
+    roll_l = df["Low"].rolling(20).min()
+    df["signal"] = 0
+    df.loc[df["Close"] > roll_h.shift(1), "signal"] = 1
+    df.loc[df["Close"] < roll_l.shift(1), "signal"] = -1
+    df["SL_dist"] = df["ATR14"] * 1.5
+    df["TP_dist"] = df["ATR14"] * 2.5
+    return df"""
+
+          STRATEGIES = [
+              ("BTC-USD", "1h", "ema_cross_fast", EMA_CROSS_CODE),
+              ("ETH-USD", "1h", "rsi_reversion",  RSI_CODE),
+              ("SOL-USD", "1h", "breakout_hi_lo", BREAKOUT_CODE),
+          ]
+
+          def api(method, path, data=None):
+              body = json.dumps(data).encode() if data else None
+              req = urllib.request.Request(
+                  f"{API_BASE}{path}",
+                  data=body,
+                  headers={"Content-Type": "application/json"} if body else {},
+                  method=method,
+              )
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return r.status, json.loads(r.read())
+
+          # Check health
+          try:
+              status, body = api("GET", "/health")
+              print(f"Health: {status} {body}")
+          except Exception as e:
+              print(f"Health FAILED: {e}")
+              sys.exit(1)
+
+          created = []
+          for ticker, tf, arch, code in STRATEGIES:
+              name = f"pipe_001_{tf}_{ticker.replace('-','_')}"
+              payload = {
+                  "name": name,
+                  "strategy_type": "pipeline",
+                  "config": {"ticker": ticker, "timeframe": tf,
+                              "sl_mult": 1.5, "tp_mult": 2.5,
+                              "active_hours": [6, 22],
+                              "commission": 0.0004, "slippage": 0.0001,
+                              "risk_per_trade": 0.01, "direction": "ALL"},
+                  "code": code,
+                  "status": "live",
+              }
+              try:
+                  st, resp = api("POST", "/strategies", payload)
+                  sid = resp["id"]
+                  print(f"Created {ticker}: sid={sid} (HTTP {st})")
+                  # Star it
+                  try:
+                      api("PUT", f"/strategies/{sid}/star")
+                      print(f"  Starred {sid}")
+                  except Exception as e:
+                      print(f"  Star failed: {e}")
+                  created.append({"ticker": ticker, "tf": tf, "sid": sid, "arch": arch})
+              except urllib.error.HTTPError as e:
+                  body_txt = e.read().decode()
+                  print(f"FAILED {ticker}: HTTP {e.code} — {body_txt}")
+              except Exception as e:
+                  print(f"FAILED {ticker}: {e}")
+
+          result = {"status": "ok" if created else "error", "created": created}
+          with open("/tmp/out/result.json", "w") as f:
+              json.dump(result, f, indent=2)
+
+          print(f"\nDone: {len(created)}/{len(STRATEGIES)} strategies created")
+          if not created:
+              sys.exit(1)
+          PYEOF
+
+          python3 /tmp/seed.py
+
+      - name: Commit results
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f /tmp/out/result.json ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            cp /tmp/out/result.json seed-library-result.json
+            git add seed-library-result.json
+            git diff --cached --quiet || git commit -m "ci: library seeded $(date -u +%Y-%m-%dT%H:%M:%SZ) [skip ci]"
+            git push
+          else
+            echo "No result — seed step did not complete"
+          fi
