@@ -10,19 +10,19 @@ on:
       timeframes:
         description: "Comma-separated timeframes (1m,5m,15m,1h,4h,1d)"
         required: false
-        default: "1m,5m,15m,1h"
+        default: "1h,4h,1d"
       max_iter:
         description: "Total iterations per ticker (e.g. 40 = 10 per TF with 4 TFs)"
         required: false
-        default: "40"
+        default: "4"
       stop_sharpe:
         description: "Stop early when Sharpe >= this"
         required: false
-        default: "1.5"
+        default: "-999"
       max_dd:
         description: "Max acceptable drawdown %"
         required: false
-        default: "20"
+        default: "100"
   push:
     branches: [master]
     paths:
@@ -88,14 +88,19 @@ jobs:
           echo "Stream: $API_BASE/runs/pipeline/$JOB_ID/stream"
 
       - name: Stream pipeline events
+        id: stream
         env:
           API_BASE: "https://illustrious-inspiration-production.up.railway.app"
           JOB_ID: ${{ steps.start.outputs.job_id }}
         run: |
           echo "Streaming events for job $JOB_ID ..."
+          mkdir -p /tmp/pipeline_out
 
           cat > /tmp/stream_events.py << 'PYEOF'
           import sys, json
+
+          summary = None
+          log_lines = []
 
           for raw in sys.stdin:
               raw = raw.strip()
@@ -110,50 +115,90 @@ jobs:
               if t == "start":
                   tfs = evt.get("timeframes", [])
                   n_per_tf = int(evt.get("max_iter", 0)) // max(len(tfs), 1)
-                  print(f"[start] tickers={evt['tickers']}", flush=True)
-                  print(f"        timeframes={tfs}  max_iter={evt.get('max_iter')}  (~{n_per_tf} iters/TF)", flush=True)
-                  print(f"        stop_sharpe={evt.get('stop_sharpe')}  max_dd={evt.get('max_dd')}%", flush=True)
+                  line = f"[start] tickers={evt['tickers']} timeframes={tfs} max_iter={evt.get('max_iter')} (~{n_per_tf} iters/TF) stop_sharpe={evt.get('stop_sharpe')} max_dd={evt.get('max_dd')}%"
+                  print(line, flush=True)
+                  log_lines.append(line)
               elif t == "ticker_start":
-                  print(f"\n{'='*60}", flush=True)
-                  print(f"[{evt['idx']}/{evt['total']}] {evt['ticker']}", flush=True)
-                  print(f"{'='*60}", flush=True)
+                  line = f"\n[{evt['idx']}/{evt['total']}] {evt['ticker']}"
+                  print(line, flush=True)
+                  log_lines.append(line)
               elif t == "downloading":
-                  print(f"  -> download {evt['ticker']} {evt['tf']} ({evt['period']})", flush=True)
+                  line = f"  -> download {evt['ticker']} {evt['tf']} ({evt['period']})"
+                  print(line, flush=True)
+                  log_lines.append(line)
               elif t == "download_done":
-                  print(f"  -> OK       {evt['ticker']} {evt['tf']}: {evt['bars']:,} bars  {evt['start']} -> {evt['end']}", flush=True)
+                  line = f"  -> OK {evt['ticker']} {evt['tf']}: {evt['bars']:,} bars  {evt['start']} -> {evt['end']}"
+                  print(line, flush=True)
+                  log_lines.append(line)
               elif t == "download_error":
-                  print(f"  -> FAIL     {evt['ticker']} {evt['tf']}: {evt['msg']}", flush=True)
+                  line = f"  -> FAIL {evt['ticker']} {evt['tf']}: {evt['msg']}"
+                  print(line, flush=True)
+                  log_lines.append(line)
               elif t == "iter_start":
-                  print(f"  [{evt['iter']:>3}] {evt['tf']:<4} arch={evt['arch']}", flush=True)
+                  line = f"  [{evt['iter']:>3}] {evt['tf']:<4} arch={evt['arch']}"
+                  print(line, flush=True)
+                  log_lines.append(line)
               elif t == "iter_done":
                   verdict = evt['verdict']
                   star = " ***ROBUST***" if verdict == "ROBUST" else (" ." if verdict == "marginal" else "")
-                  print(f"         Sharpe={evt['sharpe']:+.3f}  DD={evt['dd']:+.1f}%  N={evt['n_trades']}  WR={evt['win_rate']:.1f}%  [{verdict}]{star}", flush=True)
+                  line = f"         Sharpe={evt['sharpe']:+.3f}  DD={evt['dd']:+.1f}%  N={evt['n_trades']}  WR={evt['win_rate']:.1f}%  [{verdict}]{star}"
+                  print(line, flush=True)
+                  log_lines.append(line)
               elif t == "iter_error":
-                  print(f"  [{evt['iter']:>3}] ERROR: {evt['msg']}", flush=True)
+                  line = f"  [{evt['iter']:>3}] ERROR: {evt['msg']}"
+                  print(line, flush=True)
+                  log_lines.append(line)
               elif t == "ticker_done":
                   v = evt['verdict']
                   if v == "ROBUST":
-                      print(f"\n  SAVED -> Library  sid={evt['sid']}  {evt.get('tf','')}  Sharpe={evt['sharpe']}  DD={evt['dd']}%", flush=True)
+                      line = f"  SAVED -> Library  sid={evt['sid']}  {evt.get('tf','')}  Sharpe={evt['sharpe']}  DD={evt['dd']}%"
                   else:
-                      best = evt.get('sharpe')
-                      print(f"\n  Best: Sharpe={best}  ({v})", flush=True)
+                      line = f"  Best: Sharpe={evt.get('sharpe')}  ({v})"
+                  print(line, flush=True)
+                  log_lines.append(line)
               elif t == "complete":
-                  print(f"\n{'='*60}", flush=True)
-                  print(f"PIPELINE COMPLETE", flush=True)
-                  print(f"  Tickers processed : {evt['total_tickers']}", flush=True)
-                  print(f"  ROBUST strategies : {evt['robust_found']}", flush=True)
-                  print(f"{'='*60}", flush=True)
+                  summary = evt
+                  lines = [
+                      "\nPIPELINE COMPLETE",
+                      f"  Tickers processed : {evt['total_tickers']}",
+                      f"  ROBUST strategies : {evt['robust_found']}",
+                  ]
                   for s in evt.get("summary", []):
                       flag = "*" if s["verdict"] == "ROBUST" else " "
                       sh   = s.get("sharpe") or 0.0
                       tf   = s.get("tf") or "?"
-                      print(f"{flag} {s['ticker']:<12} {tf:<5} {sh:>+8.3f}  {s['verdict']}", flush=True)
+                      lines.append(f"{flag} {s['ticker']:<12} {tf:<5} {sh:>+8.3f}  {s['verdict']}")
+                  for l in lines:
+                      print(l, flush=True)
+                      log_lines.append(l)
+                  # write result file
+                  with open("/tmp/pipeline_out/result.json", "w") as f:
+                      json.dump({"status": "complete", "summary": evt.get("summary", []), "log": log_lines}, f, indent=2)
                   break
               elif t == "error":
-                  print(f"\nPIPELINE ERROR: {evt['msg']}", flush=True)
+                  line = f"\nPIPELINE ERROR: {evt['msg']}"
+                  print(line, flush=True)
+                  log_lines.append(line)
+                  with open("/tmp/pipeline_out/result.json", "w") as f:
+                      json.dump({"status": "error", "msg": evt['msg'], "log": log_lines}, f, indent=2)
                   sys.exit(1)
           PYEOF
 
           curl -sN --max-time 86400 "$API_BASE/runs/pipeline/$JOB_ID/stream" \
             | python3 /tmp/stream_events.py
+
+      - name: Commit pipeline results
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f /tmp/pipeline_out/result.json ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            cp /tmp/pipeline_out/result.json pipeline-last-result.json
+            git add pipeline-last-result.json
+            git diff --cached --quiet || git commit -m "ci: pipeline result $(date -u +%Y-%m-%dT%H:%M:%SZ) [skip ci]"
+            git push
+          else
+            echo "No result file found — pipeline did not complete."
+          fi
