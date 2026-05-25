@@ -1,0 +1,41 @@
+name: Seed Library with Pipeline Strategies
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - '.seed-library-trigger'
+
+jobs:
+  seed:
+    name: Create strategies in Railway Library
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      API_BASE: "https://illustrious-inspiration-production.up.railway.app"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Create strategies in Library
+        run: python3 scripts/seed_library.py
+
+      - name: Commit seed result
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f /tmp/seed_result.json ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            cp /tmp/seed_result.json seed-library-result.json
+            git add seed-library-result.json
+            git diff --cached --quiet || git commit -m "ci: library seeded $(date -u +%Y-%m-%dT%H:%M:%SZ) [skip ci]"
+            git push
+          fi
