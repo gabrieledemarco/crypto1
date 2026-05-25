@@ -24,6 +24,9 @@ jobs:
           DUCKDB_PATH: ':memory:'
           ALLOWED_ORIGINS: 'http://localhost:3000'
       - name: Run tests
+        env:
+          DUCKDB_PATH: ':memory:'
+          ALLOWED_ORIGINS: 'http://localhost:3000'
         run: |
           if [ -d "tests" ]; then
             python -m pytest tests/ -v --tb=short -p no:cacheprovider
