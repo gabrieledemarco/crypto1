@@ -25,8 +25,8 @@ from api.routers.pipeline import (
 def test_pipeline_request_defaults():
     req = PipelineRequest()
     assert req.tickers == ["BTC-USD", "ETH-USD", "SOL-USD"]
-    assert req.timeframes == ["1h", "4h", "1d"]
-    assert req.max_iter == 30
+    assert req.timeframes == ["1m", "5m", "15m", "1h"]
+    assert req.max_iter == 40
     assert req.stop_sharpe == 1.5
     assert req.max_dd == 20.0
     assert req.period is None
