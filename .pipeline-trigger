@@ -1,0 +1,8 @@
+{
+  "tickers": ["BTC-USD", "ETH-USD", "SOL-USD"],
+  "timeframes": ["1m", "5m", "15m", "1h"],
+  "max_iter": 40,
+  "stop_sharpe": 1.5,
+  "max_dd": 20.0,
+  "triggered_at": "2026-05-25T07:00:00Z"
+}
