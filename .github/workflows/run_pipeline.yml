@@ -4,17 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       tickers:
-        description: "Comma-separated tickers (crypto supported)"
+        description: "Comma-separated tickers (crypto + forex)"
         required: false
-        default: "BTC-USD,ETH-USD,SOL-USD"
+        default: "BTC-USD,ETH-USD,SOL-USD,EURUSD=X,GBPUSD=X,JPYUSD=X"
       timeframes:
         description: "Comma-separated timeframes (1m,5m,15m,1h,4h,1d)"
         required: false
-        default: "1h,4h,1d"
+        default: "15m,1h,4h,1d"
       max_iter:
-        description: "Total iterations per ticker (e.g. 40 = 10 per TF with 4 TFs)"
+        description: "Total iterations per ticker (12 = 3 per TF with 4 TFs)"
         required: false
-        default: "4"
+        default: "12"
       stop_sharpe:
         description: "Stop early when Sharpe >= this"
         required: false
@@ -23,6 +23,10 @@ on:
         description: "Max acceptable drawdown %"
         required: false
         default: "100"
+      iter_offset:
+        description: "Archetype offset (0,12,24,… for batch exploration)"
+        required: false
+        default: "0"
   push:
     branches: [master]
     paths:
@@ -51,11 +55,12 @@ jobs:
               params.pop("triggered_at", None)
           else:
               params = {
-                  "tickers":     [t.strip() for t in "${{ github.event.inputs.tickers }}".split(",")],
-                  "timeframes":  [t.strip() for t in "${{ github.event.inputs.timeframes }}".split(",")],
-                  "max_iter":    int("${{ github.event.inputs.max_iter }}"),
-                  "stop_sharpe": float("${{ github.event.inputs.stop_sharpe }}"),
-                  "max_dd":      float("${{ github.event.inputs.max_dd }}"),
+                  "tickers":      [t.strip() for t in "${{ github.event.inputs.tickers }}".split(",")],
+                  "timeframes":   [t.strip() for t in "${{ github.event.inputs.timeframes }}".split(",")],
+                  "max_iter":     int("${{ github.event.inputs.max_iter }}"),
+                  "stop_sharpe":  float("${{ github.event.inputs.stop_sharpe }}"),
+                  "max_dd":       float("${{ github.event.inputs.max_dd }}"),
+                  "iter_offset":  int("${{ github.event.inputs.iter_offset }}" or "0"),
               }
 
           payload = json.dumps(params)

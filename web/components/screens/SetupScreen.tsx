@@ -63,6 +63,8 @@ export function SetupScreen() {
   const [progress, setProgress] = useState<{ phase: string; pct: number } | null>(null);
   const [running, setRunning] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [runMetrics, setRunMetrics] = useState<Record<string, number> | null>(null);
+  const [libSaved, setLibSaved] = useState(false);
 
   // Strips accidental double suffix: "BNB-USD-USD" → "BNB-USD"
   const normalizeTicker = (t: string) => t.replace(/-USD-USD$/, "-USD").replace(/-USDT-USDT$/, "-USDT");
@@ -152,7 +154,22 @@ export function SetupScreen() {
           .then((r) => r.json())
           .then((apiRun: Record<string, unknown>) => {
             const versionMetrics = apiRun.metrics as Record<string, Record<string, number>> | undefined;
-            const best = versionMetrics ? Object.values(versionMetrics)[0] : undefined;
+            const best = versionMetrics ? Object.values(versionMetrics).reduce<Record<string, number> | undefined>((acc, v) => {
+              const vt = v as Record<string, number>;
+              if (!acc || (vt.sharpe_ratio ?? -999) > (acc.sharpe_ratio ?? -999)) return vt;
+              return acc;
+            }, undefined) : undefined;
+            if (best) {
+              setRunMetrics({
+                sharpe: best.sharpe_ratio ?? 0,
+                cagr: best.cagr_pct ?? 0,
+                max_dd: best.max_drawdown_pct ?? 0,
+                n_trades: best.n_trades ?? 0,
+                win_rate: best.win_rate_pct ?? 0,
+                profit_factor: best.profit_factor ?? 0,
+              });
+              setLibSaved(false);
+            }
             const emptyM: RunMetrics = { sharpe: 0, sortino: 0, cagr: 0, maxDD: 0, calmar: 0, finalReturn: 0 };
             const realM: RunMetrics = best ? {
               sharpe: best.sharpe_ratio ?? 0,
@@ -241,6 +258,29 @@ export function SetupScreen() {
       setToast(msg.includes("fetch") || msg.includes("Failed")
         ? "API not reachable — check NEXT_PUBLIC_API_URL"
         : `Run failed: ${msg}`);
+    }
+  };
+
+  const handleSaveToLib = async () => {
+    const name = `${params.ticker} · ${params.timeframe} · ${new Date().toISOString().slice(0, 10)}`;
+    try {
+      const res = await fetch("/api/strategies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          strategy_type: "setup",
+          config: { ...params, perf: runMetrics ?? {} },
+          code: "",
+          status: "live",
+        }),
+      });
+      if (res.ok) {
+        setLibSaved(true);
+        setToast(`Saved "${name}" to Library`);
+      }
+    } catch {
+      setToast("Save to Library failed");
     }
   };
 
@@ -433,6 +473,16 @@ export function SetupScreen() {
                 {savedFlash ? "SAVED ✓" : "SAVE"}
               </button>
               <button className={styles.btn} onClick={() => setParams({ ...params })}>RESET</button>
+              {runId && runMetrics && (
+                <button
+                  className={styles.btn}
+                  onClick={handleSaveToLib}
+                  disabled={libSaved}
+                  style={{ opacity: libSaved ? 0.5 : 1 }}
+                >
+                  {libSaved ? "SAVED ✓" : "SAVE TO LIB"}
+                </button>
+              )}
             </div>
 
             {/* SSE progress bar */}
