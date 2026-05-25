@@ -15,3 +15,5 @@ slowapi==0.1.9
 structlog>=23.0.0
 quantstats>=0.0.62
 ccxt>=4.0.0
+pytest>=7.4
+pytest-asyncio>=0.23
