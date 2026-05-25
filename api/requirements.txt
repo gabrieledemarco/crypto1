@@ -6,6 +6,7 @@ duckdb==0.10.3
 yfinance>=0.2.40
 numpy>=1.24
 pandas>=2.0
+pyarrow>=14.0
 scipy>=1.10
 anthropic>=0.49.0
 arch>=6.3.0
