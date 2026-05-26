@@ -196,7 +196,7 @@ def _sync_pipeline(body: PipelineRequest, push):
                   "tf": tf, "arch": arch_name, "effective_iter": effective_iter})
 
             try:
-                sid, sharpe, dd, n_trades, win_rate = _run_iteration(
+                sid, sharpe, dd, n_trades, win_rate, mc = _run_iteration(
                     ticker, tf, df, effective_iter, arch_name, sl, tp
                 )
             except Exception as exc:
@@ -205,7 +205,9 @@ def _sync_pipeline(body: PipelineRequest, push):
                 continue
 
             dd_ok = abs(dd) <= body.max_dd
-            verdict = ("ROBUST" if sharpe >= body.stop_sharpe and dd_ok
+            # MC pass: p_profit >= 0.55 AND p_ruin < 0.15; skipped when no MC data
+            mc_ok = mc.get("p_profit", 1.0) >= 0.55 and mc.get("p_ruin", 0.0) < 0.15
+            verdict = ("ROBUST" if sharpe >= body.stop_sharpe and dd_ok and mc_ok
                        else "marginal" if sharpe >= 0 else "failed")
 
             push({
@@ -214,11 +216,15 @@ def _sync_pipeline(body: PipelineRequest, push):
                 "sharpe": round(sharpe, 3), "dd": round(dd, 2),
                 "n_trades": n_trades, "win_rate": round(win_rate, 1),
                 "verdict": verdict,
+                "mc_p_profit": mc.get("p_profit"),
+                "mc_p_ruin":   mc.get("p_ruin"),
             })
             log.append({"iter": iteration, "tf": tf, "arch": arch_name,
                         "sid": sid, "sharpe": sharpe, "dd": dd,
                         "n_trades": n_trades, "win_rate": win_rate,
-                        "verdict": verdict})
+                        "verdict": verdict,
+                        "mc_p_profit": mc.get("p_profit"),
+                        "mc_p_ruin":   mc.get("p_ruin")})
 
             if sharpe > best_sharpe:
                 best_sharpe, best_sid, best_tf = sharpe, sid, tf
@@ -281,7 +287,8 @@ def _resample(df: pd.DataFrame, tf: str) -> pd.DataFrame:
 def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
     import numpy as np
     from engine.strategy_core import compute_indicators_v2
-    from engine.backtest import run_versions
+    from engine.backtest import run_versions, INITIAL_CAPITAL
+    from engine.montecarlo import run_bootstrap
 
     _, code, sl_used, tp_used = get_archetype(iteration)
 
@@ -315,6 +322,27 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
     n_trades = int(m.get("n_trades", 0) or 0)
     win_rate = float(m.get("win_rate_pct", 0) or 0)
 
+    # ── Monte Carlo simulation (200 paths — lightweight for pipeline speed) ────
+    mc_result: dict = {}
+    best_res = versions.get(best_key, {}).get("result", {})
+    trades_df = best_res.get("trades") if best_res else None
+    if trades_df is not None and not trades_df.empty and len(trades_df) >= 5:
+        try:
+            pnl_arr = trades_df["pnl"].values.astype(float)
+            ann_factor = _ANN_FACTORS.get(tf, 8760)
+            days_in_period = float(max((df.index[-1] - df.index[0]).days, 1))
+            bs = run_bootstrap(pnl_arr, n_sims=200, initial_capital=INITIAL_CAPITAL,
+                               days_in_period=days_in_period, ann_factor=ann_factor)
+            mc_result = {
+                "p_profit":      round(float((bs["final_capital"] > INITIAL_CAPITAL).mean()), 4),
+                "p_ruin":        round(float((bs["final_capital"] < INITIAL_CAPITAL * 0.5).mean()), 4),
+                "mc_sharpe_p50": round(float(np.percentile(bs["sharpe"], 50)), 3),
+                "mc_sharpe_p5":  round(float(np.percentile(bs["sharpe"], 5)), 3),
+                "n_sims":        200,
+            }
+        except Exception:
+            pass
+
     # Enrich config with best-version info and achieved metrics
     config.pop("agent_fn", None)   # not JSON-serialisable
     config["best_version"] = best_key
@@ -324,6 +352,9 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
         "n_trades": n_trades,
         "win_rate": round(win_rate, 1),
     }
+    if mc_result:
+        config["perf"]["mc_p_profit"] = mc_result.get("p_profit")
+        config["perf"]["mc_p_ruin"]   = mc_result.get("p_ruin")
 
     # Save strategy + run to DB
     conn = get_conn()
@@ -335,6 +366,7 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
     )
     run_id = uuid.uuid4().hex[:12]
     metrics_json = json.dumps({best_key: m})
+    mc_json = json.dumps(mc_result)
     conn.execute(
         "INSERT INTO runs (id,name,ticker,timeframe,params,status,strategy_id) VALUES (?,?,?,?,?,?,?)",
         [run_id, f"pipe_{iteration:03d}_{tf}_{arch_name}",
@@ -344,10 +376,10 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
     if not existing:
         conn.execute(
             "INSERT INTO run_results (run_id,metrics,equity,trades,wfo,sweep,mc) VALUES (?,?,?,?,?,?,?)",
-            [run_id, metrics_json, "[]", "[]", "[]", "[]", "{}"],
+            [run_id, metrics_json, "[]", "[]", "[]", "[]", mc_json],
         )
 
-    return sid, sharpe, dd, n_trades, win_rate
+    return sid, sharpe, dd, n_trades, win_rate, mc_result
 
 
 def _promote(sid: str, status: str) -> None:
