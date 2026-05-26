@@ -1,6 +1,10 @@
 name: Batch Pipeline — 10 runs (forex + 15m)
 
 on:
+  push:
+    branches: [master]
+    paths:
+      - '.batch-pipeline-trigger'
   workflow_dispatch:
     inputs:
       tickers:

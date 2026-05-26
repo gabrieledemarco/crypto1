@@ -116,15 +116,18 @@ jobs:
 
       - name: Commit results
         if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -f /tmp/out/result.json ]; then
             git config user.name  "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+            git pull --rebase origin master || true
             cp /tmp/out/result.json seed-library-result.json
             git add seed-library-result.json
-            git diff --cached --quiet || git commit -m "ci: library seeded $(date -u +%Y-%m-%dT%H:%M:%SZ) [skip ci]"
-            git push origin HEAD:master
+            git diff --cached --quiet || git commit -m "ci: library seeded $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin HEAD:master || echo "WARNING: push failed"
           else
             echo "No /tmp/out/result.json found"
           fi
