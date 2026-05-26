@@ -1,0 +1,28 @@
+{
+  "status": "ok",
+  "created": [
+    {
+      "ticker": "BTC-USD",
+      "tf": "1h",
+      "sid": "76fff6c2"
+    },
+    {
+      "ticker": "ETH-USD",
+      "tf": "1h",
+      "sid": "4a465459"
+    },
+    {
+      "ticker": "SOL-USD",
+      "tf": "1h",
+      "sid": "b7a0dcd1"
+    }
+  ],
+  "health": {
+    "status": 200,
+    "body": {
+      "status": "ok",
+      "version": "0.2.0"
+    }
+  },
+  "error": null
+}
