@@ -229,10 +229,12 @@ jobs:
           if [ -f /tmp/pipeline_out/result.json ]; then
             git config user.name  "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
+            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+            git pull --rebase origin master || true
             cp /tmp/pipeline_out/result.json pipeline-last-result.json
             git add pipeline-last-result.json
-            git diff --cached --quiet || git commit -m "ci: pipeline result $(date -u +%Y-%m-%dT%H:%M:%SZ) [skip ci]"
-            git push
+            git diff --cached --quiet || git commit -m "ci: pipeline result $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin HEAD:master || echo "WARNING: push failed"
           else
             echo "No result file found — pipeline did not complete."
           fi
