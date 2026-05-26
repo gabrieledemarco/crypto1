@@ -32,6 +32,9 @@ on:
     paths:
       - '.pipeline-trigger'
 
+permissions:
+  contents: write
+
 jobs:
   pipeline:
     name: Trigger Railway Pipeline

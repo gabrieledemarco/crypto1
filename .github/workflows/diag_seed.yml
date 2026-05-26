@@ -6,6 +6,9 @@ on:
     paths:
       - '.diag-trigger'
 
+permissions:
+  contents: write
+
 jobs:
   diag_seed:
     name: Check Railway and seed Library
