@@ -1,9 +1,164 @@
 {
-  "min_sharpe": 0.5,
-  "total": 263,
-  "deleted": 251,
-  "kept": 12,
+  "min_sharpe": 0.4,
+  "total": 1738,
+  "deleted": 1557,
+  "kept": 72,
   "kept_strategies": [
+    {
+      "id": "cc66ec56",
+      "name": "pipe_063_1h_SOL_USD",
+      "sharpe": 0.901
+    },
+    {
+      "id": "f70bb68f",
+      "name": "pipe_177_1h_ETH_USD",
+      "sharpe": 0.532
+    },
+    {
+      "id": "aa7c3118",
+      "name": "pipe_032_1h_SOL_USD",
+      "sharpe": 0.881
+    },
+    {
+      "id": "38eb9859",
+      "name": "pipe_057_1h_ETH_USD",
+      "sharpe": 0.532
+    },
+    {
+      "id": "3a081c89",
+      "name": "pipe_025_1h_BTC_USD",
+      "sharpe": 0.539
+    },
+    {
+      "id": "c751e9a5",
+      "name": "pipe_081_1h_BTC_USD",
+      "sharpe": 0.971
+    },
+    {
+      "id": "3158e62b",
+      "name": "pipe_045_1h_BTC_USD",
+      "sharpe": 0.837
+    },
+    {
+      "id": "f1f508ba",
+      "name": "pipe_146_15m_SOL_USD",
+      "sharpe": 1.505
+    },
+    {
+      "id": "220b1314",
+      "name": "pipe_149_15m_ETH_USD",
+      "sharpe": 0.581
+    },
+    {
+      "id": "e483d15d",
+      "name": "pipe_149_15m_BTC_USD",
+      "sharpe": 0.833
+    },
+    {
+      "id": "c913b404",
+      "name": "pipe_095_15m_SOL_USD",
+      "sharpe": 1.232
+    },
+    {
+      "id": "e4101a83",
+      "name": "pipe_101_15m_ETH_USD",
+      "sharpe": 0.73
+    },
+    {
+      "id": "772ff1a4",
+      "name": "pipe_101_15m_BTC_USD",
+      "sharpe": 0.582
+    },
+    {
+      "id": "865b404c",
+      "name": "pipe_089_15m_SOL_USD",
+      "sharpe": 1.106
+    },
+    {
+      "id": "d580abdc",
+      "name": "pipe_077_15m_ETH_USD",
+      "sharpe": 1.298
+    },
+    {
+      "id": "90fe1389",
+      "name": "pipe_077_15m_BTC_USD",
+      "sharpe": 2.574
+    },
+    {
+      "id": "2617d587",
+      "name": "pipe_065_15m_ETH_USD",
+      "sharpe": 1.422
+    },
+    {
+      "id": "f83106f3",
+      "name": "pipe_065_15m_BTC_USD",
+      "sharpe": 0.857
+    },
+    {
+      "id": "f9aa8268",
+      "name": "pipe_014_4h_GBPUSD=X",
+      "sharpe": 1.028
+    },
+    {
+      "id": "7da415be",
+      "name": "pipe_053_15m_SOL_USD",
+      "sharpe": 1.241
+    },
+    {
+      "id": "ca99d2fc",
+      "name": "pipe_053_15m_ETH_USD",
+      "sharpe": 1.689
+    },
+    {
+      "id": "307358a1",
+      "name": "pipe_053_15m_BTC_USD",
+      "sharpe": 1.994
+    },
+    {
+      "id": "09060088",
+      "name": "pipe_038_4h_SOL_USD",
+      "sharpe": 1.699
+    },
+    {
+      "id": "65e70424",
+      "name": "pipe_038_15m_SOL_USD",
+      "sharpe": 1.55
+    },
+    {
+      "id": "46da4bd9",
+      "name": "pipe_038_15m_ETH_USD",
+      "sharpe": 1.533
+    },
+    {
+      "id": "f9852dc0",
+      "name": "pipe_002_4h_ETH_USD",
+      "sharpe": 1.31
+    },
+    {
+      "id": "d78e6f79",
+      "name": "pipe_041_15m_BTC_USD",
+      "sharpe": 0.875
+    },
+    {
+      "id": "832f850e",
+      "name": "pipe_020_4h_BTC_USD",
+      "sharpe": 1.727
+    },
+    {
+      "id": "68de1634",
+      "name": "pipe_026_15m_SOL_USD",
+      "sharpe": 1.506
+    },
+    {
+      "id": "bb95c138",
+      "name": "pipe_029_15m_ETH_USD",
+      "sharpe": 0.581
+    },
+    {
+      "id": "2d82d710",
+      "name": "pipe_029_15m_BTC_USD",
+      "sharpe": 0.833
+    },
     {
       "id": "311677e5",
       "name": "pipe_026_15m_SOL_USD",
@@ -33,6 +188,151 @@
       "id": "434b19b5",
       "name": "pipe_039_15m_BTC_USD",
       "sharpe": 1.902
+    },
+    {
+      "id": "c38c6686",
+      "name": "pipe_165_1h_ETH_USD",
+      "sharpe": 0.408
+    },
+    {
+      "id": "39a329d8",
+      "name": "pipe_164_1h_ETH_USD",
+      "sharpe": 0.427
+    },
+    {
+      "id": "1b1c8f78",
+      "name": "pipe_021_1h_SOL_USD",
+      "sharpe": 0.441
+    },
+    {
+      "id": "bbff71ca",
+      "name": "pipe_045_1h_ETH_USD",
+      "sharpe": 0.408
+    },
+    {
+      "id": "10d6f1a5",
+      "name": "pipe_044_1h_ETH_USD",
+      "sharpe": 0.427
+    },
+    {
+      "id": "003b7168",
+      "name": "pipe_022_1h_BTC_USD",
+      "sharpe": 0.402
+    },
+    {
+      "id": "dd83cee9",
+      "name": "pipe_045_1h_ETH_USD",
+      "sharpe": 0.408
+    },
+    {
+      "id": "ad942451",
+      "name": "pipe_044_1h_ETH_USD",
+      "sharpe": 0.427
+    },
+    {
+      "id": "78d68483",
+      "name": "pipe_033_1h_BTC_USD",
+      "sharpe": 0.544
+    },
+    {
+      "id": "b04b69b3",
+      "name": "pipe_141_1h_SOL_USD",
+      "sharpe": 0.441
+    },
+    {
+      "id": "ca28fdb8",
+      "name": "pipe_025_1h_BTC_USD",
+      "sharpe": 0.539
+    },
+    {
+      "id": "5f5a28f9",
+      "name": "pipe_022_1h_BTC_USD",
+      "sharpe": 0.402
+    },
+    {
+      "id": "177d54ad",
+      "name": "pipe_137_15m_BTC_USD",
+      "sharpe": 0.567
+    },
+    {
+      "id": "c7a8280b",
+      "name": "pipe_093_1h_BTC_USD",
+      "sharpe": 0.503
+    },
+    {
+      "id": "806701f9",
+      "name": "pipe_087_1h_SOL_USD",
+      "sharpe": 0.747
+    },
+    {
+      "id": "c72db75f",
+      "name": "pipe_086_15m_SOL_USD",
+      "sharpe": 0.756
+    },
+    {
+      "id": "91975a1a",
+      "name": "pipe_083_15m_SOL_USD",
+      "sharpe": 0.588
+    },
+    {
+      "id": "db2addd4",
+      "name": "pipe_078_1h_SOL_USD",
+      "sharpe": 0.575
+    },
+    {
+      "id": "ee7d833b",
+      "name": "pipe_077_15m_SOL_USD",
+      "sharpe": 0.678
+    },
+    {
+      "id": "03f25a23",
+      "name": "pipe_062_15m_SOL_USD",
+      "sharpe": 0.625
+    },
+    {
+      "id": "b9a1c57b",
+      "name": "pipe_050_15m_SOL_USD",
+      "sharpe": 0.659
+    },
+    {
+      "id": "1d5bdcc1",
+      "name": "pipe_032_4h_SOL_USD",
+      "sharpe": 0.45
+    },
+    {
+      "id": "b7a9197c",
+      "name": "pipe_021_1h_SOL_USD",
+      "sharpe": 0.441
+    },
+    {
+      "id": "40808ecb",
+      "name": "pipe_045_1h_BTC_USD",
+      "sharpe": 0.837
+    },
+    {
+      "id": "6dedd723",
+      "name": "pipe_033_1h_BTC_USD",
+      "sharpe": 0.544
+    },
+    {
+      "id": "fdebdba2",
+      "name": "pipe_008_4h_BTC_USD",
+      "sharpe": 0.68
+    },
+    {
+      "id": "cba78658",
+      "name": "pipe_002_4h_BTC_USD",
+      "sharpe": 0.721
+    },
+    {
+      "id": "99b0e21c",
+      "name": "pipe_021_1h_SOL_USD",
+      "sharpe": 0.441
+    },
+    {
+      "id": "79e1f324",
+      "name": "pipe_017_15m_BTC_USD",
+      "sharpe": 0.567
     },
     {
       "id": "168ee6eb",
