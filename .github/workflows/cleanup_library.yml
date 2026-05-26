@@ -1,0 +1,99 @@
+name: Cleanup Library — remove non-profitable strategies
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_sharpe:
+        description: "Minimum Sharpe to keep (delete below this)"
+        required: false
+        default: "0.5"
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    name: Remove unprofitable strategies from Library
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      API_BASE: "https://illustrious-inspiration-production.up.railway.app"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Delete unprofitable strategies
+        run: |
+          mkdir -p /tmp/cleanup_out
+          python3 - << 'PYEOF'
+          import json, os, sys, urllib.request, urllib.error
+
+          API_BASE  = os.environ["API_BASE"]
+          MIN_SHARPE = float("${{ github.event.inputs.min_sharpe || '0.5' }}")
+
+          print(f"Fetching all strategies (keeping sharpe >= {MIN_SHARPE})...")
+          try:
+              with urllib.request.urlopen(
+                  urllib.request.Request(f"{API_BASE}/strategies"), timeout=15
+              ) as r:
+                  strategies = json.loads(r.read())
+          except Exception as e:
+              print(f"FAILED to fetch strategies: {e}")
+              sys.exit(1)
+
+          print(f"Total strategies in Library: {len(strategies)}")
+
+          deleted = []
+          kept    = []
+
+          for s in strategies:
+              sid  = s.get("id","")
+              name = s.get("name","?")
+              cfg  = s.get("config") or {}
+              perf = cfg.get("perf") or {}
+
+              sharpe = perf.get("sharpe")
+              if sharpe is None:
+                  sharpe = s.get("sharpe")
+
+              if sharpe is None or float(sharpe) < MIN_SHARPE:
+                  try:
+                      req = urllib.request.Request(
+                          f"{API_BASE}/strategies/{sid}",
+                          method="DELETE"
+                      )
+                      urllib.request.urlopen(req, timeout=10)
+                      print(f"  DELETED {sid} — {name} (sharpe={sharpe})")
+                      deleted.append({"id": sid, "name": name, "sharpe": sharpe})
+                  except Exception as e:
+                      print(f"  FAILED to delete {sid}: {e}")
+              else:
+                  kept.append({"id": sid, "name": name, "sharpe": sharpe})
+                  print(f"  KEPT    {sid} — {name} (sharpe={sharpe})")
+
+          result = {
+              "min_sharpe": MIN_SHARPE,
+              "total": len(strategies),
+              "deleted": len(deleted),
+              "kept": len(kept),
+              "kept_strategies": kept,
+          }
+          json.dump(result, open("/tmp/cleanup_out/result.json","w"), indent=2)
+          print(f"\nDone: deleted={len(deleted)} kept={len(kept)}")
+          PYEOF
+
+      - name: Commit cleanup result
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f /tmp/cleanup_out/result.json ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+            git pull --rebase origin master || true
+            cp /tmp/cleanup_out/result.json library-cleanup-result.json
+            git add library-cleanup-result.json
+            git diff --cached --quiet || git commit -m "ci: library cleanup — kept profitable strategies $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin HEAD:master || echo "Push failed"
+          fi
