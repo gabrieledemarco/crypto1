@@ -97,6 +97,9 @@ async def stream_pipeline(job_id: str):
         try:
             while True:
                 evt = await queue.get()
+                if evt.get("type") == "ping":
+                    yield ": heartbeat\n\n"
+                    continue
                 yield f"data: {json.dumps(evt)}\n\n"
                 if evt.get("type") in ("complete", "error"):
                     break
@@ -119,11 +122,20 @@ async def _run_pipeline(job_id: str, body: PipelineRequest):
         queue.put_nowait(evt)
 
     loop = asyncio.get_running_loop()
+
+    async def _heartbeat():
+        while True:
+            await asyncio.sleep(20)
+            queue.put_nowait({"type": "ping"})
+
+    hb = asyncio.create_task(_heartbeat())
     try:
         with concurrent.futures.ThreadPoolExecutor() as pool:
             await loop.run_in_executor(pool, _sync_pipeline, body, push)
     except Exception as exc:
         push({"type": "error", "msg": str(exc)})
+    finally:
+        hb.cancel()
 
 
 # ── Sync worker ───────────────────────────────────────────────────────────────────────────────

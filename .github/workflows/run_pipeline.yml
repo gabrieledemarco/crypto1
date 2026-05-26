@@ -72,20 +72,18 @@ jobs:
               f.write(f"payload={payload}\n")
           PYEOF
 
-      - name: Wait for Railway pipeline endpoint
+      - name: Wait for Railway health
         if: github.event_name == 'push'
         env:
           API_BASE: "https://illustrious-inspiration-production.up.railway.app"
         run: |
-          echo "Polling until Railway /runs/pipeline is ready (max 25 min)..."
+          echo "Polling until Railway /health returns 200 (max 25 min)..."
           READY=false
           for i in $(seq 1 25); do
             health=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$API_BASE/health" 2>/dev/null || echo "000")
-            pipe=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 -X POST \
-              "$API_BASE/runs/pipeline" -H 'Content-Type: application/json' -d '{}' 2>/dev/null || echo "000")
-            echo "Attempt $i/25: health=$health  pipeline=$pipe"
-            if [ "$health" = "200" ] && { [ "$pipe" = "422" ] || [ "$pipe" = "200" ]; }; then
-              echo "Railway is ready with pipeline endpoint!"
+            echo "Attempt $i/25: health=$health"
+            if [ "$health" = "200" ]; then
+              echo "Railway is ready!"
               READY=true
               break
             fi
