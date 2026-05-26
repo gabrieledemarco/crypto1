@@ -1,0 +1,68 @@
+{
+  "min_sharpe": 0.5,
+  "total": 263,
+  "deleted": 251,
+  "kept": 12,
+  "kept_strategies": [
+    {
+      "id": "311677e5",
+      "name": "pipe_026_15m_SOL_USD",
+      "sharpe": 1.506
+    },
+    {
+      "id": "6d8bc5c3",
+      "name": "pipe_038_15m_ETH_USD",
+      "sharpe": 1.533
+    },
+    {
+      "id": "ea765b4d",
+      "name": "pipe_053_15m_BTC_USD",
+      "sharpe": 1.994
+    },
+    {
+      "id": "42e05ec5",
+      "name": "pipe_027_15m_SOL_USD",
+      "sharpe": 2.19
+    },
+    {
+      "id": "5bdfa54a",
+      "name": "pipe_039_15m_ETH_USD",
+      "sharpe": 0.834
+    },
+    {
+      "id": "434b19b5",
+      "name": "pipe_039_15m_BTC_USD",
+      "sharpe": 1.902
+    },
+    {
+      "id": "168ee6eb",
+      "name": "pipe_029_15m_ETH_USD",
+      "sharpe": 0.581
+    },
+    {
+      "id": "38b2d03e",
+      "name": "pipe_045_1h_BTC_USD",
+      "sharpe": 0.837
+    },
+    {
+      "id": "cdfe63fb",
+      "name": "pipe_041_15m_BTC_USD",
+      "sharpe": 0.875
+    },
+    {
+      "id": "9aac5686",
+      "name": "pipe_033_1h_BTC_USD",
+      "sharpe": 0.544
+    },
+    {
+      "id": "341ffc56",
+      "name": "pipe_029_15m_BTC_USD",
+      "sharpe": 0.833
+    },
+    {
+      "id": "d34e33c7",
+      "name": "pipe_027_15m_ETH_USD",
+      "sharpe": 0.627
+    }
+  ]
+}
