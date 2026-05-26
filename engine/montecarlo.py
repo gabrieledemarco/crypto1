@@ -4,7 +4,8 @@ import numpy as np
 
 def run_bootstrap(pnl: np.ndarray, n_sims: int = 1000, n_bars: int | None = None,
                   initial_capital: float = 10_000,
-                  days_in_period: float = 365.0) -> dict:
+                  days_in_period: float = 365.0,
+                  ann_factor: int = 8760) -> dict:
     """Bootstrap Monte Carlo simulation.
 
     n_bars: trades per simulation path; defaults to len(pnl) when None/0.
@@ -36,7 +37,7 @@ def run_bootstrap(pnl: np.ndarray, n_sims: int = 1000, n_bars: int | None = None
     pct_rets = (eq_curr - eq_prev) / np.where(eq_prev > 0, eq_prev, 1e-8)
     ret_mean = pct_rets.mean(axis=1)
     ret_std  = pct_rets.std(axis=1)
-    sharpe_arr = np.where(ret_std > 0, ret_mean / ret_std * np.sqrt(24 * 365), 0.0)
+    sharpe_arr = np.where(ret_std > 0, ret_mean / ret_std * np.sqrt(ann_factor), 0.0)
     win_rates = (sim > 0).mean(axis=1) * 100  # per-simulation win-rate distribution
 
     sorted_finals = np.sort(final)

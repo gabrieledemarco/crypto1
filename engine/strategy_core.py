@@ -344,8 +344,16 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
 
     ret_s = equity.pct_change().dropna()
 
-    # ── quantstats risk metrics (hourly annualisation = 24*365) ───────────────
-    _PERIODS = 24 * 365
+    # ── annualisation factor: infer from equity timestamp spacing ─────────────
+    _PERIODS = 24 * 365  # fallback: 1h
+    if len(equity) >= 2:
+        try:
+            freq_secs = (equity.index[1] - equity.index[0]).total_seconds()
+            if freq_secs > 0:
+                _PERIODS = max(1, int(round(365 * 24 * 3600 / freq_secs)))
+        except Exception:
+            pass
+
     try:
         import quantstats as qs
         cagr = float(qs.stats.cagr(ret_s)) * 100
