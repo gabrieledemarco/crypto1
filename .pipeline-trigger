@@ -1,16 +1,19 @@
 {
   "tickers": [
-    "BTC-USD",
-    "ETH-USD",
-    "SOL-USD"
+    "EURUSD=X",
+    "GBPUSD=X",
+    "USDJPY=X",
+    "AUDUSD=X",
+    "USDCHF=X"
   ],
   "timeframes": [
-    "1h",
-    "4h"
+    "1m",
+    "15m",
+    "1h"
   ],
-  "max_iter": 8,
-  "stop_sharpe": 1.0,
-  "max_dd": 25.0,
+  "max_iter": 48,
+  "stop_sharpe": 1.5,
+  "max_dd": 15.0,
   "iter_offset": 0,
-  "triggered_at": "2026-05-26T11:40:01.447761+00:00"
+  "triggered_at": "2026-05-27T00:00:00Z"
 }
