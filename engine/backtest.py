@@ -48,17 +48,18 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
     sl   = cfg.get("sl_mult", 2.0)
     tp   = cfg.get("tp_mult", 5.0)
     hrs  = tuple(cfg.get("active_hours", [6, 22]))
-    comm = cfg.get("commission", 0.0004)
-    slip = cfg.get("slippage",   0.0001)
+    comm = cfg.get("commission_pips", 1.0)
+    slip = cfg.get("slippage_pips",   0.5)
     risk = cfg.get("risk_per_trade", 0.01)
+    lvg  = cfg.get("leverage", 1.0)
     max_pos  = int(cfg.get("max_positions", 1))
     cooldown = int(cfg.get("cooldown_bars", 0))
 
     results = {}
     versions = [
-        ("V1 Base",         {"use_garch_filter": False, "commission": 0.0,   "slippage": 0.0}),
-        ("V2 +Costi",       {"use_garch_filter": False, "commission": comm,  "slippage": slip}),
-        ("V4 +GARCH+Costi", {"use_garch_filter": True,  "commission": comm,  "slippage": slip}),
+        ("V1 Base",         {"use_garch_filter": False, "commission_pips": 0.0,  "slippage_pips": 0.0}),
+        ("V2 +Costi",       {"use_garch_filter": False, "commission_pips": comm, "slippage_pips": slip}),
+        ("V4 +GARCH+Costi", {"use_garch_filter": True,  "commission_pips": comm, "slippage_pips": slip}),
     ]
     for i, (name, vcfg) in enumerate(versions):
         if progress_cb:
@@ -68,8 +69,9 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
                                     use_garch_filter=vcfg["use_garch_filter"])
         df_s = _apply_direction_filter(df_s, direction)
         res  = backtest_v2(df_s, INITIAL_CAPITAL, risk,
-                           commission=vcfg["commission"], slippage=vcfg["slippage"],
-                           max_positions=max_pos, cooldown_bars=cooldown)
+                           commission_pips=vcfg["commission_pips"],
+                           slippage_pips=vcfg["slippage_pips"],
+                           max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg)
         results[name] = {"result": res, "metrics": compute_metrics(res, INITIAL_CAPITAL)}
 
     # V_Agent: use provided agent_fn if any
@@ -85,8 +87,9 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
             _call_args  = (df_ind, _ind) if len(_sig_params) >= 2 else (df_ind,)
             df_a = _apply_cfg_overrides(_apply_direction_filter(agent_fn(*_call_args), direction),
                                          sl, tp, hrs)
-            res_a = backtest_v2(df_a, INITIAL_CAPITAL, risk, commission=comm, slippage=slip,
-                                max_positions=max_pos, cooldown_bars=cooldown)
+            res_a = backtest_v2(df_a, INITIAL_CAPITAL, risk,
+                                commission_pips=comm, slippage_pips=slip,
+                                max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg)
             results["V_Agent"] = {"result": res_a, "metrics": compute_metrics(res_a, INITIAL_CAPITAL)}
         except Exception as exc:
             results["V_Agent"] = {"error": str(exc)}
@@ -117,7 +120,7 @@ def _best_params_on_is(
             )
             df_s = _apply_direction_filter(df_s, direction)
             res  = backtest_v2(df_s, INITIAL_CAPITAL, 0.01,
-                               commission=0.0, slippage=0.0)
+                               commission_pips=0.0, slippage_pips=0.0)
             sharpe = compute_metrics(res, INITIAL_CAPITAL).get("sharpe_ratio", float("-inf"))
             if sharpe > best_sharpe:
                 best_sharpe, best_sl, best_tp = sharpe, sl_c, tp_c
@@ -138,9 +141,10 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
         ``best_sl`` / ``best_tp`` columns to the result.
         When False (default) behaviour is identical to the original implementation.
     """
-    comm = cfg.get("commission", 0.0004)
-    slip = cfg.get("slippage",   0.0001)
+    comm = cfg.get("commission_pips", 1.0)
+    slip = cfg.get("slippage_pips",   0.5)
     risk = cfg.get("risk_per_trade", 0.01)
+    lvg  = cfg.get("leverage", 1.0)
     sl   = cfg.get("sl_mult", 2.0)
     tp   = cfg.get("tp_mult", 5.0)
     hrs  = tuple(cfg.get("active_hours", [6, 22]))
@@ -191,7 +195,7 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
                 fold_sl, fold_tp, hrs,
             )
             res_is = backtest_v2(df_is,  INITIAL_CAPITAL, risk, comm, slip,
-                                 max_positions=max_pos, cooldown_bars=cooldown)
+                                 max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg)
             m_is   = compute_metrics(res_is, INITIAL_CAPITAL)
 
             df_os  = _apply_cfg_overrides(
@@ -199,7 +203,7 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
                 fold_sl, fold_tp, hrs,
             )
             res_os = backtest_v2(df_os, INITIAL_CAPITAL, risk, comm, slip,
-                                 max_positions=max_pos, cooldown_bars=cooldown)
+                                 max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg)
             m_os   = compute_metrics(res_os, INITIAL_CAPITAL)
 
             row: dict = {
@@ -232,9 +236,10 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
 def run_optimization(df_ind: pd.DataFrame, cfg: dict,
                       progress_cb=None) -> pd.DataFrame:
     """Grid-search SL/TP/hours. Returns sorted DataFrame."""
-    comm = cfg.get("commission", 0.0004)
-    slip = cfg.get("slippage",   0.0001)
+    comm = cfg.get("commission_pips", 1.0)
+    slip = cfg.get("slippage_pips",   0.5)
     risk = cfg.get("risk_per_trade", 0.01)
+    lvg  = cfg.get("leverage", 1.0)
 
     SL_RANGE = [1.0, 1.5, 2.0, 2.5, 3.0]
     TP_RANGE = [2.0, 3.0, 4.0, 5.0, 7.0]
@@ -247,7 +252,7 @@ def run_optimization(df_ind: pd.DataFrame, cfg: dict,
             progress_cb("sweep", int(idx / len(combos) * 100))
         df_s = generate_signals_v2(df_ind, atr_mult_sl=sl, atr_mult_tp=tp,
                                     active_hours=h, use_garch_filter=True)
-        res  = backtest_v2(df_s, INITIAL_CAPITAL, risk, comm, slip)
+        res  = backtest_v2(df_s, INITIAL_CAPITAL, risk, comm, slip, leverage=lvg)
         m    = compute_metrics(res, INITIAL_CAPITAL)
         rows.append({
             "sl_mult":          sl,
