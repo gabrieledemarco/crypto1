@@ -46,6 +46,10 @@ from api.strategies import get_archetype   # always available: COPY api/ ./api/
 router = APIRouter()
 _queues: dict[str, asyncio.Queue] = {}
 
+# Minimum Sharpe for a strategy to be classified ROBUST, independent of stop_sharpe.
+# stop_sharpe controls early exit; _ROBUST_MIN_SHARPE controls classification.
+_ROBUST_MIN_SHARPE = 1.0
+
 _TF_NORM = {
     "1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m",
     "1h": "1h", "4h": "4h", "1d": "1d",
@@ -221,7 +225,7 @@ def _sync_pipeline(body: PipelineRequest, push):
             mc_ok     = (mc.get("p_profit", 0.0) >= 0.55          # majority of MC paths profitable
                          and mc.get("p_ruin", 1.0) < 0.01         # prob(ruin) < 1%
                          and drift_ok)
-            verdict = ("ROBUST" if sharpe >= body.stop_sharpe and dd_ok and mc_ok
+            verdict = ("ROBUST" if sharpe >= _ROBUST_MIN_SHARPE and dd_ok and mc_ok
                        else "marginal" if sharpe >= 0 else "failed")
 
             push({
@@ -252,7 +256,8 @@ def _sync_pipeline(body: PipelineRequest, push):
                       "dd": round(dd, 2), "log": log})
                 summary.append({"ticker": ticker, "verdict": "ROBUST", "sid": sid,
                                  "tf": tf, "sharpe": round(sharpe, 3), "dd": round(dd, 2)})
-                break
+                if sharpe >= body.stop_sharpe:
+                    break
         else:
             if best_sid:
                 _promote(best_sid, "marginal")
