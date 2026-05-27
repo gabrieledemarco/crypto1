@@ -1,9 +1,9 @@
 {
   "min_sharpe": 1.0,
   "status": "complete",
-  "total": 80,
-  "deleted": 0,
-  "kept": 80,
+  "total": 273,
+  "deleted": 187,
+  "kept": 86,
   "kept_strategies": [
     {
       "id": "434b19b5",
@@ -404,6 +404,36 @@
       "id": "c6f48d33",
       "name": "pipe_041_1m_USDCHF=X",
       "sharpe": 2.04
+    },
+    {
+      "id": "4288ad12",
+      "name": "pipe_039_15m_EURUSD=X",
+      "sharpe": 1.449
+    },
+    {
+      "id": "ea37cdf2",
+      "name": "pipe_051_15m_EURUSD=X",
+      "sharpe": 2.055
+    },
+    {
+      "id": "a7214acf",
+      "name": "pipe_002_5m_GBPUSD=X",
+      "sharpe": 1.638
+    },
+    {
+      "id": "41bce667",
+      "name": "pipe_039_15m_USDCHF=X",
+      "sharpe": 3.881
+    },
+    {
+      "id": "02ff74a8",
+      "name": "pipe_038_5m_USDJPY=X",
+      "sharpe": 1.128
+    },
+    {
+      "id": "0812d3dd",
+      "name": "pipe_041_5m_USDJPY=X",
+      "sharpe": 1.79
     }
   ],
   "error": null
