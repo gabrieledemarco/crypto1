@@ -44,6 +44,61 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Force deploy to Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import urllib.request, json, os, sys
+          token = os.environ.get("RAILWAY_TOKEN", "")
+          if not token:
+              print("RAILWAY_TOKEN not set — skipping force deploy")
+              sys.exit(0)
+          gql_url = "https://backboard.railway.app/graphql/v2"
+          def gql(query):
+              body = json.dumps({"query": query}).encode()
+              req = urllib.request.Request(gql_url, data=body, method="POST", headers={
+                  "Authorization": f"Bearer {token}",
+                  "Content-Type": "application/json",
+              })
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      return json.loads(r.read())
+              except Exception as e:
+                  print(f"GQL error: {e}")
+                  return {}
+          resp = gql("{ me { projects { edges { node { id name environments { edges { node { id name } } } services { edges { node { id name } } } } } } } }")
+          project_id = service_id = env_id = None
+          for p in resp.get("data", {}).get("me", {}).get("projects", {}).get("edges", []):
+              node = p["node"]
+              for s in node.get("services", {}).get("edges", []):
+                  if s["node"]["name"].lower() == "api":
+                      project_id = node["id"]
+                      service_id = s["node"]["id"]
+                      envs = node.get("environments", {}).get("edges", [])
+                      env_id = next(
+                          (e["node"]["id"] for e in envs if "prod" in e["node"]["name"].lower()),
+                          envs[0]["node"]["id"] if envs else None
+                      )
+                      print(f"Found: project={project_id} service={service_id} env={env_id}")
+                      break
+              if project_id:
+                  break
+          if not project_id:
+              print("WARNING: Could not find 'api' service via GQL")
+          gh_env = os.environ.get("GITHUB_ENV", "")
+          if gh_env:
+              with open(gh_env, "a") as f:
+                  if project_id: f.write(f"RAILWAY_PROJECT_ID={project_id}\n")
+                  if env_id:     f.write(f"RAILWAY_ENVIRONMENT_ID={env_id}\n")
+                  if service_id: f.write(f"RAILWAY_SERVICE_ID={service_id}\n")
+          PYEOF
+          bash <(curl -fsSL https://railway.com/install.sh) -y 2>/dev/null || npm install -g @railway/cli --silent 2>&1 | tail -2
+          echo "Running: railway up --service api --detach"
+          railway up --service api --detach -m "CI: pip_size fix deploy" || true
+          echo "Waiting 90s for Railway build to start..."
+          sleep 90
+
       - name: Build request payload
         id: params
         run: |
@@ -73,23 +128,17 @@ jobs:
           PYEOF
 
       - name: Wait for Railway health
-        if: github.event_name == 'push'
         env:
           API_BASE: "https://illustrious-inspiration-production.up.railway.app"
         run: |
-          echo "Polling until Railway /health returns 200 (max 25 min)..."
-          READY=false
+          echo "Polling /health until 200 (max 25 min)..."
           for i in $(seq 1 25); do
-            health=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$API_BASE/health" 2>/dev/null || echo "000")
-            echo "Attempt $i/25: health=$health"
-            if [ "$health" = "200" ]; then
-              echo "Railway is ready!"
-              READY=true
-              break
-            fi
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$API_BASE/health" 2>/dev/null || echo "000")
+            echo "  [$i/25] health=$CODE"
+            [ "$CODE" = "200" ] && { echo "Railway is ready!"; break; }
             sleep 60
           done
-          [ "$READY" = "true" ] || echo "WARNING: Railway not fully ready, attempting anyway..."
+          echo "Proceeding to pipeline..."
 
       - name: Start pipeline job on Railway
         id: start
@@ -131,7 +180,6 @@ jobs:
           cat > /tmp/stream_events.py << 'PYEOF'
           import sys, json
 
-          summary = None
           log_lines = []
 
           for raw in sys.stdin:
@@ -148,28 +196,22 @@ jobs:
                   tfs = evt.get("timeframes", [])
                   n_per_tf = int(evt.get("max_iter", 0)) // max(len(tfs), 1)
                   line = f"[start] tickers={evt['tickers']} timeframes={tfs} max_iter={evt.get('max_iter')} (~{n_per_tf} iters/TF) stop_sharpe={evt.get('stop_sharpe')} max_dd={evt.get('max_dd')}%"
-                  print(line, flush=True)
-                  log_lines.append(line)
+                  print(line, flush=True); log_lines.append(line)
               elif t == "ticker_start":
                   line = f"\n[{evt['idx']}/{evt['total']}] {evt['ticker']}"
-                  print(line, flush=True)
-                  log_lines.append(line)
+                  print(line, flush=True); log_lines.append(line)
               elif t == "downloading":
                   line = f"  -> download {evt['ticker']} {evt['tf']} ({evt['period']})"
-                  print(line, flush=True)
-                  log_lines.append(line)
+                  print(line, flush=True); log_lines.append(line)
               elif t == "download_done":
                   line = f"  -> OK {evt['ticker']} {evt['tf']}: {evt['bars']:,} bars  {evt['start']} -> {evt['end']}"
-                  print(line, flush=True)
-                  log_lines.append(line)
+                  print(line, flush=True); log_lines.append(line)
               elif t == "download_error":
                   line = f"  -> FAIL {evt['ticker']} {evt['tf']}: {evt['msg']}"
-                  print(line, flush=True)
-                  log_lines.append(line)
+                  print(line, flush=True); log_lines.append(line)
               elif t == "iter_start":
                   line = f"  [{evt['iter']:>3}] {evt['tf']:<4} arch={evt['arch']}"
-                  print(line, flush=True)
-                  log_lines.append(line)
+                  print(line, flush=True); log_lines.append(line)
               elif t == "iter_done":
                   verdict = evt['verdict']
                   star = " ***ROBUST***" if verdict == "ROBUST" else (" ." if verdict == "marginal" else "")
@@ -177,22 +219,18 @@ jobs:
                   p_ruin = evt.get('mc_p_ruin')
                   ruin_str = f"  p_ruin={p_ruin:.3f}" if p_ruin is not None else ""
                   line = f"         Sharpe={evt['sharpe']:+.3f}  DD={evt['dd']:+.1f}%  N={evt['n_trades']}  WR={evt['win_rate']:.1f}%  drift={drift_val:+.4f}{ruin_str}  [{verdict}]{star}"
-                  print(line, flush=True)
-                  log_lines.append(line)
+                  print(line, flush=True); log_lines.append(line)
               elif t == "iter_error":
                   line = f"  [{evt['iter']:>3}] ERROR: {evt['msg']}"
-                  print(line, flush=True)
-                  log_lines.append(line)
+                  print(line, flush=True); log_lines.append(line)
               elif t == "ticker_done":
                   v = evt['verdict']
                   if v == "ROBUST":
                       line = f"  SAVED -> Library  sid={evt['sid']}  {evt.get('tf','')}  Sharpe={evt['sharpe']}  DD={evt['dd']}%"
                   else:
                       line = f"  Best: Sharpe={evt.get('sharpe')}  ({v})"
-                  print(line, flush=True)
-                  log_lines.append(line)
+                  print(line, flush=True); log_lines.append(line)
               elif t == "complete":
-                  summary = evt
                   lines = [
                       "\nPIPELINE COMPLETE",
                       f"  Tickers processed : {evt['total_tickers']}",
@@ -204,16 +242,13 @@ jobs:
                       tf   = s.get("tf") or "?"
                       lines.append(f"{flag} {s['ticker']:<12} {tf:<5} {sh:>+8.3f}  {s['verdict']}")
                   for l in lines:
-                      print(l, flush=True)
-                      log_lines.append(l)
-                  # write result file
+                      print(l, flush=True); log_lines.append(l)
                   with open("/tmp/pipeline_out/result.json", "w") as f:
                       json.dump({"status": "complete", "summary": evt.get("summary", []), "log": log_lines}, f, indent=2)
                   break
               elif t == "error":
                   line = f"\nPIPELINE ERROR: {evt['msg']}"
-                  print(line, flush=True)
-                  log_lines.append(line)
+                  print(line, flush=True); log_lines.append(line)
                   with open("/tmp/pipeline_out/result.json", "w") as f:
                       json.dump({"status": "error", "msg": evt['msg'], "log": log_lines}, f, indent=2)
                   sys.exit(1)
