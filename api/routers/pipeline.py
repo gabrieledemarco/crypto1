@@ -296,7 +296,7 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
         "ticker": ticker, "timeframe": tf,
         "sl_mult": sl_used, "tp_mult": tp_used,
         "active_hours": _ACTIVE_HOURS.get(tf, [6, 22]),
-        "commission": 0.0004, "slippage": 0.0001,
+        "commission_pips": 1.0, "slippage_pips": 0.5, "leverage": 1.0,
         "risk_per_trade": 0.01, "direction": "ALL",
         "max_positions": 1, "cooldown_bars": 0,
     }

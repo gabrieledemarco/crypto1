@@ -198,17 +198,17 @@ def generate_signals_v2(df: pd.DataFrame,
 def backtest_v2(df: pd.DataFrame,
                 initial_capital: float = 10_000,
                 risk_per_trade: float = 0.01,
-                commission: float = 0.0004,   # 0.04% Binance taker fee
-                slippage: float = 0.0001,     # 0.01% market impact BTC/USDT
-                max_positions: int = 1,       # max concurrent open positions
-                cooldown_bars: int = 0,       # bars to skip entry after a SL hit
+                commission_pips: float = 1.0,   # commission in pips (absolute price units)
+                slippage_pips: float = 0.5,     # slippage in pips (absolute price units)
+                max_positions: int = 1,         # max concurrent open positions
+                cooldown_bars: int = 0,         # bars to skip entry after a SL hit
+                leverage: float = 1.0,          # position leverage multiplier
                 ) -> dict:
     """
-    Backtest event-driven 1h con:
+    Backtest event-driven con:
       - Stop Loss e Take Profit basati su ATR
-      - Commissioni e slippage su entrata + uscita
-      - Position sizing: risk_per_trade % capitale / SL_dist
-      - Leverage cap: max 3× il capitale per trade
+      - Commissioni e slippage in pips (unità assolute di prezzo)
+      - Position sizing: risk_per_trade % capitale / SL_dist, con leverage
       - Riduzione size in regime HIGH (size_mult)
       - max_positions: posizioni aperte contemporaneamente (default 1)
       - cooldown_bars: barre di pausa dopo un SL (default 0)
@@ -229,8 +229,7 @@ def backtest_v2(df: pd.DataFrame,
     times = df.index
     size_mults = df["size_mult"].values if "size_mult" in df.columns else np.ones(len(df))
 
-    cost_rate = commission + slippage  # costo per lato (entrata o uscita)
-    max_leverage = 3.0                 # cap: notionale max 3× capitale
+    cost_pips = commission_pips + slippage_pips  # total pips per side
 
     for i in range(len(df)):
         # ── 1. Process exits for all open positions ────────────────────────────
@@ -256,9 +255,11 @@ def backtest_v2(df: pd.DataFrame,
 
             if exit_price is not None:
                 gross_pnl = d * pos["qty"] * (exit_price - pos["entry_price"])
-                exit_cost = exit_price * pos["qty"] * cost_rate
+                exit_cost = pos["qty"] * cost_pips
                 pnl = gross_pnl - exit_cost
                 capital += pnl
+                notional = pos["entry_price"] * pos["qty"]
+                log_ret = float(np.log1p(pnl / notional)) if notional > 0 else 0.0
                 trades.append({
                     "entry_time":  pos["entry_time"],
                     "exit_time":   times[i],
@@ -269,7 +270,7 @@ def backtest_v2(df: pd.DataFrame,
                     "gross_pnl":   gross_pnl,
                     "costs":       pos["entry_cost"] + exit_cost,
                     "pnl":         pnl,
-                    "pnl_pct":     pnl / (pos["entry_price"] * pos["qty"]) * 100 if pos["qty"] > 0 else 0,
+                    "pnl_pct":     log_ret * 100,
                     "exit_reason": exit_reason,
                 })
                 closed_idxs.append(j)
@@ -293,10 +294,10 @@ def backtest_v2(df: pd.DataFrame,
             if sl_d > 0 and sm > 0:
                 risk_amount = capital * risk_per_trade * sm
                 qty = risk_amount / sl_d
-                max_qty = (capital * max_leverage) / ep
+                max_qty = (capital * leverage) / ep if ep > 0 else 0.0
                 qty = min(qty, max_qty)
 
-                entry_cost = ep * qty * cost_rate
+                entry_cost = qty * cost_pips
                 capital -= entry_cost
 
                 sl_price = ep - sl_d if dir_new == 1 else ep + sl_d
@@ -342,7 +343,7 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
     pf = wins["pnl"].sum() / abs(losses["pnl"].sum()) \
          if len(losses) > 0 and losses["pnl"].sum() != 0 else np.inf
 
-    ret_s = equity.pct_change().dropna()
+    ret_s = np.log(equity / equity.shift(1)).dropna()
 
     # ── annualisation factor: infer from equity timestamp spacing ─────────────
     _PERIODS = 24 * 365  # fallback: 1h
