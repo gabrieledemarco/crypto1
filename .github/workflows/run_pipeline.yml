@@ -274,3 +274,44 @@ jobs:
           else
             echo "No result file found — pipeline did not complete."
           fi
+
+  cleanup:
+    name: Cleanup Library (Sharpe < 1)
+    runs-on: ubuntu-latest
+    needs: pipeline
+    if: always()
+    timeout-minutes: 30
+    env:
+      API_BASE: "https://illustrious-inspiration-production.up.railway.app"
+      MIN_SHARPE: "1.0"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Delete strategies with Sharpe < 1
+        run: python3 scripts/cleanup_library.py
+
+      - name: Commit cleanup result
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f /tmp/cleanup_result.json ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+            git pull --rebase origin master || true
+            cp /tmp/cleanup_result.json library-cleanup-result.json
+            git add library-cleanup-result.json
+            git diff --cached --quiet || git commit -m "ci: library cleanup — kept profitable strategies $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin HEAD:master || echo "Push failed"
+          else
+            echo "No cleanup result file — script did not complete."
+          fi
