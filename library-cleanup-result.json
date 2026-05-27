@@ -1,9 +1,9 @@
 {
-  "min_sharpe": 1.0,
+  "min_sharpe": 1.65,
   "status": "complete",
-  "total": 1627,
-  "deleted": 1525,
-  "kept": 102,
+  "total": 102,
+  "deleted": 23,
+  "kept": 79,
   "kept_strategies": [
     {
       "id": "434b19b5",
@@ -21,39 +21,9 @@
       "sharpe": 1.994
     },
     {
-      "id": "6d8bc5c3",
-      "name": "pipe_038_15m_ETH_USD",
-      "sharpe": 1.533
-    },
-    {
-      "id": "311677e5",
-      "name": "pipe_026_15m_SOL_USD",
-      "sharpe": 1.506
-    },
-    {
-      "id": "68de1634",
-      "name": "pipe_026_15m_SOL_USD",
-      "sharpe": 1.506
-    },
-    {
       "id": "832f850e",
       "name": "pipe_020_4h_BTC_USD",
       "sharpe": 1.727
-    },
-    {
-      "id": "f9852dc0",
-      "name": "pipe_002_4h_ETH_USD",
-      "sharpe": 1.31
-    },
-    {
-      "id": "46da4bd9",
-      "name": "pipe_038_15m_ETH_USD",
-      "sharpe": 1.533
-    },
-    {
-      "id": "65e70424",
-      "name": "pipe_038_15m_SOL_USD",
-      "sharpe": 1.55
     },
     {
       "id": "09060088",
@@ -71,69 +41,14 @@
       "sharpe": 1.689
     },
     {
-      "id": "7da415be",
-      "name": "pipe_053_15m_SOL_USD",
-      "sharpe": 1.241
-    },
-    {
-      "id": "f9aa8268",
-      "name": "pipe_014_4h_GBPUSD=X",
-      "sharpe": 1.028
-    },
-    {
-      "id": "2617d587",
-      "name": "pipe_065_15m_ETH_USD",
-      "sharpe": 1.422
-    },
-    {
       "id": "90fe1389",
       "name": "pipe_077_15m_BTC_USD",
       "sharpe": 2.574
     },
     {
-      "id": "d580abdc",
-      "name": "pipe_077_15m_ETH_USD",
-      "sharpe": 1.298
-    },
-    {
-      "id": "865b404c",
-      "name": "pipe_089_15m_SOL_USD",
-      "sharpe": 1.106
-    },
-    {
-      "id": "c913b404",
-      "name": "pipe_095_15m_SOL_USD",
-      "sharpe": 1.232
-    },
-    {
-      "id": "f1f508ba",
-      "name": "pipe_146_15m_SOL_USD",
-      "sharpe": 1.505
-    },
-    {
-      "id": "2e3ab3bf",
-      "name": "pipe_008_4h_ETH_USD",
-      "sharpe": 1.027
-    },
-    {
-      "id": "63f7a598",
-      "name": "pipe_008_4h_ETH_USD",
-      "sharpe": 1.027
-    },
-    {
-      "id": "29a5ddd1",
-      "name": "pipe_008_4h_ETH_USD",
-      "sharpe": 1.027
-    },
-    {
       "id": "6885c835",
       "name": "pipe_039_15m_BTC_USD",
       "sharpe": 3.785
-    },
-    {
-      "id": "2ee8768c",
-      "name": "pipe_039_15m_ETH_USD",
-      "sharpe": 1.466
     },
     {
       "id": "7666c908",
@@ -466,21 +381,6 @@
       "sharpe": 12.921
     },
     {
-      "id": "6fb077f2",
-      "name": "pipe_041_15m_EURUSD=X",
-      "sharpe": 1.249
-    },
-    {
-      "id": "40d2862a",
-      "name": "pipe_047_15m_GBPUSD=X",
-      "sharpe": 1.196
-    },
-    {
-      "id": "f86f573c",
-      "name": "pipe_048_1h_GBPUSD=X",
-      "sharpe": 1.205
-    },
-    {
       "id": "3c65ee6f",
       "name": "pipe_002_15m_AUDUSD=X",
       "sharpe": 1.692
@@ -489,21 +389,6 @@
       "id": "2169bbcf",
       "name": "pipe_029_15m_USDCHF=X",
       "sharpe": 1.672
-    },
-    {
-      "id": "97d8ceda",
-      "name": "pipe_041_15m_EURUSD=X",
-      "sharpe": 1.249
-    },
-    {
-      "id": "7a764ec1",
-      "name": "pipe_047_15m_GBPUSD=X",
-      "sharpe": 1.388
-    },
-    {
-      "id": "55b764ce",
-      "name": "pipe_048_1h_GBPUSD=X",
-      "sharpe": 1.211
     },
     {
       "id": "695b5fea",
