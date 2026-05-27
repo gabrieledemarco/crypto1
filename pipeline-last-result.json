@@ -4,7 +4,7 @@
     {
       "ticker": "AUDUSD=X",
       "verdict": "none",
-      "sid": "b33e6c5b",
+      "sid": "dd5f3723",
       "tf": "15m",
       "sharpe": -3.922
     }
@@ -13,7 +13,7 @@
     "[start] tickers=['AUDUSD=X'] timeframes=['15m'] max_iter=1 (~1 iters/TF) stop_sharpe=-999.0 max_dd=100.0%",
     "\n[1/1] AUDUSD=X",
     "  -> download AUDUSD=X 15m (60d)",
-    "  -> OK AUDUSD=X 15m: 5,613 bars  2026-03-05 -> 2026-05-27",
+    "  -> OK AUDUSD=X 15m: 5,614 bars  2026-03-05 -> 2026-05-27",
     "  [  1] 15m  arch=ema_cross_fast",
     "         Sharpe=-3.922  DD=-3.6%  N=88  WR=36.4%  drift=-1.4844  p_ruin=0.000  [failed]",
     "  Best: Sharpe=-3.922  (none)",
