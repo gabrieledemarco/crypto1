@@ -229,7 +229,12 @@ def backtest_v2(df: pd.DataFrame,
     times = df.index
     size_mults = df["size_mult"].values if "size_mult" in df.columns else np.ones(len(df))
 
-    cost_pips = commission_pips + slippage_pips  # total pips per side
+    # Convert pips → absolute price units.
+    # Forex: price < 10  → pip = 0.0001 (EUR/USD, GBP/USD, AUD/USD, USD/CHF…)
+    #        price >= 10 → pip = 0.01   (USD/JPY and high-price instruments)
+    sample_price = float(prices[prices > 0][0]) if np.any(prices > 0) else 1.0
+    pip_size = 0.01 if sample_price >= 10.0 else 0.0001
+    cost_per_unit = (commission_pips + slippage_pips) * pip_size
 
     for i in range(len(df)):
         # ── 1. Process exits for all open positions ────────────────────────────
@@ -255,7 +260,7 @@ def backtest_v2(df: pd.DataFrame,
 
             if exit_price is not None:
                 gross_pnl = d * pos["qty"] * (exit_price - pos["entry_price"])
-                exit_cost = pos["qty"] * cost_pips
+                exit_cost = pos["qty"] * cost_per_unit
                 pnl = gross_pnl - exit_cost
                 capital += pnl
                 notional = pos["entry_price"] * pos["qty"]
@@ -285,7 +290,8 @@ def backtest_v2(df: pd.DataFrame,
             cooldown_remaining -= 1
 
         # ── 3. Open new position if slot available and no cooldown ────────────
-        if len(open_positions) < max_positions and signals[i] != 0 and cooldown_remaining == 0:
+        if (len(open_positions) < max_positions and signals[i] != 0
+                and cooldown_remaining == 0 and capital > 0):
             dir_new = int(signals[i])
             ep = prices[i]
             sl_d = sl_dists[i]
@@ -297,7 +303,7 @@ def backtest_v2(df: pd.DataFrame,
                 max_qty = (capital * leverage) / ep if ep > 0 else 0.0
                 qty = min(qty, max_qty)
 
-                entry_cost = qty * cost_pips
+                entry_cost = qty * cost_per_unit
                 capital -= entry_cost
 
                 sl_price = ep - sl_d if dir_new == 1 else ep + sl_d
@@ -343,7 +349,9 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
     pf = wins["pnl"].sum() / abs(losses["pnl"].sum()) \
          if len(losses) > 0 and losses["pnl"].sum() != 0 else np.inf
 
-    ret_s = np.log(equity / equity.shift(1)).dropna()
+    equity_safe = equity.clip(lower=1e-10)
+    ret_s = np.log(equity_safe / equity_safe.shift(1)).dropna()
+    ret_s = ret_s.replace([np.inf, -np.inf], np.nan).dropna()
 
     # ── annualisation factor: infer from equity timestamp spacing ─────────────
     _PERIODS = 24 * 365  # fallback: 1h
