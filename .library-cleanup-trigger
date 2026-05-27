@@ -1,5 +1,5 @@
 {
-  "min_sharpe": 1.65,
-  "reason": "purge suspect strategies from broken pip_size model — keep only corrected-model ROBUST strategies",
-  "triggered_at": "2026-05-27T14:11:00Z"
+  "min_sharpe": 1.0,
+  "reason": "align cleanup threshold with _ROBUST_MIN_SHARPE=1.0 — keep all genuinely ROBUST strategies",
+  "triggered_at": "2026-05-27T18:30:00Z"
 }
