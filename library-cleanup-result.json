@@ -1,8 +1,8 @@
 {
   "min_sharpe": 1.65,
   "status": "complete",
-  "total": 102,
-  "deleted": 23,
+  "total": 197,
+  "deleted": 118,
   "kept": 79,
   "kept_strategies": [
     {
