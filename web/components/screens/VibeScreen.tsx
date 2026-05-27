@@ -20,7 +20,7 @@ interface SavedStrategy {
   id: string;
   name: string;
   config: StrategyConfig;
-  code: string;
+  has_code?: boolean;
 }
 
 const CONFIG_LABELS: Record<string, string> = {
@@ -115,7 +115,7 @@ export function VibeScreen() {
   const fetchStrategies = () => {
     fetch("/api/strategies")
       .then((r) => r.json())
-      .then((data: SavedStrategy[]) => setStrategies(data.filter((s) => s.code)))
+      .then((data: SavedStrategy[]) => setStrategies(data.filter((s) => s.has_code)))
       .catch(() => {});
   };
 
@@ -255,14 +255,28 @@ export function VibeScreen() {
     }
   };
 
-  const handleLoad = () => {
+  const handleLoad = async () => {
     const s = strategies.find((s) => s.id === selectedStratId);
     if (!s) return;
-    setConfig(s.config);
-    setCode(s.code);
+    try {
+      const res = await fetch(`/api/strategies/${s.id}`);
+      if (res.ok) {
+        const full = await res.json();
+        setConfig(full.config ?? s.config);
+        setCode(full.code || null);
+        setOutputTab(full.code ? "code" : "explanation");
+      } else {
+        setConfig(s.config);
+        setCode(null);
+        setOutputTab("explanation");
+      }
+    } catch {
+      setConfig(s.config);
+      setCode(null);
+      setOutputTab("explanation");
+    }
     setText("");
     setShowSaveInput(false);
-    setOutputTab(s.code ? "code" : "explanation");
     setToast(`Loaded: ${s.name}`);
   };
 
