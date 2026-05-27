@@ -1,5 +1,5 @@
 {
   "min_sharpe": 1.0,
   "reason": "post-forex-pipeline cleanup — keep only strategies with Sharpe >= 1",
-  "triggered_at": "2026-05-27T12:15:00Z"
+  "triggered_at": "2026-05-27T12:30:00Z"
 }
