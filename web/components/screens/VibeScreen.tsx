@@ -185,6 +185,32 @@ export function VibeScreen() {
               setCode(ev.code ?? null);
               setGenerating(false);
               if (ev.code) setOutputTab("code");
+              // Auto-save to Library
+              if (ev.config && ev.code) {
+                const ticker = (ev.config.ticker || asset).replace(/[^a-zA-Z0-9_=-]/g, "_");
+                const tf = ev.config.timeframe || timeframe;
+                const ts = new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "h");
+                const autoName = `vibe_${ticker}_${tf}_${ts}`;
+                fetch("/api/strategies", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    name: autoName,
+                    strategy_type: "vibe",
+                    config: ev.config,
+                    code: ev.code,
+                    status: "research",
+                  }),
+                })
+                  .then((r) => r.ok ? r.json() : null)
+                  .then((data) => {
+                    if (data?.id) {
+                      setToast(`Strategy saved to Library: ${autoName} (${data.id})`);
+                      fetchStrategies();
+                    }
+                  })
+                  .catch(() => {});
+              }
             }
           } catch {
             // malformed SSE line — skip

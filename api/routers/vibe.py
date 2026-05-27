@@ -62,11 +62,11 @@ Use GARCH persistence and annualised vol to calibrate ATR multipliers: high pers
 }
 
 Field constraints:
-- ticker: one of "BTC-USD", "ETH-USD", "SOL-USD", "ARB-USD", "OP-USD", "AVAX-USD"
-- timeframe: one of "5m", "15m", "1h", "4h", "1d"
+- ticker: use exactly the ticker provided by the user (crypto: "BTC-USD", "ETH-USD", "SOL-USD", "ARB-USD", "OP-USD", "AVAX-USD"; forex: "EURUSD=X", "GBPUSD=X", "AUDUSD=X", "USDCHF=X", "USDJPY=X", or any other valid ticker)
+- timeframe: one of "1m", "5m", "15m", "1h", "4h", "1d"
 - sl_mult: 0.5 – 5.0 (ATR stop-loss multiplier for risk sizing — NOT the SL_dist value)
 - tp_mult: 1.0 – 10.0 (take-profit multiplier)
-- active_hours: [start_hour, end_hour] UTC (0-23)
+- active_hours: [start_hour, end_hour] UTC (0-23); for forex prefer [6, 22] to avoid Asian session noise; for crypto [0, 23] is fine
 - risk_per_trade: 0.1 – 3.0 (% of equity per trade)
 - direction: "ALL", "LONG", or "SHORT"
 
@@ -401,7 +401,7 @@ async def _claude_stream(body: VibeGenerateRequest):
         try:
             with client.messages.stream(
                 model="claude-opus-4-7",
-                max_tokens=2048,
+                max_tokens=4096,
                 system=effective_system,
                 messages=messages,
             ) as stream:
