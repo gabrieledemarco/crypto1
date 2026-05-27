@@ -7,6 +7,10 @@ on:
         description: "Minimum Sharpe to keep (delete below this)"
         required: false
         default: "0.5"
+  push:
+    branches: [master]
+    paths:
+      - '.library-cleanup-trigger'
 
 permissions:
   contents: write
@@ -29,7 +33,15 @@ jobs:
           import json, os, sys, urllib.request, urllib.error
 
           API_BASE  = os.environ["API_BASE"]
-          MIN_SHARPE = float("${{ github.event.inputs.min_sharpe || '0.5' }}")
+          import os as _os
+          _event = _os.environ.get("GITHUB_EVENT_NAME","workflow_dispatch")
+          if _event == "push":
+              import json as _json
+              with open(".library-cleanup-trigger") as _f:
+                  _t = _json.load(_f)
+              MIN_SHARPE = float(_t.get("min_sharpe", 0.5))
+          else:
+              MIN_SHARPE = float("${{ github.event.inputs.min_sharpe || '0.5' }}")
 
           print(f"Fetching all strategies (keeping sharpe >= {MIN_SHARPE})...")
           try:
