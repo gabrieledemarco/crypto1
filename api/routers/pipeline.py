@@ -208,7 +208,7 @@ def _sync_pipeline(body: PipelineRequest, push):
                   "tf": tf, "arch": arch_name, "effective_iter": effective_iter})
 
             try:
-                sid, sharpe, dd, n_trades, win_rate, mc = _run_iteration(
+                sid, sharpe, dd, n_trades, win_rate, mc, drift = _run_iteration(
                     ticker, tf, df, effective_iter, arch_name, sl, tp
                 )
             except Exception as exc:
@@ -216,9 +216,11 @@ def _sync_pipeline(body: PipelineRequest, push):
                       "msg": str(exc)})
                 continue
 
-            dd_ok = abs(dd) <= body.max_dd
-            # MC pass: p_profit >= 0.55 AND p_ruin < 0.15; skipped when no MC data
-            mc_ok = mc.get("p_profit", 1.0) >= 0.55 and mc.get("p_ruin", 0.0) < 0.15
+            dd_ok     = abs(dd) <= body.max_dd                    # DD < max_dd%
+            drift_ok  = drift > 0                                  # positive expected value per trade
+            mc_ok     = (mc.get("p_profit", 0.0) >= 0.55          # majority of MC paths profitable
+                         and mc.get("p_ruin", 1.0) < 0.01         # prob(ruin) < 1%
+                         and drift_ok)
             verdict = ("ROBUST" if sharpe >= body.stop_sharpe and dd_ok and mc_ok
                        else "marginal" if sharpe >= 0 else "failed")
 
@@ -230,13 +232,15 @@ def _sync_pipeline(body: PipelineRequest, push):
                 "verdict": verdict,
                 "mc_p_profit": mc.get("p_profit"),
                 "mc_p_ruin":   mc.get("p_ruin"),
+                "drift":       round(drift, 6),
             })
             log.append({"iter": iteration, "tf": tf, "arch": arch_name,
                         "sid": sid, "sharpe": sharpe, "dd": dd,
                         "n_trades": n_trades, "win_rate": win_rate,
                         "verdict": verdict,
                         "mc_p_profit": mc.get("p_profit"),
-                        "mc_p_ruin":   mc.get("p_ruin")})
+                        "mc_p_ruin":   mc.get("p_ruin"),
+                        "drift":       round(drift, 6)})
 
             if sharpe > best_sharpe:
                 best_sharpe, best_sid, best_tf = sharpe, sid, tf
@@ -334,23 +338,31 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
     n_trades = int(m.get("n_trades", 0) or 0)
     win_rate = float(m.get("win_rate_pct", 0) or 0)
 
-    # ── Monte Carlo simulation (200 paths — lightweight for pipeline speed) ────
-    mc_result: dict = {}
+    # ── Drift: mean PnL per trade (positive = positive expected value) ────────
     best_res = versions.get(best_key, {}).get("result", {})
     trades_df = best_res.get("trades") if best_res else None
+    drift = 0.0
+    if trades_df is not None and not trades_df.empty:
+        try:
+            drift = float(trades_df["pnl"].mean())
+        except Exception:
+            pass
+
+    # ── Monte Carlo simulation (500 paths for reliable p_ruin estimate) ───────
+    mc_result: dict = {}
     if trades_df is not None and not trades_df.empty and len(trades_df) >= 5:
         try:
             pnl_arr = trades_df["pnl"].values.astype(float)
             ann_factor = _ANN_FACTORS.get(tf, 8760)
             days_in_period = float(max((df.index[-1] - df.index[0]).days, 1))
-            bs = run_bootstrap(pnl_arr, n_sims=200, initial_capital=INITIAL_CAPITAL,
+            bs = run_bootstrap(pnl_arr, n_sims=500, initial_capital=INITIAL_CAPITAL,
                                days_in_period=days_in_period, ann_factor=ann_factor)
             mc_result = {
                 "p_profit":      round(float((bs["final_capital"] > INITIAL_CAPITAL).mean()), 4),
                 "p_ruin":        round(float((bs["final_capital"] < INITIAL_CAPITAL * 0.5).mean()), 4),
                 "mc_sharpe_p50": round(float(np.percentile(bs["sharpe"], 50)), 3),
                 "mc_sharpe_p5":  round(float(np.percentile(bs["sharpe"], 5)), 3),
-                "n_sims":        200,
+                "n_sims":        500,
             }
         except Exception:
             pass
@@ -363,6 +375,7 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
         "dd": round(dd, 2),
         "n_trades": n_trades,
         "win_rate": round(win_rate, 1),
+        "drift":    round(drift, 6),
     }
     if mc_result:
         config["perf"]["mc_p_profit"] = mc_result.get("p_profit")
@@ -391,7 +404,7 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
             [run_id, metrics_json, "[]", "[]", "[]", "[]", mc_json],
         )
 
-    return sid, sharpe, dd, n_trades, win_rate, mc_result
+    return sid, sharpe, dd, n_trades, win_rate, mc_result, drift
 
 
 def _promote(sid: str, status: str) -> None:

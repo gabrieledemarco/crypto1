@@ -173,7 +173,10 @@ jobs:
               elif t == "iter_done":
                   verdict = evt['verdict']
                   star = " ***ROBUST***" if verdict == "ROBUST" else (" ." if verdict == "marginal" else "")
-                  line = f"         Sharpe={evt['sharpe']:+.3f}  DD={evt['dd']:+.1f}%  N={evt['n_trades']}  WR={evt['win_rate']:.1f}%  [{verdict}]{star}"
+                  drift_val = evt.get('drift', 0.0) or 0.0
+                  p_ruin = evt.get('mc_p_ruin')
+                  ruin_str = f"  p_ruin={p_ruin:.3f}" if p_ruin is not None else ""
+                  line = f"         Sharpe={evt['sharpe']:+.3f}  DD={evt['dd']:+.1f}%  N={evt['n_trades']}  WR={evt['win_rate']:.1f}%  drift={drift_val:+.4f}{ruin_str}  [{verdict}]{star}"
                   print(line, flush=True)
                   log_lines.append(line)
               elif t == "iter_error":
