@@ -1,19 +1,9 @@
 {
-  "tickers": [
-    "EURUSD=X",
-    "GBPUSD=X",
-    "USDJPY=X",
-    "AUDUSD=X",
-    "USDCHF=X"
-  ],
-  "timeframes": [
-    "1m",
-    "15m",
-    "1h"
-  ],
+  "tickers": ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCHF=X"],
+  "timeframes": ["1m", "15m", "1h"],
   "max_iter": 48,
   "stop_sharpe": 1.5,
   "max_dd": 15.0,
   "iter_offset": 0,
-  "triggered_at": "2026-05-27T03:00:00Z"
+  "triggered_at": "2026-05-27T11:18:00Z"
 }
