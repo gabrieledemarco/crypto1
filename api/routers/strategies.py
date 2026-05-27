@@ -136,3 +136,38 @@ def delete_strategy(strategy_id: str):
     conn = get_conn()
     conn.execute("DELETE FROM strategies WHERE id=?", [strategy_id])
     return {"deleted": strategy_id}
+
+
+@router.post("/prune")
+def prune_strategies(min_sharpe: float = 0.0):
+    """Delete all strategies whose config.perf.sharpe < min_sharpe.
+    Much faster than GET /strategies + N×DELETE since it's a single pass."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id, name, config FROM strategies"
+    ).fetchall()
+
+    deleted, kept = [], []
+    for sid, name, config_raw in rows:
+        cfg = {}
+        try:
+            cfg = json.loads(config_raw) if config_raw else {}
+        except Exception:
+            pass
+        sharpe = (cfg.get("perf") or {}).get("sharpe")
+        if sharpe is None:
+            sharpe = cfg.get("sharpe")
+
+        if sharpe is None or float(sharpe) < min_sharpe:
+            conn.execute("DELETE FROM strategies WHERE id=?", [sid])
+            deleted.append({"id": sid, "name": name, "sharpe": sharpe})
+        else:
+            kept.append({"id": sid, "name": name, "sharpe": sharpe})
+
+    return {
+        "min_sharpe": min_sharpe,
+        "total":   len(rows),
+        "deleted": len(deleted),
+        "kept":    len(kept),
+        "kept_strategies": kept,
+    }
