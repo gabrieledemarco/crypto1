@@ -122,14 +122,11 @@ export function LibraryScreen() {
 
     if (run.strategy_id) {
       try {
-        const res = await fetch("/api/strategies");
+        const res = await fetch(`/api/strategies/${run.strategy_id}`);
         if (res.ok) {
-          const list = await res.json();
-          const strat = list.find((s: { id: string; code?: string; config?: Record<string, unknown> }) => s.id === run.strategy_id);
-          if (strat) {
-            code = strat.code || null;
-            config = strat.config || null;
-          }
+          const strat = await res.json();
+          code = strat.code || null;
+          config = strat.config || null;
         }
       } catch { /* ignore */ }
     }

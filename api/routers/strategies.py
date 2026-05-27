@@ -12,24 +12,13 @@ router = APIRouter()
 @router.get("")
 def list_strategies():
     conn = get_conn()
-    # Join with the most-recent completed run per strategy to get live metrics
+    # Lightweight query: no code column (heavy), metrics from config.perf (set by pipeline)
     rows = conn.execute("""
-        WITH best_run AS (
-            SELECT r.strategy_id,
-                   rr.metrics,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY r.strategy_id ORDER BY rr.created_at DESC
-                   ) AS rn
-            FROM runs r
-            JOIN run_results rr ON rr.run_id = r.id
-            WHERE r.status IN ('completed', 'done')
-        )
-        SELECT s.id, s.name, s.strategy_type, s.config, s.code,
-               s.starred, s.status, s.run_ref, s.created_at,
-               br.metrics AS run_metrics
-        FROM strategies s
-        LEFT JOIN best_run br ON br.strategy_id = s.id AND br.rn = 1
-        ORDER BY s.starred DESC, s.created_at DESC
+        SELECT id, name, strategy_type, config,
+               CASE WHEN code IS NOT NULL AND length(code) > 10 THEN true ELSE false END AS has_code,
+               starred, status, run_ref, created_at
+        FROM strategies
+        ORDER BY starred DESC, created_at DESC
     """).fetchall()
 
     result = []
@@ -40,41 +29,62 @@ def list_strategies():
         except Exception:
             pass
 
-        # Extract metrics from linked run_results (best available)
-        metrics = {"sharpe": 0.0, "cagr": 0.0, "maxDD": 0.0, "pf": 0.0, "trades": 0}
-        try:
-            rm = json.loads(r[9]) if r[9] else {}
-            # run_results.metrics is a dict of version → metrics
-            best = _best_metrics(rm)
-            if best:
-                metrics = {
-                    "sharpe": round(float(best.get("sharpe_ratio", best.get("sharpe", 0)) or 0), 3),
-                    "cagr":   round(float(best.get("cagr_pct", 0) or 0), 2),
-                    "maxDD":  round(float(best.get("max_drawdown_pct", best.get("max_dd", 0)) or 0), 2),
-                    "pf":     round(float(best.get("profit_factor", 0) or 0), 2),
-                    "trades": int(best.get("n_trades", 0) or 0),
-                }
-        except Exception:
-            pass
+        # Metrics from config.perf (populated by pipeline on every saved strategy)
+        perf = cfg.get("perf") or {}
+        metrics = {
+            "sharpe": round(float(perf.get("sharpe", 0) or 0), 3),
+            "cagr":   round(float(perf.get("cagr_pct", 0) or 0), 2),
+            "maxDD":  round(float(perf.get("max_dd", 0) or 0), 2),
+            "pf":     round(float(perf.get("profit_factor", 0) or 0), 2),
+            "trades": int(perf.get("n_trades", 0) or 0),
+        }
 
         result.append({
-            # Fields the frontend LibraryEntryApi interface expects
             "id":       r[0],
             "name":     r[1],
-            "strategy": r[2] or "vibe_loop",   # strategy_type → strategy
+            "strategy": r[2] or "vibe_loop",
             "author":   "",
-            "created":  str(r[8]),              # created_at → created
+            "created":  str(r[8]),
             "tags":     _tags(cfg),
             "starred":  bool(r[5]),
             "status":   r[6] or "research",
             "metrics":  metrics,
             "desc":     "",
             "runRef":   r[7],
-            # Extra fields kept for other consumers
             "config":   cfg,
-            "code":     r[4] or "",
+            "has_code": bool(r[4]),
         })
     return result
+
+
+@router.get("/{strategy_id}")
+def get_strategy(strategy_id: str):
+    """Return full strategy including code — used when loading into Vibe/Setup."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT id, name, strategy_type, config, code, starred, status, run_ref, created_at "
+        "FROM strategies WHERE id=?",
+        [strategy_id]
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Strategy not found")
+    cfg = {}
+    try:
+        cfg = json.loads(row[3]) if row[3] else {}
+    except Exception:
+        pass
+    return {
+        "id":       row[0],
+        "name":     row[1],
+        "strategy": row[2] or "vibe_loop",
+        "config":   cfg,
+        "code":     row[4] or "",
+        "has_code": bool(row[4] and len(row[4]) > 10),
+        "starred":  bool(row[5]),
+        "status":   row[6] or "research",
+        "runRef":   row[7],
+        "created":  str(row[8]),
+    }
 
 
 def _best_metrics(metrics_dict: dict) -> dict:
