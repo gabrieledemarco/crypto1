@@ -1,0 +1,71 @@
+name: Verify Library Strategies
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Check strategies visible on Railway
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      API_BASE: "https://illustrious-inspiration-production.up.railway.app"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check /strategies endpoint
+        run: |
+          python3 << 'PYEOF'
+          import json, urllib.request, sys
+
+          API_BASE = "https://illustrious-inspiration-production.up.railway.app"
+
+          try:
+              req = urllib.request.Request(f"{API_BASE}/strategies")
+              with urllib.request.urlopen(req, timeout=20) as r:
+                  strats = json.loads(r.read())
+          except Exception as e:
+              print(f"FAILED: {e}"); sys.exit(1)
+
+          total   = len(strats)
+          live    = [s for s in strats if s.get("status") == "live"]
+          starred = [s for s in strats if s.get("starred")]
+          btc_eth = [s for s in strats if any(k in s.get("name","").upper() for k in ["BTC","ETH"])]
+
+          print(f"Total strategies : {total}")
+          print(f"Live (ROBUST)    : {len(live)}")
+          print(f"Starred          : {len(starred)}")
+          print(f"BTC/ETH entries  : {len(btc_eth)}")
+          for s in btc_eth:
+              print(f"  {s['id']}  {s['name']:<35}  status={s['status']}  starred={s['starred']}  sharpe={s['metrics']['sharpe']}")
+
+          result = {
+              "total": total, "live": len(live), "starred": len(starred),
+              "btc_eth": [{"id":s["id"],"name":s["name"],"status":s["status"],
+                           "starred":s["starred"],"sharpe":s["metrics"]["sharpe"]}
+                          for s in btc_eth],
+          }
+          with open("/tmp/verify_result.json", "w") as f:
+              json.dump(result, f, indent=2)
+          print("VERIFICATION COMPLETE")
+          PYEOF
+
+      - name: Commit verification result
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f /tmp/verify_result.json ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+            git pull --rebase origin master || true
+            cp /tmp/verify_result.json library-verify-result.json
+            git add library-verify-result.json
+            git diff --cached --quiet || git commit -m "ci: library verification $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin HEAD:master || echo "push failed"
+          fi
