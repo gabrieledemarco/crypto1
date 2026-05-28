@@ -14,7 +14,7 @@ jobs:
   verify:
     name: Check strategies visible on Railway
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       API_BASE: "https://illustrious-inspiration-production.up.railway.app"
 
@@ -23,8 +23,8 @@ jobs:
 
       - name: Wait for Railway redeploy
         run: |
-          echo "Sleeping 5 min to let Railway finish deploying..."
-          sleep 300
+          echo "Sleeping 10 min to let Railway finish deploying..."
+          sleep 600
           echo "Polling /health until 200 (max 5 min)..."
           for i in $(seq 1 10); do
             CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$API_BASE/health" 2>/dev/null || echo "000")
