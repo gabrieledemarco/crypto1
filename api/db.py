@@ -8,6 +8,9 @@ _local = threading.local()
 _schema_lock = threading.Lock()
 _schema_done = False
 
+# Schema version — bump when adding new migrations so deploys are visible in logs
+_SCHEMA_VERSION = "2"
+
 
 def get_conn() -> duckdb.DuckDBPyConnection:
     global _schema_done
