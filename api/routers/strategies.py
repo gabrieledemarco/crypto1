@@ -1,8 +1,9 @@
 """
 /strategies router — library CRUD
 """
-import json, uuid
+import json, uuid, traceback as _tb
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from api.db import get_conn
 from api.models import StrategyCreate
 
@@ -11,50 +12,61 @@ router = APIRouter()
 
 @router.get("")
 def list_strategies():
-    conn = get_conn()
-    # Lightweight query: no code column (heavy), metrics from config.perf (set by pipeline)
-    rows = conn.execute("""
-        SELECT id, name, strategy_type, config,
-               CASE WHEN code IS NOT NULL AND length(code) > 10 THEN true ELSE false END AS has_code,
-               starred, status, run_ref, created_at
-        FROM strategies
-        ORDER BY starred DESC, created_at DESC
-    """).fetchall()
+    try:
+        conn = get_conn()
+        rows = conn.execute("""
+            SELECT id, name, strategy_type, config,
+                   CASE WHEN code IS NOT NULL AND length(code) > 10 THEN true ELSE false END AS has_code,
+                   starred, status, run_ref, created_at
+            FROM strategies
+            ORDER BY starred DESC, created_at DESC
+        """).fetchall()
 
-    result = []
-    for r in rows:
-        cfg = {}
-        try:
-            cfg = json.loads(r[3]) if r[3] else {}
-        except Exception:
-            pass
+        result = []
+        for r in rows:
+            cfg = {}
+            try:
+                cfg = json.loads(r[3]) if r[3] else {}
+            except Exception:
+                pass
 
-        # Metrics from config.perf (populated by pipeline on every saved strategy)
-        perf = cfg.get("perf") or {}
-        metrics = {
-            "sharpe": round(float(perf.get("sharpe", 0) or 0), 3),
-            "cagr":   round(float(perf.get("cagr_pct", 0) or 0), 2),
-            "maxDD":  round(float(perf.get("max_dd", perf.get("dd", 0)) or 0), 2),
-            "pf":     round(float(perf.get("profit_factor", 0) or 0), 2),
-            "trades": int(perf.get("n_trades", 0) or 0),
-        }
+            perf = cfg.get("perf") or {}
 
-        result.append({
-            "id":       r[0],
-            "name":     r[1],
-            "strategy": r[2] or "vibe_loop",
-            "author":   "",
-            "created":  str(r[8]),
-            "tags":     _tags(cfg),
-            "starred":  bool(r[5]),
-            "status":   r[6] or "research",
-            "metrics":  metrics,
-            "desc":     "",
-            "runRef":   r[7],
-            "config":   cfg,
-            "has_code": bool(r[4]),
-        })
-    return result
+            def _safe_float(v, default=0.0):
+                if isinstance(v, dict):
+                    v = v.get("point", default)
+                try:
+                    return float(v or default)
+                except (TypeError, ValueError):
+                    return float(default)
+
+            metrics = {
+                "sharpe": round(_safe_float(perf.get("sharpe", 0)), 3),
+                "cagr":   round(_safe_float(perf.get("cagr_pct", 0)), 2),
+                "maxDD":  round(_safe_float(perf.get("max_dd", perf.get("dd", 0))), 2),
+                "pf":     round(_safe_float(perf.get("profit_factor", 0)), 2),
+                "trades": int(_safe_float(perf.get("n_trades", 0))),
+            }
+
+            result.append({
+                "id":       r[0],
+                "name":     r[1],
+                "strategy": r[2] or "vibe_loop",
+                "author":   "",
+                "created":  str(r[8]),
+                "tags":     _tags(cfg),
+                "starred":  bool(r[5]),
+                "status":   r[6] or "research",
+                "metrics":  metrics,
+                "desc":     "",
+                "runRef":   r[7],
+                "config":   cfg,
+                "has_code": bool(r[4]),
+            })
+        return result
+    except Exception as exc:
+        detail = _tb.format_exc()
+        return JSONResponse(status_code=500, content={"detail": detail})
 
 
 @router.get("/{strategy_id}")
