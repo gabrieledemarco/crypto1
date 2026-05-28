@@ -2,6 +2,10 @@ name: Verify Library Strategies
 
 on:
   workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - '.verify-trigger'
 
 permissions:
   contents: write
@@ -10,10 +14,22 @@ jobs:
   verify:
     name: Check strategies visible on Railway
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+    env:
+      API_BASE: "https://illustrious-inspiration-production.up.railway.app"
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Wait for Railway health
+        run: |
+          echo "Polling /health until 200 (max 8 min)..."
+          for i in $(seq 1 16); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$API_BASE/health" 2>/dev/null || echo "000")
+            echo "  [$i/16] health=$CODE"
+            [ "$CODE" = "200" ] && { echo "Railway is ready!"; break; }
+            sleep 30
+          done
 
       - name: Check /strategies endpoint
         run: |
@@ -36,7 +52,7 @@ jobs:
           # Strategies check
           try:
               req = urllib.request.Request(f"{API_BASE}/strategies")
-              with urllib.request.urlopen(req, timeout=20) as r:
+              with urllib.request.urlopen(req, timeout=30) as r:
                   strats = json.loads(r.read())
 
               total   = len(strats)
