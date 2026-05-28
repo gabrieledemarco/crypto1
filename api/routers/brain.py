@@ -10,6 +10,7 @@ GET  /brain/chunks    → list available synced chapters
 GET  /brain/query?q=  → show which chapters would be selected for a query
 """
 import json
+import os
 import re
 import requests
 from datetime import datetime
@@ -59,6 +60,15 @@ _CHAPTERS: list[tuple[str, list[str]]] = [
     ("20_reinforcement_learning", ["reinforcement learning", "RL", "Q-learning", "reward",
                                    "policy", "agent", "DQN", "PPO", "A3C"]),
     ("21_next_steps",          ["deployment", "production", "live trading", "next steps"]),
+    ("22_optimal_execution",   ["optimal execution", "implementation shortfall", "market impact",
+                                "Almgren", "Chriss", "VWAP schedule", "trading trajectory",
+                                "urgency", "liquidation", "execution cost", "slippage model",
+                                "aggressive in the money", "adaptive execution", "POV"]),
+    ("23_algorithmic_hft",     ["market making", "limit order book", "LOB", "bid ask", "spread",
+                                "HFT", "high frequency", "adverse selection", "order imbalance",
+                                "pairs trading", "cointegration", "Avellaneda", "Stoikov",
+                                "VWAP", "HJB", "stochastic control", "market microstructure",
+                                "fill probability", "inventory risk", "Cartea", "Jaimungal"]),
 ]
 
 _DEFAULT_CHAPTERS = ["04_alpha_factors", "05_strategy_evaluation"]
@@ -222,10 +232,20 @@ def sync_brain():
         try:
             resp = httpx.get(url, timeout=15.0, follow_redirects=True)
             if resp.status_code == 404:
-                errors.append({"chapter": chapter_id, "error": "404 not found"})
-                continue
-            resp.raise_for_status()
-            content = resp.text
+                # Fallback: load from bundled local chapters shipped with the app
+                local_path = os.path.join(
+                    os.path.dirname(__file__), "..", "brain_chapters", f"{chapter_id}.md"
+                )
+                local_path = os.path.normpath(local_path)
+                if os.path.exists(local_path):
+                    with open(local_path, "r", encoding="utf-8") as fh:
+                        content = fh.read()
+                else:
+                    errors.append({"chapter": chapter_id, "error": "404 not found"})
+                    continue
+            else:
+                resp.raise_for_status()
+                content = resp.text
 
             title_match = re.search(r"^#+\s+(.+)", content, re.MULTILINE)
             title = title_match.group(1).strip() if title_match else chapter_id
