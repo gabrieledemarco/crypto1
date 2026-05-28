@@ -34,7 +34,7 @@ def list_strategies():
         metrics = {
             "sharpe": round(float(perf.get("sharpe", 0) or 0), 3),
             "cagr":   round(float(perf.get("cagr_pct", 0) or 0), 2),
-            "maxDD":  round(float(perf.get("max_dd", 0) or 0), 2),
+            "maxDD":  round(float(perf.get("max_dd", perf.get("dd", 0)) or 0), 2),
             "pf":     round(float(perf.get("profit_factor", 0) or 0), 2),
             "trades": int(perf.get("n_trades", 0) or 0),
         }

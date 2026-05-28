@@ -342,6 +342,10 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
     dd = float(m.get("max_drawdown_pct", m.get("max_dd", 0)) or 0)
     n_trades = int(m.get("n_trades", 0) or 0)
     win_rate = float(m.get("win_rate_pct", 0) or 0)
+    cagr_raw = m.get("cagr_pct", 0)
+    cagr = float(cagr_raw["point"] if isinstance(cagr_raw, dict) else cagr_raw or 0)
+    pf_raw = m.get("profit_factor", 0)
+    pf = float(pf_raw if pf_raw not in (None, float("inf"), float("-inf")) else 0)
 
     # ── Drift: mean PnL per trade (positive = positive expected value) ────────
     best_res = versions.get(best_key, {}).get("result", {})
@@ -376,11 +380,13 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
     config.pop("agent_fn", None)   # not JSON-serialisable
     config["best_version"] = best_key
     config["perf"] = {
-        "sharpe": round(sharpe, 3),
-        "dd": round(dd, 2),
-        "n_trades": n_trades,
-        "win_rate": round(win_rate, 1),
-        "drift":    round(drift, 6),
+        "sharpe":        round(sharpe, 3),
+        "max_dd":        round(dd, 2),
+        "cagr_pct":      round(cagr, 2),
+        "profit_factor": round(pf, 2),
+        "n_trades":      n_trades,
+        "win_rate":      round(win_rate, 1),
+        "drift":         round(drift, 6),
     }
     if mc_result:
         config["perf"]["mc_p_profit"] = mc_result.get("p_profit")
