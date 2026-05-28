@@ -24,15 +24,73 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve Railway project IDs
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import urllib.request, json, os, sys
+
+          token = os.environ.get("RAILWAY_TOKEN", "")
+          if not token:
+              print("ERROR: RAILWAY_TOKEN secret is not set.")
+              print("Set it in: GitHub repo -> Settings -> Secrets and variables -> Actions -> New secret")
+              sys.exit(1)
+
+          gql_url = "https://backboard.railway.app/graphql/v2"
+          def gql(query):
+              body = json.dumps({"query": query}).encode()
+              req = urllib.request.Request(gql_url, data=body, method="POST", headers={
+                  "Authorization": f"Bearer {token}",
+                  "Content-Type": "application/json",
+              })
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      return json.loads(r.read())
+              except Exception as e:
+                  print(f"GQL error: {e}")
+                  return {}
+
+          resp = gql("{ me { projects { edges { node { id name environments { edges { node { id name } } } services { edges { node { id name } } } } } } } }")
+          project_id = service_id = env_id = None
+          for p in resp.get("data", {}).get("me", {}).get("projects", {}).get("edges", []):
+              node = p["node"]
+              for s in node.get("services", {}).get("edges", []):
+                  if s["node"]["name"].lower() == "api":
+                      project_id = node["id"]
+                      service_id = s["node"]["id"]
+                      envs = node.get("environments", {}).get("edges", [])
+                      env_id = next(
+                          (e["node"]["id"] for e in envs if "prod" in e["node"]["name"].lower()),
+                          envs[0]["node"]["id"] if envs else None
+                      )
+                      print(f"Found: project={project_id} service={service_id} env={env_id}")
+                      break
+              if project_id:
+                  break
+
+          if not project_id:
+              print("ERROR: Could not find 'api' service in Railway account")
+              sys.exit(1)
+
+          gh_env = os.environ.get("GITHUB_ENV", "")
+          if gh_env:
+              with open(gh_env, "a") as f:
+                  f.write(f"RAILWAY_PROJECT_ID={project_id}\n")
+                  f.write(f"RAILWAY_ENVIRONMENT_ID={env_id}\n")
+                  f.write(f"RAILWAY_SERVICE_ID={service_id}\n")
+          PYEOF
+
       - name: Deploy to Railway
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
           bash <(curl -fsSL https://railway.com/install.sh) -y 2>/dev/null || \
             npm install -g @railway/cli --silent 2>&1 | tail -2
-          echo "Deploying API to Railway..."
-          railway up --service api --detach -m "deploy: $(git log -1 --pretty=%s)" || true
-          echo "Waiting 120s for Railway build to start..."
+          echo "Deploying API to Railway (project=$RAILWAY_PROJECT_ID service=$RAILWAY_SERVICE_ID)..."
+          railway up --service api --detach \
+            -m "deploy: $(git log -1 --pretty=%s)"
+          echo "Deploy submitted. Waiting 120s for build to start..."
           sleep 120
 
       - name: Wait for Railway health
