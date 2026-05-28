@@ -285,6 +285,117 @@ E[ΔM_{t+τ} | OI_t] ≈ α·OI_t
 
 ---
 
+## Market Participant Taxonomy
+
+Three primary classes (Cartea et al., Ch. 1):
+
+| Type | Motivation | Order style | Effect on price |
+|------|-----------|-------------|-----------------|
+| **Fundamental / noise / liquidity traders** | External need (hedge, rebalance, liquidate) | MO, large size | Uninformed short-term impact |
+| **Informed traders** | Private information or short-term predictive signal | Gradual LO+MO mix to hide info | Move price toward fundamental |
+| **Market makers** | Spread capture; inventory management | LO both sides | Provide liquidity, absorb flow |
+
+**Key insight**: adversarial relationship between informed flow and market makers. MM widens quotes or pulls inventory when it detects toxic (informed) flow. Strategy design must classify which regime your flow falls into.
+
+---
+
+## Microprice (LOB Imbalance Proxy)
+
+More refined proxy for true price than midprice:
+```
+Micropricet = (Vta / (Vta + Vtb)) · Pta + (Vtb / (Vta + Vtb)) · Ptb
+```
+
+- V^a = volume at best ask, V^b = volume at best bid
+- Microprice > midprice → more depth on bid → upward pressure
+- Microprice < midprice → more depth on ask → downward pressure
+
+**Strategy use**: use microprice instead of midprice for fair-value estimation in market-making and execution. The microprice signal decays in ~1–5 seconds but is highly reliable.
+
+**Order imbalance** from microprice:
+```
+OI_depth = (Vb − Va) / (Vb + Va)   (positive = buying pressure)
+```
+
+---
+
+## Exchange Structure and Execution Context
+
+### Maker-Taker Fees
+
+Most lit exchanges charge differently based on whether an order adds or removes liquidity:
+- **Taker** (MO, removes liquidity): pays fee ~0.3 bps
+- **Maker** (posted LO, provides liquidity): receives rebate ~0.2 bps
+
+→ Posted LO net cost is *negative* (you get paid); but you bear execution risk.  
+→ MO net cost is higher; but certain fill.
+
+Some exchanges use **inverted fee** (maker pays, taker receives) to attract aggressive flow.
+
+### Dark Pools and Lit Markets
+
+- **Lit market**: LOB fully visible, orders displayed at price-time priority
+- **Dark pool**: no pre-trade transparency; orders matched at midprice; no market impact displayed
+
+**Optimal execution in dark pool** (Ch. 7): send block to dark pool; if unfilled within τ, route remainder to lit market.  
+Expected shortfall = (1-p_fill)·lit_cost + p_fill·dark_savings
+
+where p_fill depends on dark pool volume fraction ≈ 10–20% of daily volume for major names.
+
+### Colocation
+
+Co-located servers have ~100 μs latency advantage over remote traders. HFT strategies that depend on queue position or first-mover advantage require colocation. For non-HFT strategies, colocation is less relevant — focus on IS minimisation.
+
+---
+
+## Empirical Patterns (Chapters 3–4)
+
+### Intraday U-Shape (Volume and Volatility)
+
+Volume follows a U-shaped intraday pattern: high at open (09:30–10:00 ET), low midday (12:00–14:00), high at close (15:00–16:00).
+
+**Implication for VWAP**: participation rate should be highest at open and close to track volume; reduce size midday.
+
+### Price Impact Scaling
+
+Price impact of trade size Q (from Ch. 4 empirical analysis):
+```
+ΔP ≈ γ · Q^α    (α ≈ 0.5–0.7, square-root law for large orders)
+```
+
+For small Q (< 5% ADV): α ≈ 1 (linear). For large Q: α ≈ 0.5 (square root).  
+Permanent impact: survives past trade. Temporary impact: decays in 10–30 minutes.
+
+### Spread Determinants (Ch. 4.3)
+
+```
+Spread ≈ 2·(adverse_selection_cost + inventory_risk_cost + fixed_cost)
+```
+
+- Adverse selection dominates for illiquid / volatile names
+- Inventory risk dominates for very slow-moving names
+- Fixed (tick size) floor for liquid large-caps (spread = 1 tick)
+
+**Volatility-spread relationship**: `spread ∝ σ^0.5` empirically; market makers widen during high-vol periods.
+
+---
+
+## Dark Pool Execution (Chapter 7)
+
+Optimal strategy when both a lit venue and dark pool are available:
+
+**State**: (x_t, t) — inventory remaining, time  
+**Controls**: q_lit (lit MO rate) + q_dark (dark pool order size)
+
+Dark pool fills at midprice M_t (no spread cost) but with probability p_t per time unit:
+```
+p_t = λ_dark · min(q_dark, V_dark)   (depends on venue volume V_dark)
+```
+
+**Key result**: always optimal to simultaneously route to dark pool while pacing lit execution. The dark fill probability reduces expected IS proportional to liquidity available in dark.
+
+---
+
 ## References
 
 - Cartea, Jaimungal & Penalva (2015), *Algorithmic and High-Frequency Trading*, Cambridge
