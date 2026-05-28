@@ -1,9 +1,9 @@
 {
   "min_sharpe": 1.0,
   "status": "complete",
-  "total": 113,
-  "deleted": 23,
-  "kept": 90,
+  "total": 107,
+  "deleted": 15,
+  "kept": 92,
   "kept_strategies": [
     {
       "id": "434b19b5",
@@ -454,6 +454,16 @@
       "id": "36bbc940",
       "name": "pipe_008_4h_ETH_USD",
       "sharpe": 1.29
+    },
+    {
+      "id": "c78f7044",
+      "name": "pipe_009_1h_BTC_USD",
+      "sharpe": 1.235
+    },
+    {
+      "id": "b1a70c12",
+      "name": "pipe_008_4h_ETH_USD",
+      "sharpe": 1.289
     }
   ],
   "error": null
