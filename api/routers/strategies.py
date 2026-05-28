@@ -1,8 +1,9 @@
 """
 /strategies router — library CRUD
 """
-import json, uuid
+import json, uuid, traceback as _tb
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from api.db import get_conn
 from api.models import StrategyCreate
 
@@ -11,50 +12,61 @@ router = APIRouter()
 
 @router.get("")
 def list_strategies():
-    conn = get_conn()
-    # Lightweight query: no code column (heavy), metrics from config.perf (set by pipeline)
-    rows = conn.execute("""
-        SELECT id, name, strategy_type, config,
-               CASE WHEN code IS NOT NULL AND length(code) > 10 THEN true ELSE false END AS has_code,
-               starred, status, run_ref, created_at
-        FROM strategies
-        ORDER BY starred DESC, created_at DESC
-    """).fetchall()
+    try:
+        conn = get_conn()
+        rows = conn.execute("""
+            SELECT id, name, strategy_type, config,
+                   CASE WHEN code IS NOT NULL AND length(code) > 10 THEN true ELSE false END AS has_code,
+                   starred, status, run_ref, created_at
+            FROM strategies
+            ORDER BY starred DESC, created_at DESC
+        """).fetchall()
 
-    result = []
-    for r in rows:
-        cfg = {}
-        try:
-            cfg = json.loads(r[3]) if r[3] else {}
-        except Exception:
-            pass
+        result = []
+        for r in rows:
+            cfg = {}
+            try:
+                cfg = json.loads(r[3]) if r[3] else {}
+            except Exception:
+                pass
 
-        # Metrics from config.perf (populated by pipeline on every saved strategy)
-        perf = cfg.get("perf") or {}
-        metrics = {
-            "sharpe": round(float(perf.get("sharpe", 0) or 0), 3),
-            "cagr":   round(float(perf.get("cagr_pct", 0) or 0), 2),
-            "maxDD":  round(float(perf.get("max_dd", 0) or 0), 2),
-            "pf":     round(float(perf.get("profit_factor", 0) or 0), 2),
-            "trades": int(perf.get("n_trades", 0) or 0),
-        }
+            perf = cfg.get("perf") or {}
 
-        result.append({
-            "id":       r[0],
-            "name":     r[1],
-            "strategy": r[2] or "vibe_loop",
-            "author":   "",
-            "created":  str(r[8]),
-            "tags":     _tags(cfg),
-            "starred":  bool(r[5]),
-            "status":   r[6] or "research",
-            "metrics":  metrics,
-            "desc":     "",
-            "runRef":   r[7],
-            "config":   cfg,
-            "has_code": bool(r[4]),
-        })
-    return result
+            def _safe_float(v, default=0.0):
+                if isinstance(v, dict):
+                    v = v.get("point", default)
+                try:
+                    return float(v or default)
+                except (TypeError, ValueError):
+                    return float(default)
+
+            metrics = {
+                "sharpe": round(_safe_float(perf.get("sharpe", 0)), 3),
+                "cagr":   round(_safe_float(perf.get("cagr_pct", 0)), 2),
+                "maxDD":  round(_safe_float(perf.get("max_dd", perf.get("dd", 0))), 2),
+                "pf":     round(_safe_float(perf.get("profit_factor", 0)), 2),
+                "trades": int(_safe_float(perf.get("n_trades", 0))),
+            }
+
+            result.append({
+                "id":       r[0],
+                "name":     r[1],
+                "strategy": r[2] or "vibe_loop",
+                "author":   "",
+                "created":  str(r[8]),
+                "tags":     _tags(cfg),
+                "starred":  bool(r[5]),
+                "status":   r[6] or "research",
+                "metrics":  metrics,
+                "desc":     "",
+                "runRef":   r[7],
+                "config":   cfg,
+                "has_code": bool(r[4]),
+            })
+        return result
+    except Exception as exc:
+        detail = _tb.format_exc()
+        return JSONResponse(status_code=500, content={"detail": detail})
 
 
 @router.get("/{strategy_id}")
@@ -91,10 +103,8 @@ def _best_metrics(metrics_dict: dict) -> dict:
     """Return the metrics dict with the highest Sharpe from a version map."""
     if not metrics_dict:
         return {}
-    # Flat dict (already a single metrics object)
     if "sharpe_ratio" in metrics_dict or "sharpe" in metrics_dict:
         return metrics_dict
-    # Version map: {"V1 Base": {...}, "V2 +Costi": {...}, ...}
     best, best_sharpe = {}, float("-inf")
     for v in metrics_dict.values():
         if isinstance(v, dict):
@@ -150,8 +160,7 @@ def delete_strategy(strategy_id: str):
 
 @router.post("/prune")
 def prune_strategies(min_sharpe: float = 0.0):
-    """Delete all strategies whose config.perf.sharpe < min_sharpe.
-    Much faster than GET /strategies + N×DELETE since it's a single pass."""
+    """Delete all strategies whose config.perf.sharpe < min_sharpe."""
     conn = get_conn()
     rows = conn.execute(
         "SELECT id, name, config FROM strategies"
@@ -180,4 +189,35 @@ def prune_strategies(min_sharpe: float = 0.0):
         "deleted": len(deleted),
         "kept":    len(kept),
         "kept_strategies": kept,
+    }
+
+
+@router.post("/promote-robust")
+def promote_robust(min_sharpe: float = 1.0):
+    """Star + set status='live' on every strategy with Sharpe >= min_sharpe.
+    Safe to call repeatedly — idempotent."""
+    conn = get_conn()
+    rows = conn.execute("SELECT id, name, config, starred, status FROM strategies").fetchall()
+    promoted, already = [], []
+    for sid, name, config_raw, starred, status in rows:
+        cfg = {}
+        try:
+            cfg = json.loads(config_raw) if config_raw else {}
+        except Exception:
+            pass
+        perf = cfg.get("perf") or {}
+        sharpe = float(perf.get("sharpe", perf.get("sharpe_ratio", 0)) or 0)
+        if sharpe >= min_sharpe:
+            if bool(starred) and status == "live":
+                already.append({"id": sid, "name": name, "sharpe": sharpe})
+            else:
+                conn.execute(
+                    "UPDATE strategies SET starred=TRUE, status='live' WHERE id=?", [sid]
+                )
+                promoted.append({"id": sid, "name": name, "sharpe": sharpe})
+    return {
+        "min_sharpe": min_sharpe,
+        "promoted":  len(promoted),
+        "already_ok": len(already),
+        "strategies": promoted + already,
     }

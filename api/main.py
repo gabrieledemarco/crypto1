@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI):
     close_conn()
 
 
-app = FastAPI(title="Pareto API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Pareto API", version="0.3.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
@@ -87,7 +87,7 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.2.0"}
+    return {"status": "ok", "version": "0.3.0"}
 
 
 app.include_router(pipeline.router,   prefix="/runs/pipeline",    tags=["pipeline"])
