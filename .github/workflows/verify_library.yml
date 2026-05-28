@@ -36,11 +36,14 @@ jobs:
       - name: Check /strategies endpoint
         run: |
           python3 << 'PYEOF'
-          import json, urllib.request, sys, traceback
+          import json, urllib.request, urllib.error, sys, traceback
+          from datetime import datetime, timezone
 
           API_BASE = "https://illustrious-inspiration-production.up.railway.app"
-          result = {"api_base": API_BASE, "health": None, "total": 0,
-                    "live": 0, "starred": 0, "btc_eth": [], "error": None}
+          result = {"run_at": datetime.now(timezone.utc).isoformat(),
+                    "api_base": API_BASE, "health": None, "total": 0,
+                    "live": 0, "starred": 0, "btc_eth": [], "error": None,
+                    "error_body": None}
 
           # Health check
           try:
@@ -79,6 +82,15 @@ jobs:
                               for s in btc_eth],
               })
               print("VERIFICATION COMPLETE")
+          except urllib.error.HTTPError as e:
+              body = ""
+              try:
+                  body = e.read(2000).decode("utf-8", errors="replace")
+              except Exception:
+                  pass
+              result["error"] = traceback.format_exc()
+              result["error_body"] = body
+              print(f"Strategies FAILED HTTP {e.code}: {body}")
           except Exception as e:
               result["error"] = traceback.format_exc()
               print(f"Strategies FAILED: {e}")
@@ -99,6 +111,7 @@ jobs:
             git pull --rebase origin master || true
             cp /tmp/verify_result.json library-verify-result.json
             git add library-verify-result.json
-            git diff --cached --quiet || git commit -m "ci: library verification $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            # Always commit (timestamp ensures diff)
+            git commit -m "ci: library verification $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push origin HEAD:master
           fi
