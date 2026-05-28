@@ -1,0 +1,44 @@
+name: Deploy API to Railway
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - 'api/**'
+      - 'engine/**'
+      - 'Dockerfile.api'
+      - 'railway.toml'
+
+jobs:
+  deploy:
+    name: Build and deploy API
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      API_BASE: "https://illustrious-inspiration-production.up.railway.app"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          bash <(curl -fsSL https://railway.com/install.sh) -y 2>/dev/null || \
+            npm install -g @railway/cli --silent 2>&1 | tail -2
+          echo "Deploying API to Railway..."
+          railway up --service api --detach -m "deploy: $(git log -1 --pretty=%s)" || true
+          echo "Waiting 120s for Railway build to start..."
+          sleep 120
+
+      - name: Wait for Railway health
+        run: |
+          echo "Polling /health until 200 (max 10 min)..."
+          for i in $(seq 1 20); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$API_BASE/health" 2>/dev/null || echo "000")
+            echo "  [$i/20] health=$CODE"
+            [ "$CODE" = "200" ] && { echo "API is ready!"; exit 0; }
+            sleep 30
+          done
+          echo "WARNING: API did not become healthy in time"
