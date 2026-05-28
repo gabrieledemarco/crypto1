@@ -181,3 +181,34 @@ def prune_strategies(min_sharpe: float = 0.0):
         "kept":    len(kept),
         "kept_strategies": kept,
     }
+
+
+@router.post("/promote-robust")
+def promote_robust(min_sharpe: float = 1.0):
+    """Star + set status='live' on every strategy with Sharpe >= min_sharpe.
+    Safe to call repeatedly — idempotent."""
+    conn = get_conn()
+    rows = conn.execute("SELECT id, name, config, starred, status FROM strategies").fetchall()
+    promoted, already = [], []
+    for sid, name, config_raw, starred, status in rows:
+        cfg = {}
+        try:
+            cfg = json.loads(config_raw) if config_raw else {}
+        except Exception:
+            pass
+        perf = cfg.get("perf") or {}
+        sharpe = float(perf.get("sharpe", perf.get("sharpe_ratio", 0)) or 0)
+        if sharpe >= min_sharpe:
+            if bool(starred) and status == "live":
+                already.append({"id": sid, "name": name, "sharpe": sharpe})
+            else:
+                conn.execute(
+                    "UPDATE strategies SET starred=TRUE, status='live' WHERE id=?", [sid]
+                )
+                promoted.append({"id": sid, "name": name, "sharpe": sharpe})
+    return {
+        "min_sharpe": min_sharpe,
+        "promoted":  len(promoted),
+        "already_ok": len(already),
+        "strategies": promoted + already,
+    }
