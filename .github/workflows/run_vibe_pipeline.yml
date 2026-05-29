@@ -44,19 +44,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Force deploy latest API to Railway
+      - name: Resolve IDs and trigger Railway redeploy via GQL
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
           python3 << 'PYEOF'
           import urllib.request, json, os, sys
+
           token = os.environ.get("RAILWAY_TOKEN", "")
           if not token:
-              print("RAILWAY_TOKEN not set — skipping force deploy")
+              print("RAILWAY_TOKEN not set — skipping deploy step")
               sys.exit(0)
+
           gql_url = "https://backboard.railway.app/graphql/v2"
-          def gql(query):
-              body = json.dumps({"query": query}).encode()
+          def gql(query, variables=None):
+              body = json.dumps({"query": query, "variables": variables or {}}).encode()
               req = urllib.request.Request(gql_url, data=body, method="POST", headers={
                   "Authorization": f"Bearer {token}",
                   "Content-Type": "application/json",
@@ -67,6 +69,7 @@ jobs:
               except Exception as e:
                   print(f"GQL error: {e}")
                   return {}
+
           resp = gql("{ me { projects { edges { node { id name environments { edges { node { id name } } } services { edges { node { id name } } } } } } } }")
           project_id = service_id = env_id = None
           for p in resp.get("data", {}).get("me", {}).get("projects", {}).get("edges", []):
@@ -84,33 +87,53 @@ jobs:
                       break
               if project_id:
                   break
+
           if not project_id:
-              print("WARNING: Could not find 'api' service via GQL")
+              print("WARNING: Could not find 'api' service via GQL — skipping deploy")
+              sys.exit(0)
+
           gh_env = os.environ.get("GITHUB_ENV", "")
           if gh_env:
               with open(gh_env, "a") as f:
                   if project_id: f.write(f"RAILWAY_PROJECT_ID={project_id}\n")
                   if env_id:     f.write(f"RAILWAY_ENVIRONMENT_ID={env_id}\n")
                   if service_id: f.write(f"RAILWAY_SERVICE_ID={service_id}\n")
-          PYEOF
-          bash <(curl -fsSL https://railway.com/install.sh) -y 2>/dev/null || npm install -g @railway/cli --silent 2>&1 | tail -2
-          echo "Running: railway up --service api --detach"
-          railway up --service api --detach -m "CI: vibe pipeline deploy" || true
-          echo "Waiting 90s for Railway build to start..."
-          sleep 90
 
-      - name: Wait for Railway health
+          mutation = """
+          mutation redeploy($envId: String!, $svcId: String!) {
+            serviceInstanceRedeploy(environmentId: $envId, serviceId: $svcId)
+          }
+          """
+          result = gql(mutation, {"envId": env_id, "svcId": service_id})
+          errors = result.get("errors")
+          if errors:
+              print(f"Redeploy mutation errors: {errors}")
+              print("Will rely on Railway's GitHub auto-deploy instead")
+          else:
+              print("Railway redeploy triggered. Build takes 3-8 min.")
+          PYEOF
+
+      - name: Wait for new API version to be live
         env:
           API_BASE: "https://illustrious-inspiration-production.up.railway.app"
         run: |
-          echo "Polling /health until 200 (max 25 min)..."
-          for i in $(seq 1 25); do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$API_BASE/health" 2>/dev/null || echo "000")
-            echo "  [$i/25] health=$CODE"
-            [ "$CODE" = "200" ] && { echo "Railway is ready!"; break; }
-            sleep 60
+          TARGET_VERSION=$(python3 -c "
+import re
+try:
+    with open('api/main.py') as f:
+        m = re.search(r'version=\"([^\"]+)\"', f.read())
+        print(m.group(1) if m else 'unknown')
+except: print('unknown')
+")
+          echo "Waiting for Railway version=$TARGET_VERSION (max 20 min)..."
+          for i in $(seq 1 24); do
+            RESP=$(curl -s --max-time 15 "$API_BASE/health" 2>/dev/null || echo '{}')
+            VER=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','?'))" 2>/dev/null || echo "?")
+            echo "  [$i/24] version=$VER (want=$TARGET_VERSION)"
+            [ "$VER" = "$TARGET_VERSION" ] && { echo "New version live!"; break; }
+            sleep 50
           done
-          echo "Proceeding..."
+          echo "Proceeding (version may or may not be updated)..."
 
       - name: Clear Library (delete all strategies)
         env:
@@ -179,6 +202,21 @@ jobs:
           API_BASE: "https://illustrious-inspiration-production.up.railway.app"
           PAYLOAD: ${{ steps.params.outputs.payload }}
         run: |
+          # First check what version is running
+          VER=$(curl -s --max-time 10 "$API_BASE/health" | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','?'))" 2>/dev/null || echo "?")
+          echo "Railway API version: $VER"
+
+          # Check if /runs/pipeline/vibe endpoint exists
+          CHECK=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+            -X POST "$API_BASE/runs/pipeline/vibe" \
+            -H 'Content-Type: application/json' -d '{"tickers":[]}' 2>/dev/null || echo "000")
+          echo "Vibe endpoint check: HTTP $CHECK"
+          if [ "$CHECK" = "404" ]; then
+            echo "ERROR: /runs/pipeline/vibe returns 404 — Railway is not running v0.3.2+"
+            echo "Please manually trigger a Railway redeploy from the Railway dashboard."
+            exit 1
+          fi
+
           JOB_ID=""
           for attempt in 1 2 3 4 5; do
             echo "Attempt $attempt/5 — POST $API_BASE/runs/pipeline/vibe"
@@ -190,11 +228,10 @@ jobs:
             if [ -n "$JOB_ID" ]; then
               echo "job_id=$JOB_ID" >> "$GITHUB_OUTPUT"
               echo "Started Vibe pipeline job: $JOB_ID"
-              echo "Stream: $API_BASE/runs/pipeline/vibe/$JOB_ID/stream"
               break
             fi
-            echo "  No job_id, waiting 120s before retry..."
-            sleep 120
+            echo "  No job_id (response: $RESPONSE), waiting 60s before retry..."
+            sleep 60
           done
           if [ -z "$JOB_ID" ]; then
             echo "ERROR: Could not start Vibe pipeline after 5 attempts"

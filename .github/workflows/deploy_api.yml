@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve Railway project IDs
+      - name: Resolve IDs and trigger Railway redeploy via GQL
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
@@ -38,8 +38,8 @@ jobs:
               sys.exit(1)
 
           gql_url = "https://backboard.railway.app/graphql/v2"
-          def gql(query):
-              body = json.dumps({"query": query}).encode()
+          def gql(query, variables=None):
+              body = json.dumps({"query": query, "variables": variables or {}}).encode()
               req = urllib.request.Request(gql_url, data=body, method="POST", headers={
                   "Authorization": f"Bearer {token}",
                   "Content-Type": "application/json",
@@ -51,6 +51,7 @@ jobs:
                   print(f"GQL error: {e}")
                   return {}
 
+          # Discover project / service / environment
           resp = gql("{ me { projects { edges { node { id name environments { edges { node { id name } } } services { edges { node { id name } } } } } } } }")
           project_id = service_id = env_id = None
           for p in resp.get("data", {}).get("me", {}).get("projects", {}).get("edges", []):
@@ -73,36 +74,63 @@ jobs:
               print("ERROR: Could not find 'api' service in Railway account")
               sys.exit(1)
 
+          # Write to GITHUB_ENV for subsequent steps
           gh_env = os.environ.get("GITHUB_ENV", "")
           if gh_env:
               with open(gh_env, "a") as f:
                   f.write(f"RAILWAY_PROJECT_ID={project_id}\n")
                   f.write(f"RAILWAY_ENVIRONMENT_ID={env_id}\n")
                   f.write(f"RAILWAY_SERVICE_ID={service_id}\n")
+
+          # Trigger redeploy via GQL mutation (no CLI needed)
+          mutation = """
+          mutation redeploy($envId: String!, $svcId: String!) {
+            serviceInstanceRedeploy(environmentId: $envId, serviceId: $svcId)
+          }
+          """
+          result = gql(mutation, {"envId": env_id, "svcId": service_id})
+          errors = result.get("errors")
+          if errors:
+              print(f"Redeploy mutation errors: {errors}")
+              print("Falling back to railway CLI...")
+              sys.exit(2)  # handled below
+          else:
+              print("Railway redeploy triggered via GQL. Build will take 3-8 min.")
           PYEOF
+          EXIT=$?
+          if [ $EXIT -eq 2 ]; then
+            echo "GQL redeploy failed, trying railway CLI fallback..."
+            bash <(curl -fsSL https://railway.com/install.sh) -y 2>/dev/null || \
+              npm install -g @railway/cli --silent 2>&1 | tail -2
+            RAILWAY_TOKEN=${{ secrets.RAILWAY_TOKEN }} \
+              railway up \
+                --project "$RAILWAY_PROJECT_ID" \
+                --environment "$RAILWAY_ENVIRONMENT_ID" \
+                --service api --detach \
+                -m "deploy: $(git log -1 --pretty=%s)" || true
+          fi
 
-      - name: Deploy to Railway
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      - name: Wait for new version to be live (max 15 min)
         run: |
-          bash <(curl -fsSL https://railway.com/install.sh) -y 2>/dev/null || \
-            npm install -g @railway/cli --silent 2>&1 | tail -2
-          echo "Deploying API to Railway (project=$RAILWAY_PROJECT_ID service=$RAILWAY_SERVICE_ID)..."
-          railway up --service api --detach \
-            -m "deploy: $(git log -1 --pretty=%s)"
-          echo "Deploy submitted. Waiting 120s for build to start..."
-          sleep 120
-
-      - name: Wait for Railway health
-        run: |
-          echo "Polling /health until 200 (max 10 min)..."
-          for i in $(seq 1 20); do
+          TARGET_VERSION=$(python3 -c "
+import json, subprocess
+try:
+    import re
+    with open('api/main.py') as f:
+        m = re.search(r'version=\"([^\"]+)\"', f.read())
+        print(m.group(1) if m else 'unknown')
+except: print('unknown')
+")
+          echo "Waiting for Railway to serve version=$TARGET_VERSION ..."
+          for i in $(seq 1 30); do
+            RESP=$(curl -s --max-time 10 "$API_BASE/health" 2>/dev/null || echo '{}')
             CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$API_BASE/health" 2>/dev/null || echo "000")
-            echo "  [$i/20] health=$CODE"
-            [ "$CODE" = "200" ] && { echo "API is ready!"; exit 0; }
+            VER=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','?'))" 2>/dev/null || echo "?")
+            echo "  [$i/30] http=$CODE version=$VER (want=$TARGET_VERSION)"
+            [ "$VER" = "$TARGET_VERSION" ] && { echo "New version is live!"; break; }
             sleep 30
           done
-          echo "WARNING: API did not become healthy in time"
+          echo "Health check complete."
 
       - name: Trigger verify_library
         env:
