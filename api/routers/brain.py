@@ -10,6 +10,7 @@ GET  /brain/chunks    → list available synced chapters
 GET  /brain/query?q=  → show which chapters would be selected for a query
 """
 import json
+import os
 import re
 import requests
 from datetime import datetime
@@ -26,6 +27,17 @@ router = APIRouter()
 _BRAIN_REPO  = "gabrieledemarco/Trading_agent_brain"
 _RAW_BASE    = f"https://raw.githubusercontent.com/{_BRAIN_REPO}/main"
 _BOOK_PATH   = "ML_for_Algorithmic_Trading"
+
+# Chapters outside ML_for_Algorithmic_Trading: map chapter ID to relative path
+# in Trading_agent_brain repo (and in local api/brain_chapters/ as fallback).
+_CHAPTER_PATH_OVERRIDE: dict[str, str] = {
+    "lorenz_01_esecuzione_ottimale":  "Optimal_Execution_Lorenz/01_optimal_execution_almgren_chriss.md",
+    "cartea_01_mercati_lob":          "Algorithmic_HFT_Cartea/01_mercati_elettronici_lob.md",
+    "cartea_02_hjb":                  "Algorithmic_HFT_Cartea/02_controllo_stocastico_hjb.md",
+    "cartea_03_esecuzione":           "Algorithmic_HFT_Cartea/03_esecuzione_ottimale.md",
+    "cartea_04_market_making":        "Algorithmic_HFT_Cartea/04_market_making.md",
+    "cartea_05_pairs_oi":             "Algorithmic_HFT_Cartea/05_pairs_trading_order_imbalance.md",
+}
 
 # (chapter_id, keywords) — used for both sync and retrieval routing
 _CHAPTERS: list[tuple[str, list[str]]] = [
@@ -59,6 +71,45 @@ _CHAPTERS: list[tuple[str, list[str]]] = [
     ("20_reinforcement_learning", ["reinforcement learning", "RL", "Q-learning", "reward",
                                    "policy", "agent", "DQN", "PPO", "A3C"]),
     ("21_next_steps",          ["deployment", "production", "live trading", "next steps"]),
+    # ── Optimal Execution (Lorenz 2008) + HFT (Cartea-Jaimungal-Penalva 2015) ─
+    ("lorenz_01_esecuzione_ottimale", [
+        "optimal execution", "implementation shortfall", "market impact",
+        "almgren", "chriss", "lorenz", "traiettoria", "urgenza", "kappa",
+        "liquidazione", "execution cost", "slippage", "sinh", "frontiera efficiente",
+        "aggressive in the money", "adattivo", "market power",
+    ]),
+    ("cartea_01_mercati_lob", [
+        "limit order book", "LOB", "midprice", "microprice", "spread", "bid ask",
+        "mercato elettronico", "maker taker", "dark pool", "colocation",
+        "microstruttura", "market microstructure", "tassonomia trader",
+        "informed trader", "market maker", "noise trader", "U-shape volume",
+        "price impact", "square root law",
+    ]),
+    ("cartea_02_hjb", [
+        "HJB", "Hamilton-Jacobi-Bellman", "controllo stocastico", "stochastic control",
+        "programmazione dinamica", "dynamic programming", "Bellman",
+        "optimal stopping", "Riccati", "funzione valore", "value function",
+        "processo di salto", "Poisson",
+    ]),
+    ("cartea_03_esecuzione", [
+        "esecuzione ottimale", "cartea jaimungal", "tasso di esecuzione",
+        "VWAP", "order flow signal", "adverse selection esecuzione",
+        "dark pool esecuzione", "limit order esecuzione", "price limiter",
+        "IS minimizzazione", "implementation shortfall continuo",
+    ]),
+    ("cartea_04_market_making", [
+        "market making", "avellaneda stoikov", "quote ottimali", "delta ottimale",
+        "reservation price", "skew inventario", "adverse selection",
+        "short term alpha", "fill rate", "Lambda kappa", "inventory risk",
+        "spread cattura", "market maker", "bid ask posting",
+    ]),
+    ("cartea_05_pairs_oi", [
+        "pairs trading", "cointegrazione", "cointegration", "spread stazionario",
+        "ornstein uhlenbeck", "OU", "mean reversion spread", "emivita",
+        "order imbalance", "OI", "flusso ordini", "order flow",
+        "segnale breve termine", "Markov chain ordini", "segnale imbalance",
+        "statarb", "statistical arbitrage",
+    ]),
 ]
 
 _DEFAULT_CHAPTERS = ["04_alpha_factors", "05_strategy_evaluation"]
@@ -355,15 +406,28 @@ def sync_brain():
     synced: list[str] = []
     errors: list[dict] = []
 
+    _local_base = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "brain_chapters")
+    )
+
     for chapter_id, keywords in _CHAPTERS:
-        url = f"{_RAW_BASE}/{_BOOK_PATH}/{chapter_id}.md"
+        rel_path   = _CHAPTER_PATH_OVERRIDE.get(chapter_id, f"{_BOOK_PATH}/{chapter_id}.md")
+        github_url = f"{_RAW_BASE}/{rel_path}"
+        local_path = os.path.join(_local_base, rel_path)
+
         try:
-            resp = httpx.get(url, timeout=15.0, follow_redirects=True)
+            resp = httpx.get(github_url, timeout=15.0, follow_redirects=True)
             if resp.status_code == 404:
-                errors.append({"chapter": chapter_id, "error": "404 not found"})
-                continue
-            resp.raise_for_status()
-            content = resp.text
+                # Fallback: load from bundled api/brain_chapters/
+                if os.path.exists(local_path):
+                    with open(local_path, "r", encoding="utf-8") as fh:
+                        content = fh.read()
+                else:
+                    errors.append({"chapter": chapter_id, "error": "404 not found, no local fallback"})
+                    continue
+            else:
+                resp.raise_for_status()
+                content = resp.text
 
             title_match = re.search(r"^#+\s+(.+)", content, re.MULTILINE)
             title = title_match.group(1).strip() if title_match else chapter_id
