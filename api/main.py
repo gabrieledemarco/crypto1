@@ -9,7 +9,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from api.db import get_conn, close_conn
-from api.routers import runs, assets, strategies, vibe, brain, analysis, optimize, download, pipeline
+from api.routers import runs, assets, strategies, vibe, brain, analysis, optimize, download, pipeline, vibe_pipeline
 
 structlog.configure(
     processors=[
@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI):
     close_conn()
 
 
-app = FastAPI(title="Pareto API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Pareto API", version="0.3.2", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
@@ -87,9 +87,10 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.2.0"}
+    return {"status": "ok", "version": "0.3.2"}
 
 
+app.include_router(vibe_pipeline.router, prefix="/runs/pipeline/vibe", tags=["vibe-pipeline"])
 app.include_router(pipeline.router,   prefix="/runs/pipeline",    tags=["pipeline"])
 app.include_router(optimize.router,   prefix="/runs/optimize",    tags=["optimize"])
 app.include_router(runs.router,       prefix="/runs",             tags=["runs"])
