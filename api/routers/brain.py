@@ -64,6 +64,144 @@ _CHAPTERS: list[tuple[str, list[str]]] = [
 _DEFAULT_CHAPTERS = ["04_alpha_factors", "05_strategy_evaluation"]
 _CHARS_PER_CHAPTER = 4000   # ~1000 tokens per chapter injected
 
+# Practical knowledge chunks — always synced, not from GitHub
+_PRACTICAL_CHUNKS = [
+    {
+        "id": "prac_risk_management",
+        "title": "Practical Risk Management: Kelly Sizing, DD Control, ATR Stops",
+        "content": """\
+# Practical Risk Management
+
+## Kelly Criterion & Position Sizing
+Optimal fraction: f = (p×b - q) / b  where p=win_prob, b=profit_factor, q=1-p
+Use HALF-Kelly in practice: f/2 (reduces variance, drawdown by ~50%).
+For unknown win rates, use fixed fractional: risk_per_trade = 0.5% (volatile) to 1.0% (stable).
+
+## Achieving MaxDD < 8%
+With 0.5% risk per trade:
+- 16 consecutive losses → 8% drawdown (99th-percentile streak at 40% win rate)
+- Add cooldown: skip next signal after 4 consecutive losses
+- Reduce size by 50% when current DD > 4%
+
+## ATR-Based Stop Loss (mandatory)
+Never use fixed % stops — ATR adapts to current volatility.
+SL_dist = ATR14 × sl_mult  (absolute price distance)
+- Mean-reversion: sl_mult = 1.5 (clear invalidation at recent extreme)
+- Breakout: sl_mult = 2.0 (below breakout level)
+- Trend-following: sl_mult = 2.5–3.0 (wide — needs room to breathe)
+
+## TP/SL Ratio Requirements
+Minimum TP/SL = 2.0 for positive expectancy.
+Break-even win rate = SL/(SL+TP) = 1/(1+RR)
+At RR=2.0: need >33% win rate to profit.
+At RR=3.0: need >25% win rate to profit.
+Most strategies achieve 35-55% win rate → RR of 2–3 is optimal.
+
+## Risk per Volatility Level
+ann_vol < 20%: risk_per_trade = 1.0–1.5%
+ann_vol 20–40%: risk_per_trade = 0.75–1.0%
+ann_vol 40–60%: risk_per_trade = 0.5–0.75%
+ann_vol > 60%: risk_per_trade = 0.3–0.5%
+""",
+        "tags": ["risk", "kelly", "position sizing", "drawdown", "stop loss", "ATR"],
+        "source": "theory",
+    },
+    {
+        "id": "prac_strategy_design_sharpe",
+        "title": "Designing Strategies for Sharpe > 1.0 with MaxDD < 8%",
+        "content": """\
+# Strategy Design for High Sharpe, Low Drawdown
+
+## Signal Quality Patterns That Work
+
+Pattern 1 — Mean-Reversion (Hurst < 0.45):
+  price deviation > 1.5 ATR from 20-bar mean
+  AND RSI < 28 for long / RSI > 72 for short
+  AND volume declining (exhaustion signal)
+  → sl_mult=1.5, tp_mult=3.0, risk_per_trade=0.5%
+
+Pattern 2 — Trend Breakout (Hurst > 0.55):
+  close > N-bar high (shifted 1 bar, no lookahead!)
+  AND EMA50 > EMA200 for long / EMA50 < EMA200 for short
+  AND volume > 1.2× 20-bar average
+  → sl_mult=2.5, tp_mult=5.0, risk_per_trade=0.5%
+
+Pattern 3 — Volatility Squeeze Breakout (Hurst ≈ 0.50):
+  BB bandwidth < 20th percentile (squeeze)
+  AND 5-bar momentum positive for long / negative for short
+  AND ATR rising (vol expansion starting)
+  → sl_mult=2.0, tp_mult=4.0, risk_per_trade=0.5%
+
+## Filters That Reduce False Signals
+- Trend filter: only long when EMA50 > EMA200, short when EMA50 < EMA200
+- Volume filter: require volume > 1.2× rolling(20) average
+- Volatility filter: skip entry when ATR > 2× ATR.rolling(20).mean() (extreme vol)
+- Session filter: active_hours to avoid illiquid periods
+
+## Avoiding Overfitting
+- Use ≤ 4 parameters (fewer = more robust out-of-sample)
+- Need > 100 trades for statistical significance (Sharpe SE ≈ sqrt(2/n))
+- Test on > 2 years of data
+- Walk-forward efficiency > 0.5 (WFO Sharpe / in-sample Sharpe)
+- Never optimize SL/TP in-sample
+
+## Minimum Trade Frequency
+To achieve Sharpe > 1 reliably: need > 50 trades per year.
+If fewer trades, increase timeframe or relax entry conditions.
+Too many trades (>500/yr on 1h): usually overfit to noise.
+
+## GARCH Regime Usage (IMPORTANT)
+DO NOT use garch_regime as a per-bar entry filter — it's a LOOKAHEAD variable.
+USE garch_regime only via size_mult for position sizing (already built into engine).
+""",
+        "tags": ["sharpe", "drawdown", "strategy design", "signal quality", "filters", "backtest"],
+        "source": "theory",
+    },
+    {
+        "id": "prac_regime_selection",
+        "title": "Market Regime Detection and Strategy Selection",
+        "content": """\
+# Regime Detection and Strategy Mapping
+
+## Hurst Exponent Interpretation
+H > 0.65: Strong trend — momentum strategies, long breakouts, trend continuation
+H 0.55–0.65: Mild trend — trend-following with confirmation
+H 0.45–0.55: Random walk — breakout on vol expansion, neutral
+H 0.35–0.45: Mild mean-reversion — oscillator strategies, fade extremes
+H < 0.35: Strong mean-reversion — aggressive fading, BB reversion
+
+## Crypto vs Forex vs Stocks
+
+Crypto (BTC, ETH, SOL):
+- High volatility (ann_vol 60–150%) → risk_per_trade = 0.3–0.5%
+- Usually trending (H 0.50–0.65) → breakout/momentum works
+- 24/7 market → active_hours [0, 23]
+- Higher sl_mult (2.5–3.5) needed for volatile assets
+
+Forex (EUR/USD, GBP/USD):
+- Low volatility (ann_vol 5–15%) → risk_per_trade = 0.5–1.5%
+- Mean-reverting on short TF, trending on longer TF
+- Best active hours: [7, 17] UTC (London + NY session overlap)
+- Tight sl_mult (1.5–2.0) appropriate
+
+Stocks (SPY, AAPL, GLD):
+- Medium volatility (ann_vol 15–40%)
+- Usually trending (momentum strategies work well)
+- Only trade during market hours [13, 20] UTC
+- Direction: prefer LONG for long-only stocks
+
+## Timeframe Selection
+1m: scalping, very high noise, needs >500 trades/year — hard to be robust
+15m: intraday, medium frequency, needs tight sl_mult
+1h: best balance for crypto — enough data, meaningful trends
+4h: good for trend-following, fewer trades but cleaner signals
+1d: daily swings, few trades, high RR needed (tp_mult ≥ 4)
+""",
+        "tags": ["regime", "hurst", "trend", "mean-reversion", "crypto", "forex", "stocks", "timeframe"],
+        "source": "theory",
+    },
+]
+
 
 def select_chapters(prompt: str, max_chapters: int = 3) -> list[str]:
     """Return up to max_chapters chapter IDs most relevant to the prompt."""
@@ -260,6 +398,21 @@ def sync_brain():
         except Exception:
             pass  # individual code file failures are non-blocking
 
+    # Sync practical knowledge chunks (always included, not from GitHub)
+    practical_synced = 0
+    for chunk in _PRACTICAL_CHUNKS:
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO brain_chunks (id, title, content, tags, source, synced_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                [chunk["id"], chunk["title"], chunk["content"],
+                 json.dumps(chunk["tags"]), chunk.get("source", "theory"),
+                 str(datetime.utcnow())]
+            )
+            practical_synced += 1
+        except Exception as exc:
+            errors.append({"chapter": chunk["id"], "error": str(exc)})
+
     # Invalidate TF-IDF index so next retrieval rebuilds with new content
     try:
         from api.routers.brain_semantic import invalidate_index
@@ -269,6 +422,7 @@ def sync_brain():
 
     return {
         "synced": len(synced),
+        "practical_synced": practical_synced,
         "errors": len(errors),
         "chapters": synced,
         "error_details": errors,

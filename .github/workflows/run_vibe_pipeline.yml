@@ -1,0 +1,306 @@
+name: Run Vibe Pipeline (Claude Strategy Generation)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Comma-separated tickers"
+        required: false
+        default: "BTC-USD,ETH-USD,SOL-USD,EURUSD=X,AAPL"
+      timeframes:
+        description: "Comma-separated timeframes"
+        required: false
+        default: "1h,4h,1d"
+      max_attempts:
+        description: "Claude generation attempts per (ticker, timeframe)"
+        required: false
+        default: "4"
+      stop_sharpe:
+        description: "Stop early when Sharpe >= this"
+        required: false
+        default: "1.5"
+      max_dd:
+        description: "Max acceptable drawdown %"
+        required: false
+        default: "8.0"
+      clear_library:
+        description: "Delete all existing strategies before running (yes/no)"
+        required: false
+        default: "yes"
+  push:
+    branches: [master]
+    paths:
+      - '.vibe-pipeline-trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  vibe_pipeline:
+    name: Vibe Claude Strategy Pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Force deploy latest API to Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import urllib.request, json, os, sys
+          token = os.environ.get("RAILWAY_TOKEN", "")
+          if not token:
+              print("RAILWAY_TOKEN not set — skipping force deploy")
+              sys.exit(0)
+          gql_url = "https://backboard.railway.app/graphql/v2"
+          def gql(query):
+              body = json.dumps({"query": query}).encode()
+              req = urllib.request.Request(gql_url, data=body, method="POST", headers={
+                  "Authorization": f"Bearer {token}",
+                  "Content-Type": "application/json",
+              })
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      return json.loads(r.read())
+              except Exception as e:
+                  print(f"GQL error: {e}")
+                  return {}
+          resp = gql("{ me { projects { edges { node { id name environments { edges { node { id name } } } services { edges { node { id name } } } } } } } }")
+          project_id = service_id = env_id = None
+          for p in resp.get("data", {}).get("me", {}).get("projects", {}).get("edges", []):
+              node = p["node"]
+              for s in node.get("services", {}).get("edges", []):
+                  if s["node"]["name"].lower() == "api":
+                      project_id = node["id"]
+                      service_id = s["node"]["id"]
+                      envs = node.get("environments", {}).get("edges", [])
+                      env_id = next(
+                          (e["node"]["id"] for e in envs if "prod" in e["node"]["name"].lower()),
+                          envs[0]["node"]["id"] if envs else None
+                      )
+                      print(f"Found: project={project_id} service={service_id} env={env_id}")
+                      break
+              if project_id:
+                  break
+          if not project_id:
+              print("WARNING: Could not find 'api' service via GQL")
+          gh_env = os.environ.get("GITHUB_ENV", "")
+          if gh_env:
+              with open(gh_env, "a") as f:
+                  if project_id: f.write(f"RAILWAY_PROJECT_ID={project_id}\n")
+                  if env_id:     f.write(f"RAILWAY_ENVIRONMENT_ID={env_id}\n")
+                  if service_id: f.write(f"RAILWAY_SERVICE_ID={service_id}\n")
+          PYEOF
+          bash <(curl -fsSL https://railway.com/install.sh) -y 2>/dev/null || npm install -g @railway/cli --silent 2>&1 | tail -2
+          echo "Running: railway up --service api --detach"
+          railway up --service api --detach -m "CI: vibe pipeline deploy" || true
+          echo "Waiting 90s for Railway build to start..."
+          sleep 90
+
+      - name: Wait for Railway health
+        env:
+          API_BASE: "https://illustrious-inspiration-production.up.railway.app"
+        run: |
+          echo "Polling /health until 200 (max 25 min)..."
+          for i in $(seq 1 25); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$API_BASE/health" 2>/dev/null || echo "000")
+            echo "  [$i/25] health=$CODE"
+            [ "$CODE" = "200" ] && { echo "Railway is ready!"; break; }
+            sleep 60
+          done
+          echo "Proceeding..."
+
+      - name: Clear Library (delete all strategies)
+        env:
+          API_BASE: "https://illustrious-inspiration-production.up.railway.app"
+          CLEAR_LIBRARY: ${{ github.event.inputs.clear_library || 'yes' }}
+        run: |
+          if [ "$CLEAR_LIBRARY" = "yes" ]; then
+            echo "Clearing all strategies from Library..."
+            RESULT=$(curl -s --max-time 30 -X POST "$API_BASE/strategies/prune?min_sharpe=9999" \
+              -H 'Content-Type: application/json' 2>&1)
+            echo "Prune result: $RESULT"
+          else
+            echo "Skipping library clear (clear_library=no)"
+          fi
+
+      - name: Sync Brain with practical knowledge
+        env:
+          API_BASE: "https://illustrious-inspiration-production.up.railway.app"
+        run: |
+          echo "Syncing brain..."
+          RESULT=$(curl -s --max-time 120 -X POST "$API_BASE/brain/sync" \
+            -H 'Content-Type: application/json' 2>&1)
+          echo "Brain sync result: $RESULT"
+
+      - name: Build Vibe pipeline payload
+        id: params
+        run: |
+          python3 << 'PYEOF'
+          import json, os
+
+          event = os.environ.get("GITHUB_EVENT_NAME", "workflow_dispatch")
+
+          if event == "push":
+              try:
+                  with open(".vibe-pipeline-trigger") as f:
+                      params = json.load(f)
+                  params.pop("triggered_at", None)
+              except Exception:
+                  params = {
+                      "tickers": ["BTC-USD", "ETH-USD", "SOL-USD", "EURUSD=X", "AAPL"],
+                      "timeframes": ["1h", "4h", "1d"],
+                      "max_attempts": 4,
+                      "stop_sharpe": 1.5,
+                      "max_dd": 8.0,
+                  }
+          else:
+              tickers_raw = "${{ github.event.inputs.tickers }}"
+              tfs_raw = "${{ github.event.inputs.timeframes }}"
+              params = {
+                  "tickers":      [t.strip() for t in tickers_raw.split(",") if t.strip()],
+                  "timeframes":   [t.strip() for t in tfs_raw.split(",") if t.strip()],
+                  "max_attempts": int("${{ github.event.inputs.max_attempts }}" or "4"),
+                  "stop_sharpe":  float("${{ github.event.inputs.stop_sharpe }}" or "1.5"),
+                  "max_dd":       float("${{ github.event.inputs.max_dd }}" or "8.0"),
+              }
+
+          payload = json.dumps(params)
+          print(f"Payload: {payload}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"payload={payload}\n")
+          PYEOF
+
+      - name: Start Vibe pipeline job
+        id: start
+        env:
+          API_BASE: "https://illustrious-inspiration-production.up.railway.app"
+          PAYLOAD: ${{ steps.params.outputs.payload }}
+        run: |
+          JOB_ID=""
+          for attempt in 1 2 3 4 5; do
+            echo "Attempt $attempt/5 — POST $API_BASE/runs/pipeline/vibe"
+            RESPONSE=$(curl -s --max-time 60 -X POST "$API_BASE/runs/pipeline/vibe" \
+              -H 'Content-Type: application/json' -d "$PAYLOAD" 2>&1)
+            echo "Response: $RESPONSE"
+            JOB_ID=$(echo "$RESPONSE" | python3 -c \
+              "import sys,json; print(json.load(sys.stdin).get('job_id',''))" 2>/dev/null || echo "")
+            if [ -n "$JOB_ID" ]; then
+              echo "job_id=$JOB_ID" >> "$GITHUB_OUTPUT"
+              echo "Started Vibe pipeline job: $JOB_ID"
+              echo "Stream: $API_BASE/runs/pipeline/vibe/$JOB_ID/stream"
+              break
+            fi
+            echo "  No job_id, waiting 120s before retry..."
+            sleep 120
+          done
+          if [ -z "$JOB_ID" ]; then
+            echo "ERROR: Could not start Vibe pipeline after 5 attempts"
+            exit 1
+          fi
+
+      - name: Stream Vibe pipeline events
+        id: stream
+        env:
+          API_BASE: "https://illustrious-inspiration-production.up.railway.app"
+          JOB_ID: ${{ steps.start.outputs.job_id }}
+        run: |
+          echo "Streaming events for Vibe pipeline job $JOB_ID ..."
+          mkdir -p /tmp/pipeline_out
+
+          cat > /tmp/stream_vibe.py << 'PYEOF'
+          import sys, json
+
+          log_lines = []
+
+          for raw in sys.stdin:
+              raw = raw.strip()
+              if not raw.startswith("data:"):
+                  continue
+              try:
+                  evt = json.loads(raw[5:].strip())
+              except Exception:
+                  continue
+
+              t = evt.get("type", "")
+              if t == "start":
+                  line = f"[start] tickers={evt['tickers']} timeframes={evt['timeframes']} max_attempts={evt['max_attempts']} max_dd={evt['max_dd']}%"
+                  print(line, flush=True); log_lines.append(line)
+              elif t == "ticker_start":
+                  line = f"\n[{evt['idx']}/{evt['total']}] {evt['ticker']}"
+                  print(line, flush=True); log_lines.append(line)
+              elif t == "downloading":
+                  line = f"  -> download {evt['ticker']} {evt['tf']} ({evt['period']})"
+                  print(line, flush=True); log_lines.append(line)
+              elif t == "download_done":
+                  line = f"  -> OK {evt['ticker']} {evt['tf']}: {evt['bars']:,} bars  {evt['start']} -> {evt['end']}"
+                  print(line, flush=True); log_lines.append(line)
+              elif t in ("download_error", "iter_error"):
+                  line = f"  -> ERROR {evt.get('ticker','')} {evt.get('tf','')}: {evt.get('msg','?')}"
+                  print(line, flush=True); log_lines.append(line)
+              elif t == "iter_start":
+                  line = f"  [{evt['iter']:>3}] {evt['tf']:<4} {evt['arch']}"
+                  print(line, flush=True); log_lines.append(line)
+              elif t == "iter_done":
+                  verdict = evt['verdict']
+                  star = " ***ROBUST***" if verdict == "ROBUST" else (" ." if verdict == "marginal" else "")
+                  drift_val = evt.get('drift', 0.0) or 0.0
+                  p_ruin = evt.get('mc_p_ruin')
+                  ruin_str = f"  p_ruin={p_ruin:.3f}" if p_ruin is not None else ""
+                  line = (f"         Sharpe={evt['sharpe']:+.3f}  DD={evt['dd']:+.1f}%  "
+                          f"N={evt['n_trades']}  WR={evt['win_rate']:.1f}%  "
+                          f"drift={drift_val:+.4f}{ruin_str}  [{verdict}]{star}")
+                  print(line, flush=True); log_lines.append(line)
+              elif t == "ticker_done":
+                  v = evt['verdict']
+                  if v == "ROBUST":
+                      line = f"  SAVED -> Library  sid={evt['sid']}  {evt.get('tf','')}  Sharpe={evt['sharpe']}  DD={evt['dd']}%"
+                  else:
+                      line = f"  Best: Sharpe={evt.get('sharpe')}  ({v})"
+                  print(line, flush=True); log_lines.append(line)
+              elif t == "complete":
+                  lines = [
+                      "\nVIBE PIPELINE COMPLETE",
+                      f"  Tickers processed  : {evt['total_tickers']}",
+                      f"  ROBUST strategies  : {evt['robust_found']}",
+                  ]
+                  for s in evt.get("summary", []):
+                      flag = "*" if s["verdict"] == "ROBUST" else " "
+                      sh   = s.get("sharpe") or 0.0
+                      tf   = s.get("tf") or "?"
+                      lines.append(f"  {flag} {s['ticker']:<12} {tf:<5} {sh:>+8.3f}  {s['verdict']}")
+                  for l in lines:
+                      print(l, flush=True); log_lines.append(l)
+                  with open("/tmp/pipeline_out/vibe_result.json", "w") as f:
+                      json.dump({"status": "complete", "summary": evt.get("summary", []), "log": log_lines}, f, indent=2)
+                  break
+              elif t == "error":
+                  line = f"\nVIBE PIPELINE ERROR: {evt['msg']}"
+                  print(line, flush=True); log_lines.append(line)
+                  with open("/tmp/pipeline_out/vibe_result.json", "w") as f:
+                      json.dump({"status": "error", "msg": evt['msg'], "log": log_lines}, f, indent=2)
+                  sys.exit(1)
+          PYEOF
+
+          curl -sN --max-time 86400 "$API_BASE/runs/pipeline/vibe/$JOB_ID/stream" \
+            | python3 /tmp/stream_vibe.py
+
+      - name: Commit Vibe pipeline results
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f /tmp/pipeline_out/vibe_result.json ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}"
+            git pull --rebase origin master || true
+            cp /tmp/pipeline_out/vibe_result.json vibe-pipeline-last-result.json
+            git add vibe-pipeline-last-result.json
+            git diff --cached --quiet || git commit -m "ci: vibe pipeline result $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin HEAD:master || echo "WARNING: push failed"
+          else
+            echo "No result file found — Vibe pipeline did not complete."
+          fi
