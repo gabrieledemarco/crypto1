@@ -1,1 +1,1 @@
-{"triggered_at": "2026-05-25T18:25:00Z", "tickers": ["BTC-USD","ETH-USD","SOL-USD","EURUSD=X","GBPUSD=X","JPYUSD=X"], "timeframes": ["15m","1h","4h","1d"], "iters_per_run": 12}
+{"triggered_at": "2026-05-29T16:30:00Z", "tickers": ["BTC-USD","ETH-USD","SOL-USD","EURUSD=X","GBPUSD=X","JPYUSD=X","AAPL"], "timeframes": ["15m","1h","4h","1d"], "iters_per_run": 12, "stop_sharpe": -999, "max_dd": 100}
