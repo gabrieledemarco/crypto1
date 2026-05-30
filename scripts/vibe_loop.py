@@ -52,6 +52,19 @@ _SUB_HOURLY    = {"1min", "5min"}           # truly unsupported (need real tick 
 _RESAMPLE_FREQ = {"4h": "4h", "4H": "4h", "1d": "D", "d": "D"}
 _ANN_FACTORS   = {"15min": 35040, "1h": 8760, "4h": 2190, "1d": 365}
 
+# ── Risk configuration grid ────────────────────────────────────────────────────
+# Cycled through iterations so each archetype is tested with varied risk settings.
+_RISK_GRID = [
+    {"leverage": 1.0, "trailing_stop": False, "position_size_method": "risk_pct"},
+    {"leverage": 2.0, "trailing_stop": False, "position_size_method": "risk_pct"},
+    {"leverage": 1.0, "trailing_stop": True,  "trailing_stop_method": "atr",  "trailing_stop_value": 1.5,  "position_size_method": "risk_pct"},
+    {"leverage": 1.0, "trailing_stop": True,  "trailing_stop_method": "pct",  "trailing_stop_value": 1.5,  "position_size_method": "risk_pct"},
+    {"leverage": 1.0, "trailing_stop": False, "position_size_method": "fixed_pct"},
+    {"leverage": 2.0, "trailing_stop": True,  "trailing_stop_method": "atr",  "trailing_stop_value": 2.0,  "position_size_method": "risk_pct"},
+    {"leverage": 3.0, "trailing_stop": False, "position_size_method": "risk_pct"},
+    {"leverage": 1.0, "trailing_stop": True,  "trailing_stop_method": "atr",  "trailing_stop_value": 2.5,  "position_size_method": "risk_pct"},
+]
+
 # ── Archive CSV map ────────────────────────────────────────────────────────────
 _CSV_DIR = os.path.join(_ROOT, "archive", "btc_analysis", "output")
 _TICKER_CSV = {"BTC-USD": "btc_hourly.csv", "ETH-USD": "eth_hourly.csv", "SOL-USD": "sol_hourly.csv"}
@@ -281,7 +294,7 @@ def save_strategy(name: str, config: dict, code: str) -> str:
     return sid
 
 
-def run_backtest(df: pd.DataFrame, config: dict, code: str) -> dict:
+def run_backtest(df: pd.DataFrame, config: dict, code: str, risk_cfg: dict | None = None) -> dict:
     df_ind = compute_indicators_v2(df, fit_garch=True)
 
     sl   = float(config.get("sl_mult", 2.0))
@@ -289,13 +302,19 @@ def run_backtest(df: pd.DataFrame, config: dict, code: str) -> dict:
     risk = float(config.get("risk_per_trade", 1.0))
     if risk > 0.1:
         risk /= 100.0
+    rc = risk_cfg or {}
     cfg = {
-        "sl_mult":        sl,
-        "tp_mult":        tp,
-        "active_hours":   list(config.get("active_hours", [6, 22])),
-        "commission":     float(config.get("commission", 0.0004)),
-        "slippage":       float(config.get("slippage", 0.0001)),
-        "risk_per_trade": risk,
+        "sl_mult":              sl,
+        "tp_mult":              tp,
+        "active_hours":         list(config.get("active_hours", [6, 22])),
+        "commission":           float(config.get("commission", 0.0004)),
+        "slippage":             float(config.get("slippage", 0.0001)),
+        "risk_per_trade":       risk,
+        "leverage":             float(rc.get("leverage", 1.0)),
+        "trailing_stop":        bool(rc.get("trailing_stop", False)),
+        "trailing_stop_method": rc.get("trailing_stop_method", "atr"),
+        "trailing_stop_value":  float(rc.get("trailing_stop_value", 1.5)),
+        "position_size_method": rc.get("position_size_method", "risk_pct"),
     }
 
     if code and code.strip():
@@ -383,15 +402,19 @@ def _promote_strategy(sid: str, status: str) -> None:
 def _print_table(log: list[dict]) -> None:
     if not log:
         return
-    hdr = f"  {'I':>3} {'TF':>3} {'Archetype':<22} {'Sharpe':>7} {'CAGR%':>6} {'DD%':>7} {'N':>5} {'WR%':>5}  Verdict"
+    hdr = f"  {'I':>3} {'TF':>3} {'Archetype':<22} {'Sharpe':>7} {'CAGR%':>6} {'DD%':>7} {'N':>5} {'WR%':>5} {'LVG':>4} {'Risk cfg':<18}  Verdict"
     print("\n" + hdr)
     print("  " + "─" * (len(hdr) - 2))
     for r in log:
         flag = " ★" if r["verdict"] == "ROBUST" else (" ·" if r["verdict"] == "marginal" else "")
+        ts = f"TS={r.get('ts_method','—')}×{r.get('ts_value',0)}" if r.get("trailing_stop") else "no-trail"
+        sm = "fix%" if r.get("size_method") == "fixed_pct" else "risk%"
+        risk_info = f"{sm} {ts}"
         print(
             f"  {r['iter']:>3} {r['tf']:>3} {r['arch']:<22} "
             f"{r['sharpe']:>+7.3f} {r['cagr']:>6.1f} {r['dd']:>7.1f} "
-            f"{r['n_trades']:>5} {r['win']:>5.1f}  {r['verdict']}{flag}"
+            f"{r['n_trades']:>5} {r['win']:>5.1f} {r.get('leverage',1.0):>4.1f} "
+            f"{risk_info:<18}  {r['verdict']}{flag}"
         )
 
 
@@ -443,12 +466,18 @@ def main() -> dict:
     log: list[dict] = []
 
     for iteration in range(1, max_iter + 1):
-        tf   = avail[(iteration - 1) % len(avail)]
-        df   = tf_data[tf]
+        tf       = avail[(iteration - 1) % len(avail)]
+        df       = tf_data[tf]
         name, _, sl_used, tp_used = get_archetype(iteration)
+        risk_cfg = _RISK_GRID[(iteration - 1) % len(_RISK_GRID)]
 
+        ts_tag = ""
+        if risk_cfg.get("trailing_stop"):
+            ts_tag = f" TS={risk_cfg['trailing_stop_method'].upper()}×{risk_cfg.get('trailing_stop_value',1.5)}"
+        ps_tag = "FIX%" if risk_cfg.get("position_size_method") == "fixed_pct" else "RISK%"
         print(f"\n{'─'*70}")
-        print(f"  [{iteration:>3}/{max_iter}]  {tf}  |  arch={name}  SL={sl_used}x TP={tp_used}x")
+        print(f"  [{iteration:>3}/{max_iter}]  {tf}  |  arch={name}  SL={sl_used}x TP={tp_used}x  "
+              f"LVG={risk_cfg['leverage']}x  {ps_tag}{ts_tag}")
         print(f"{'─'*70}")
 
         history = _brain_history(ticker)
@@ -462,12 +491,13 @@ def main() -> dict:
             continue
         print(f"  {expl[:110]}")
         config["active_hours"] = _active_hours(tf)  # enforce correct hours per tf
+        config.update(risk_cfg)   # merge risk management params into saved config
 
         sid = save_strategy(f"vibe_{iteration:03d}_{tf}_{ticker.replace('-','_')}", config, code)
         print(f"  sid={sid}")
 
         try:
-            result = run_backtest(df, config, code)
+            result = run_backtest(df, config, code, risk_cfg=risk_cfg)
         except Exception as e:
             import traceback
             print(f"  backtest failed: {e}")
@@ -501,7 +531,12 @@ def main() -> dict:
         log.append({"iter": iteration, "tf": tf, "arch": name, "sid": sid,
                     "sharpe": round(sharpe, 3), "cagr": round(cagr, 1),
                     "dd": round(dd, 1), "n_trades": n_tr,
-                    "win": round(win, 1), "verdict": verdict})
+                    "win": round(win, 1), "verdict": verdict,
+                    "leverage": risk_cfg.get("leverage", 1.0),
+                    "trailing_stop": risk_cfg.get("trailing_stop", False),
+                    "ts_method": risk_cfg.get("trailing_stop_method", "—"),
+                    "ts_value": risk_cfg.get("trailing_stop_value", 0),
+                    "size_method": risk_cfg.get("position_size_method", "risk_pct")})
 
         print(
             f"  Sharpe={sharpe:+.3f}  CAGR={cagr:.1f}%  DD={dd:.1f}%  "

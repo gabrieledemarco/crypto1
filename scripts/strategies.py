@@ -177,10 +177,125 @@ def agent_fn(df, ind=None):
     df["SL_dist"] = df["ATR14"] * {sl}
     df["TP_dist"] = df["ATR14"] * {tp}
     return df"""),
+
+    # ── HFT / scalping archetypes ──────────────────────────────────────────────
+
+    ("ema_scalp_3_8", """\
+def agent_fn(df, ind=None):
+    import numpy as np
+    df = df.copy()
+    fast  = ind("EMA", 3)  if ind else df["Close"].ewm(span=3,  adjust=False).mean()
+    slow  = ind("EMA", 8)  if ind else df["Close"].ewm(span=8,  adjust=False).mean()
+    vol_ok = df["Volume"] > df["Volume"].rolling(10).mean()
+    xu = (fast > slow) & (fast.shift(1) <= slow.shift(1)) & vol_ok
+    xd = (fast < slow) & (fast.shift(1) >= slow.shift(1)) & vol_ok
+    df["signal"] = 0
+    df.loc[xu, "signal"] =  1
+    df.loc[xd, "signal"] = -1
+    df["SL_dist"] = df["ATR14"] * {sl}
+    df["TP_dist"] = df["ATR14"] * {tp}
+    return df"""),
+
+    ("vwap_scalp", """\
+def agent_fn(df, ind=None):
+    df = df.copy()
+    pv   = df["Close"] * df["Volume"]
+    vwap = pv.rolling(12).sum() / (df["Volume"].rolling(12).sum() + 1e-10)
+    dev  = (df["Close"] - vwap) / (df["ATR14"] + 1e-10)
+    rsi  = ind("RSI", 7) if ind else df["RSI14"]
+    df["signal"] = 0
+    df.loc[(dev < -0.8) & (rsi < 45), "signal"] =  1
+    df.loc[(dev >  0.8) & (rsi > 55), "signal"] = -1
+    df["SL_dist"] = df["ATR14"] * {sl}
+    df["TP_dist"] = df["ATR14"] * {tp}
+    return df"""),
+
+    ("order_flow_imbalance", """\
+def agent_fn(df, ind=None):
+    import numpy as np
+    df = df.copy()
+    rng  = (df["High"] - df["Low"]).replace(0, np.nan)
+    buy_vol  = ((df["Close"] - df["Low"])  / rng * df["Volume"]).fillna(0)
+    sell_vol = ((df["High"] - df["Close"]) / rng * df["Volume"]).fillna(0)
+    ofi = (buy_vol - sell_vol).rolling(8).sum() / (df["Volume"].rolling(8).sum() + 1e-10)
+    df["signal"] = 0
+    df.loc[ofi >  0.20, "signal"] =  1
+    df.loc[ofi < -0.20, "signal"] = -1
+    df["SL_dist"] = df["ATR14"] * {sl}
+    df["TP_dist"] = df["ATR14"] * {tp}
+    return df"""),
+
+    ("rsi_fast_7", """\
+def agent_fn(df, ind=None):
+    df = df.copy()
+    rsi7 = ind("RSI", 7) if ind else df["RSI14"]
+    bull = df["Close"] > df["Close"].ewm(span=20, adjust=False).mean()
+    df["signal"] = 0
+    df.loc[ bull & (rsi7 < 30), "signal"] =  1
+    df.loc[~bull & (rsi7 > 70), "signal"] = -1
+    df["SL_dist"] = df["ATR14"] * {sl}
+    df["TP_dist"] = df["ATR14"] * {tp}
+    return df"""),
+
+    ("bb_tight_scalp", """\
+def agent_fn(df, ind=None):
+    df = df.copy()
+    mid   = df["Close"].rolling(10).mean()
+    std   = df["Close"].rolling(10).std()
+    upper = mid + 1.5 * std
+    lower = mid - 1.5 * std
+    rsi   = ind("RSI", 7) if ind else df["RSI14"]
+    df["signal"] = 0
+    df.loc[(df["Close"] < lower) & (rsi < 40), "signal"] =  1
+    df.loc[(df["Close"] > upper) & (rsi > 60), "signal"] = -1
+    df["SL_dist"] = df["ATR14"] * {sl}
+    df["TP_dist"] = df["ATR14"] * {tp}
+    return df"""),
+
+    ("volume_breakout", """\
+def agent_fn(df, ind=None):
+    df = df.copy()
+    vol_surge = df["Volume"] > df["Volume"].rolling(20).mean() * 2.0
+    hi8 = df["High"].rolling(8).max().shift(1)
+    lo8 = df["Low"].rolling(8).min().shift(1)
+    df["signal"] = 0
+    df.loc[vol_surge & (df["Close"] > hi8), "signal"] =  1
+    df.loc[vol_surge & (df["Close"] < lo8), "signal"] = -1
+    df["SL_dist"] = df["ATR14"] * {sl}
+    df["TP_dist"] = df["ATR14"] * {tp}
+    return df"""),
+
+    ("tick_direction_momentum", """\
+def agent_fn(df, ind=None):
+    import numpy as np
+    df = df.copy()
+    tick = np.sign(df["Close"] - df["Close"].shift(1)).fillna(0)
+    run3 = tick.rolling(3).sum()          # +3=three up ticks, -3=three down
+    vol_ok = df["Volume"] > df["Volume"].rolling(15).mean()
+    df["signal"] = 0
+    df.loc[(run3 >= 2) & vol_ok, "signal"] =  1
+    df.loc[(run3 <= -2) & vol_ok, "signal"] = -1
+    df["SL_dist"] = df["ATR14"] * {sl}
+    df["TP_dist"] = df["ATR14"] * {tp}
+    return df"""),
+
+    ("spread_capture", """\
+def agent_fn(df, ind=None):
+    import numpy as np
+    df = df.copy()
+    spread = (df["High"] - df["Low"]) / (df["Close"] + 1e-10)
+    spread_low = spread < spread.rolling(20).quantile(0.25)
+    mid = df["Close"].rolling(5).mean()
+    df["signal"] = 0
+    df.loc[spread_low & (df["Close"] > mid) & (df["Close"].diff() > 0), "signal"] =  1
+    df.loc[spread_low & (df["Close"] < mid) & (df["Close"].diff() < 0), "signal"] = -1
+    df["SL_dist"] = df["ATR14"] * {sl}
+    df["TP_dist"] = df["ATR14"] * {tp}
+    return df"""),
 ]
 
 # SL/TP schedule: (sl_mult, tp_mult)
-# Covers conservative → aggressive risk-reward profiles
+# Standard higher-TF profiles + tight scalping profiles for HFT
 _SL_TP: list[tuple[float, float]] = [
     (1.5, 3.0),  # RR 2.0 — conservative
     (2.0, 4.0),  # RR 2.0
@@ -191,6 +306,12 @@ _SL_TP: list[tuple[float, float]] = [
     (2.5, 7.5),  # RR 3.0
     (3.0, 9.0),  # RR 3.0
     (1.5, 4.5),  # RR 3.0 — tight SL
+    # ── HFT / scalping SL/TP ratios ────────────────────────────────────────────
+    (0.5, 1.0),  # tight scalp RR 2.0
+    (0.5, 1.5),  # tight scalp RR 3.0
+    (0.8, 1.6),  # scalp RR 2.0
+    (0.8, 2.4),  # scalp RR 3.0
+    (0.3, 0.9),  # ultra-tight RR 3.0
 ]
 
 

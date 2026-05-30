@@ -1,0 +1,34 @@
+{
+  "run_at": "2026-05-30",
+  "mode": "local_vibe_loop",
+  "ticker": "BTC-USD",
+  "timeframes": ["1h"],
+  "note": "1h data used locally; HFT archetypes designed for 1min/5min/15min on Railway",
+  "total_iterations": 10,
+  "archetype_offset": 12,
+  "results": [
+    {"iter": 1,  "arch": "ema_scalp_3_8",           "sl": 1.5, "tp": 3.0, "sharpe": -1.110, "cagr": -13.1, "dd": -35.5, "n": 545,  "wr": 29.7, "lvg": 1.0, "ts": false,               "size": "risk_pct",  "verdict": "failed"},
+    {"iter": 2,  "arch": "vwap_scalp",               "sl": 1.5, "tp": 3.0, "sharpe": -4.163, "cagr": -74.1, "dd": -95.8, "n": 2015, "wr": 28.2, "lvg": 2.0, "ts": false,               "size": "risk_pct",  "verdict": "failed"},
+    {"iter": 3,  "arch": "order_flow_imbalance",     "sl": 1.5, "tp": 3.0, "sharpe":  3.524, "cagr":  92.2, "dd": -12.8, "n": 1693, "wr": 41.2, "lvg": 1.0, "ts": {"method":"atr","val":1.5}, "size": "risk_pct",  "verdict": "marginal★", "sid": "49e632ad"},
+    {"iter": 4,  "arch": "rsi_fast_7",               "sl": 1.5, "tp": 3.0, "sharpe":  0.053, "cagr":   0.2, "dd":  -6.5, "n": 63,   "wr": 34.9, "lvg": 1.0, "ts": {"method":"pct","val":1.5}, "size": "risk_pct",  "verdict": "failed"},
+    {"iter": 5,  "arch": "bb_tight_scalp",           "sl": 1.5, "tp": 3.0, "sharpe": -2.570, "cagr":  -0.5, "dd":  -1.3, "n": 1694, "wr": 29.0, "lvg": 1.0, "ts": false,               "size": "fixed_pct", "verdict": "failed"},
+    {"iter": 6,  "arch": "volume_breakout",          "sl": 1.5, "tp": 3.0, "sharpe":  1.015, "cagr":  13.4, "dd": -13.6, "n": 298,  "wr": 36.6, "lvg": 2.0, "ts": {"method":"atr","val":2.0}, "size": "risk_pct",  "verdict": "marginal"},
+    {"iter": 7,  "arch": "tick_direction_momentum",  "sl": 1.5, "tp": 3.0, "sharpe":  3.208, "cagr": 125.7, "dd": -15.0, "n": 984,  "wr": 41.2, "lvg": 3.0, "ts": false,               "size": "risk_pct",  "verdict": "marginal★", "sid": "629fb120"},
+    {"iter": 8,  "arch": "spread_capture",           "sl": 1.5, "tp": 3.0, "sharpe":  2.653, "cagr":  46.1, "dd":  -7.1, "n": 796,  "wr": 40.2, "lvg": 1.0, "ts": {"method":"atr","val":2.5}, "size": "risk_pct",  "verdict": "marginal★", "sid": "40dd406a"},
+    {"iter": 9,  "arch": "ema_cross_fast",           "sl": 2.0, "tp": 4.0, "sharpe":  0.367, "cagr":   4.7, "dd": -16.7, "n": 376,  "wr": 33.0, "lvg": 1.0, "ts": false,               "size": "risk_pct",  "verdict": "failed"},
+    {"iter": 10, "arch": "ema_cross_rsi",            "sl": 2.0, "tp": 4.0, "sharpe":  0.690, "cagr":   3.0, "dd":  -5.9, "n": 27,   "wr": 48.1, "lvg": 2.0, "ts": false,               "size": "risk_pct",  "verdict": "marginal"}
+  ],
+  "top_candidates_for_railway_sub_hourly": [
+    {"arch": "order_flow_imbalance",    "sharpe_1h": 3.524, "note": "test on 1min/5min/15min — OFI signal strongest at microstructure level"},
+    {"arch": "tick_direction_momentum", "sharpe_1h": 3.208, "note": "tick runs more meaningful at 1min/5min scale"},
+    {"arch": "spread_capture",          "sharpe_1h": 2.653, "note": "bid-ask spread proxy better at 5min scale"}
+  ],
+  "insights": {
+    "order_flow_imbalance_star": "Sharpe=3.52 on 1h — likely even stronger on 5min/15min where OFI is the dominant microstructure signal",
+    "tick_direction_momentum_star": "Sharpe=3.21 CAGR=125.7% with LVG=3x — strong momentum persistence; trailing stop ATR helps",
+    "spread_capture_star": "Sharpe=2.65 DD=-7.1% — very clean risk-adjusted return; low drawdown attractive for live trading",
+    "vwap_scalp_failure": "Too many trades (2015) at 1h = whipsaw; will perform better at 1min/5min where VWAP is the intraday fair value",
+    "ema_scalp_3_8_failure": "EMA(3/8) too noisy at 1h — designed for 1min/5min, needs 10x more bars per signal",
+    "sl_tp_observation": "Standard SL=1.5x TP=3.0x used for all; tight scalp ratios (0.5/1.0) should be tested next round"
+  }
+}
