@@ -596,6 +596,9 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
             "win_rate_p95":   round(float(np.percentile(wr_arr, 95)), 1),
             "n_sims":         n_sims,
             "path_len":       n_bars or n_total,
+            "p_daily_dd_1":  round(float(bs["p_daily_dd_1"]), 2),
+            "p_daily_dd_5":  round(float(bs["p_daily_dd_5"]), 2),
+            "p_daily_dd_10": round(float(bs["p_daily_dd_10"]), 2),
         }
 
     return result
