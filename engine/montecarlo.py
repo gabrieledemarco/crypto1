@@ -45,6 +45,23 @@ def run_bootstrap(pnl: np.ndarray, n_sims: int = 1000, n_bars: int | None = None
     var_95  = float(sorted_finals[var_idx])                              # 5th pct of final capital
     cvar_95 = float(sorted_finals[:max(1, var_idx)].mean())             # mean of worst 5%
 
+    # ── Daily drawdown probabilities ──────────────────────────────────────────
+    # Partition each equity path into daily chunks (trades_per_day ≈ path_len / days).
+    # For each (sim, day) pair compute the day's % return; count days exceeding thresholds.
+    daily_step  = max(1, int(round(path_len / max(days_in_period, 1.0))))
+    n_full_days = path_len // daily_step
+    if n_full_days >= 1:
+        eq_daily     = eq[:, :n_full_days * daily_step].reshape(n_sims, n_full_days, daily_step)
+        day_start_eq = eq_daily[:, :, 0]
+        day_end_eq   = eq_daily[:, :, -1]
+        safe_start   = np.where(day_start_eq > 0, day_start_eq, 1e-8)
+        daily_pct    = (day_end_eq - day_start_eq) / safe_start   # negative = loss
+        p_daily_dd_1  = float((daily_pct < -0.01).mean()) * 100
+        p_daily_dd_5  = float((daily_pct < -0.05).mean()) * 100
+        p_daily_dd_10 = float((daily_pct < -0.10).mean()) * 100
+    else:
+        p_daily_dd_1 = p_daily_dd_5 = p_daily_dd_10 = 0.0
+
     return {
         "final_capital": final,
         "cagr_pct":      cagr_arr,
@@ -54,6 +71,9 @@ def run_bootstrap(pnl: np.ndarray, n_sims: int = 1000, n_bars: int | None = None
         "win_rates":     win_rates,
         "var_95":        var_95,
         "cvar_95":       cvar_95,
+        "p_daily_dd_1":  p_daily_dd_1,
+        "p_daily_dd_5":  p_daily_dd_5,
+        "p_daily_dd_10": p_daily_dd_10,
     }
 
 
