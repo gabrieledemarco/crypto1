@@ -22,8 +22,13 @@ from api.db import get_conn
 router = APIRouter()
 _queues: dict[str, asyncio.Queue] = {}
 
-_ROBUST_MIN_SHARPE = 1.0
+_ROBUST_MIN_SHARPE = 1.5
 _ROBUST_MAX_DD     = 8.0
+
+_MIN_TRADES_ROBUST = {
+    "1m": 50, "5m": 40, "15m": 30, "30m": 25,
+    "1h": 20, "4h": 12, "1d":  8,
+}
 
 _TF_NORM    = {"1min":"1m","5min":"5m","15min":"15m","30min":"30m","1h":"1h","4h":"4h","1d":"1d"}
 _YF_PERIOD  = {"1m":"7d","5m":"60d","15m":"60d","30m":"60d","1h":"730d","4h":"730d","1d":"max"}
@@ -405,12 +410,31 @@ def _run_attempt(ticker, tf, df, config, code, attempt):
         except Exception:
             pass
 
-    dd_ok    = abs(dd) <= _ROBUST_MAX_DD
-    drift_ok = drift > 0
-    mc_ok    = (mc_result.get("p_profit", 0) >= 0.55
-                and mc_result.get("p_ruin", 1) < 0.01
-                and drift_ok)
+    # ── OOS validation: last 20% of bars as unseen hold-out ─────────────────
+    oos_sharpe: float | None = None
+    n_oos = len(df_ind) // 5
+    if n_oos >= 80 and best_key:
+        try:
+            df_oos  = df_ind.iloc[-n_oos:]
+            oos_cfg = {k: v for k, v in cfg.items() if k != "agent_fn"}
+            if "agent_fn" in cfg:
+                oos_cfg["agent_fn"] = cfg["agent_fn"]
+            v_oos   = run_versions(df_oos, oos_cfg, direction=oos_cfg.get("direction", "ALL"))
+            m_oos   = v_oos.get(best_key, {}).get("metrics", {})
+            oos_sharpe = float(m_oos.get("sharpe_ratio", m_oos.get("sharpe", -999)) or -999)
+        except Exception:
+            pass
+
+    min_tr    = _MIN_TRADES_ROBUST.get(tf, 20)
+    dd_ok     = abs(dd) <= _ROBUST_MAX_DD
+    drift_ok  = drift > 0
+    trades_ok = n_tr >= min_tr
+    oos_ok    = (oos_sharpe is None) or (oos_sharpe > 0)
+    mc_ok     = (mc_result.get("p_profit", 0) >= 0.55
+                 and mc_result.get("p_ruin", 1) < 0.01
+                 and drift_ok)
     verdict  = ("ROBUST" if sharpe >= _ROBUST_MIN_SHARPE and dd_ok and mc_ok
+                             and trades_ok and oos_ok
                 else "marginal" if sharpe >= 0 else "failed")
 
     conn = get_conn()
@@ -421,6 +445,8 @@ def _run_attempt(ticker, tf, df, config, code, attempt):
         "sharpe": round(sharpe, 3), "dd": round(dd, 2),
         "n_trades": n_tr, "win_rate": round(wr, 1), "drift": round(drift, 6),
     }
+    if oos_sharpe is not None:
+        cfg_save["perf"]["oos_sharpe"] = round(oos_sharpe, 3)
     if mc_result:
         cfg_save["perf"]["mc_p_profit"] = mc_result.get("p_profit")
         cfg_save["perf"]["mc_p_ruin"]   = mc_result.get("p_ruin")
