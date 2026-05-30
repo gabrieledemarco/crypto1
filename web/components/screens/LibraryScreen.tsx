@@ -11,6 +11,8 @@ import type { SetupParams } from "@/store";
 
 type StatusFilter = "ALL" | "live" | "research" | "archived";
 type GroupBy = "none" | "tf" | "asset" | "method";
+type SortCol = "name" | "tf" | "asset" | "method" | "status" | "sharpe" | "cagr" | "maxdd" | "pf" | "trades";
+type SortDir = "asc" | "desc";
 type EnrichedEntry = LibraryEntry & { _tf: string; _asset: string; _method: string };
 
 function buildRunStub(run: RunListItem): Run {
@@ -81,6 +83,8 @@ export function LibraryScreen() {
   const [groupBy, setGroupBy] = useState<GroupBy>("tf");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [selectedEntry, setSelectedEntry] = useState<LibraryEntry | null>(null);
+  const [sortCol, setSortCol] = useState<SortCol>("sharpe");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const { data: apiLibrary } = useLibrary();
   const starMutation = useStarStrategy();
@@ -116,10 +120,28 @@ export function LibraryScreen() {
       })
       .sort((a, b) => {
         if (a.starred !== b.starred) return a.starred ? -1 : 1;
-        return (b.metrics.sharpe ?? 0) - (a.metrics.sharpe ?? 0);
+        const d = sortDir === "asc" ? 1 : -1;
+        switch (sortCol) {
+          case "name":   return d * a.name.localeCompare(b.name);
+          case "tf":     return d * a._tf.localeCompare(b._tf);
+          case "asset":  return d * a._asset.localeCompare(b._asset);
+          case "method": return d * a._method.localeCompare(b._method);
+          case "status": return d * a.status.localeCompare(b.status);
+          case "sharpe": return d * ((a.metrics.sharpe ?? 0) - (b.metrics.sharpe ?? 0));
+          case "cagr":   return d * ((a.metrics.cagr ?? 0) - (b.metrics.cagr ?? 0));
+          case "maxdd":  return d * ((a.metrics.maxDD ?? 0) - (b.metrics.maxDD ?? 0));
+          case "pf":     return d * ((a.metrics.pf ?? 0) - (b.metrics.pf ?? 0));
+          case "trades": return d * ((a.metrics.trades ?? 0) - (b.metrics.trades ?? 0));
+          default:       return 0;
+        }
       }),
-    [enriched, statusFilter, tfFilter, assetFilter, methodFilter, query],
+    [enriched, statusFilter, tfFilter, assetFilter, methodFilter, query, sortCol, sortDir],
   );
+
+  const handleSort = (col: SortCol) => {
+    if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortCol(col); setSortDir("desc"); }
+  };
 
   type GroupRow = { type: "group"; key: string; count: number } | { type: "entry"; entry: EnrichedEntry };
 
@@ -263,16 +285,12 @@ export function LibraryScreen() {
         <div className={styles.tableWrap}>
           <div className={styles.thead}>
             <span className={styles.th}>★</span>
-            <span className={styles.th}>NAME</span>
-            <span className={styles.th}>TF</span>
-            <span className={styles.th}>ASSET</span>
-            <span className={styles.th}>METHOD</span>
-            <span className={styles.th}>STATUS</span>
-            <span className={styles.th}>SHARPE</span>
-            <span className={styles.th}>CAGR</span>
-            <span className={styles.th}>MAXDD</span>
-            <span className={styles.th}>PF</span>
-            <span className={styles.th}>TRADES</span>
+            {(["name","tf","asset","method","status","sharpe","cagr","maxdd","pf","trades"] as SortCol[]).map(col => (
+              <button key={col} className={`${styles.thBtn} ${sortCol === col ? styles.thBtnActive : ""}`} onClick={() => handleSort(col)}>
+                {col.toUpperCase()}
+                {sortCol === col && <span className={styles.sortInd}>{sortDir === "asc" ? "▲" : "▼"}</span>}
+              </button>
+            ))}
             <span className={styles.th}>ACTION</span>
           </div>
 
@@ -298,10 +316,20 @@ export function LibraryScreen() {
                   {entry.starred ? "★" : "☆"}
                 </button>
                 <span className={styles.name}>{entry.name}</span>
-                <span className={styles.tfTag}>{entry._tf}</span>
-                <span className={styles.assetTag}>{entry._asset}</span>
-                <span className={styles.methodTag}>{entry._method}</span>
-                <StatusBadge status={entry.status} />
+                <span className={`${styles.tfTag} ${styles.filterCell}`} title={`Filter TF: ${entry._tf}`}
+                  onClick={e => { e.stopPropagation(); setTfFilter(f => f === entry._tf ? "ALL" : entry._tf); }}>
+                  {entry._tf}
+                </span>
+                <span className={`${styles.assetTag} ${styles.filterCell}`} title={`Filter asset: ${entry._asset}`}
+                  onClick={e => { e.stopPropagation(); setAssetFilter(f => f === entry._asset ? "ALL" : entry._asset); }}>
+                  {entry._asset}
+                </span>
+                <span className={`${styles.methodTag} ${styles.filterCell}`} title={`Filter method: ${entry._method}`}
+                  onClick={e => { e.stopPropagation(); setMethodFilter(f => f === entry._method ? "ALL" : entry._method); }}>
+                  {entry._method}
+                </span>
+                <StatusBadge status={entry.status}
+                  onClick={e => { e.stopPropagation(); setStatusFilter(f => f === entry.status ? "ALL" : entry.status as StatusFilter); }} />
                 <span className={styles.metricCell} style={{ color: entry.metrics.sharpe >= 1 ? "var(--green)" : "var(--amber)" }}>
                   {entry.metrics.sharpe.toFixed(2)}
                 </span>
@@ -410,7 +438,7 @@ function RunRow({ run, onLoad, onReRun, onVibe, onDelete, deleting }: {
   );
 }
 
-function StatusBadge({ status }: { status: LibraryEntry["status"] }) {
+function StatusBadge({ status, onClick }: { status: LibraryEntry["status"]; onClick?: (e: React.MouseEvent) => void }) {
   const cls = status === "live" ? styles.badgeLive : status === "research" ? styles.badgeResearch : styles.badgeArchived;
-  return <span className={`${styles.badge} ${cls}`}>{status}</span>;
+  return <span className={`${styles.badge} ${cls} ${onClick ? styles.filterCell : ""}`} onClick={onClick}>{status}</span>;
 }
