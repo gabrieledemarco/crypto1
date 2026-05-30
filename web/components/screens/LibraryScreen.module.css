@@ -190,6 +190,38 @@
   letter-spacing: 0.04em;
 }
 
+.thBtn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 0.04em;
+  padding: 0;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.thBtn:hover { color: var(--text); }
+
+.thBtnActive { color: var(--amber); }
+
+.sortInd { font-size: 7px; }
+
+/* Clickable cell that sets a filter on click */
+.filterCell {
+  cursor: pointer;
+}
+
+.filterCell:hover {
+  opacity: 0.75;
+  text-decoration: underline dotted;
+}
+
 .trow { cursor: pointer; }
 .trow:hover { background: var(--panel-2); }
 .trowStarred { border-left: 2px solid var(--amber); }
