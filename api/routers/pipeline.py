@@ -74,6 +74,18 @@ _ANN_FACTORS = {
     "1h": 8760, "4h": 2190, "1d": 365,
 }
 
+# Risk configurations cycled across pipeline iterations
+_RISK_GRID = [
+    {"leverage": 1.0, "trailing_stop": False, "position_size_method": "risk_pct"},
+    {"leverage": 2.0, "trailing_stop": False, "position_size_method": "risk_pct"},
+    {"leverage": 1.0, "trailing_stop": True,  "trailing_stop_method": "atr",  "trailing_stop_value": 1.5,  "position_size_method": "risk_pct"},
+    {"leverage": 1.0, "trailing_stop": True,  "trailing_stop_method": "pct",  "trailing_stop_value": 1.5,  "position_size_method": "risk_pct"},
+    {"leverage": 1.0, "trailing_stop": False, "position_size_method": "fixed_pct"},
+    {"leverage": 2.0, "trailing_stop": True,  "trailing_stop_method": "atr",  "trailing_stop_value": 2.0,  "position_size_method": "risk_pct"},
+    {"leverage": 3.0, "trailing_stop": False, "position_size_method": "risk_pct"},
+    {"leverage": 1.0, "trailing_stop": True,  "trailing_stop_method": "atr",  "trailing_stop_value": 2.5,  "position_size_method": "risk_pct"},
+]
+
 
 class PipelineRequest(BaseModel):
     tickers: list = ["BTC-USD", "ETH-USD", "SOL-USD"]
@@ -218,9 +230,10 @@ def _sync_pipeline(body: PipelineRequest, push):
             push({"type": "iter_start", "ticker": ticker, "iter": iteration,
                   "tf": tf, "arch": arch_name, "effective_iter": effective_iter})
 
+            risk_cfg = _RISK_GRID[(iteration - 1) % len(_RISK_GRID)]
             try:
                 sid, sharpe, dd, n_trades, win_rate, mc, drift, oos_sharpe = _run_iteration(
-                    ticker, tf, df, effective_iter, arch_name, sl, tp
+                    ticker, tf, df, effective_iter, arch_name, sl, tp, risk_cfg=risk_cfg
                 )
             except Exception as exc:
                 push({"type": "iter_error", "ticker": ticker, "iter": iteration,
@@ -319,21 +332,27 @@ def _resample(df: pd.DataFrame, tf: str) -> pd.DataFrame:
     return df.resample(freq).agg(agg).dropna()
 
 
-def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
+def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp, risk_cfg: dict | None = None):
     import numpy as np
     from engine.strategy_core import compute_indicators_v2
     from engine.backtest import run_versions, INITIAL_CAPITAL
     from engine.montecarlo import run_bootstrap
 
     _, code, sl_used, tp_used = get_archetype(iteration)
+    rc = risk_cfg or {}
 
     config = {
         "ticker": ticker, "timeframe": tf,
         "sl_mult": sl_used, "tp_mult": tp_used,
         "active_hours": _ACTIVE_HOURS.get(tf, [6, 22]),
-        "commission_pips": 1.0, "slippage_pips": 0.5, "leverage": 1.0,
+        "commission_pips": 1.0, "slippage_pips": 0.5,
         "risk_per_trade": 0.01, "direction": "ALL",
         "max_positions": 1, "cooldown_bars": 0,
+        "leverage":             float(rc.get("leverage", 1.0)),
+        "trailing_stop":        bool(rc.get("trailing_stop", False)),
+        "trailing_stop_method": rc.get("trailing_stop_method", "atr"),
+        "trailing_stop_value":  float(rc.get("trailing_stop_value", 1.5)),
+        "position_size_method": rc.get("position_size_method", "risk_pct"),
     }
 
     df_ind = compute_indicators_v2(df, fit_garch=True)
