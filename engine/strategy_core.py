@@ -203,6 +203,10 @@ def backtest_v2(df: pd.DataFrame,
                 max_positions: int = 1,         # max concurrent open positions
                 cooldown_bars: int = 0,         # bars to skip entry after a SL hit
                 leverage: float = 1.0,          # position leverage multiplier
+                trailing_stop: bool = False,    # enable trailing stop loss
+                trailing_stop_method: str = "atr",  # "atr" | "pct" | "pips"
+                trailing_stop_value: float = 1.5,   # ATR mult / % distance / pip count
+                position_size_method: str = "risk_pct",  # "risk_pct" | "fixed_pct"
                 ) -> dict:
     """
     Backtest event-driven con:
@@ -228,6 +232,7 @@ def backtest_v2(df: pd.DataFrame,
     lows = df["Low"].values
     times = df.index
     size_mults = df["size_mult"].values if "size_mult" in df.columns else np.ones(len(df))
+    atrs = df["ATR14"].values if ("ATR14" in df.columns and trailing_stop) else None
 
     # Convert pips → absolute price units.
     # Forex: price < 10  → pip = 0.0001 (EUR/USD, GBP/USD, AUD/USD, USD/CHF…)
@@ -285,6 +290,25 @@ def backtest_v2(df: pd.DataFrame,
         for j in reversed(closed_idxs):
             open_positions.pop(j)
 
+        # ── 1b. Update trailing stop for surviving positions ──────────────────
+        if trailing_stop and atrs is not None and open_positions:
+            cp = prices[i]
+            for pos in open_positions:
+                if trailing_stop_method == "pct":
+                    trail_dist = cp * trailing_stop_value / 100.0
+                elif trailing_stop_method == "pips":
+                    trail_dist = trailing_stop_value * pip_size
+                else:  # atr
+                    trail_dist = float(atrs[i]) * trailing_stop_value
+                if pos["dir"] == 1:
+                    new_sl = cp - trail_dist
+                    if new_sl > pos["sl"]:
+                        pos["sl"] = new_sl
+                else:
+                    new_sl = cp + trail_dist
+                    if new_sl < pos["sl"]:
+                        pos["sl"] = new_sl
+
         # ── 2. Decrement cooldown ─────────────────────────────────────────────
         if cooldown_remaining > 0:
             cooldown_remaining -= 1
@@ -298,8 +322,11 @@ def backtest_v2(df: pd.DataFrame,
             tp_d = tp_dists[i]
             sm = float(size_mults[i])
             if sl_d > 0 and sm > 0:
-                risk_amount = capital * risk_per_trade * sm
-                qty = risk_amount / sl_d
+                if position_size_method == "fixed_pct":
+                    qty = (capital * risk_per_trade * sm * leverage) / ep if ep > 0 else 0.0
+                else:  # risk_pct
+                    risk_amount = capital * risk_per_trade * sm
+                    qty = risk_amount / sl_d
                 max_qty = (capital * leverage) / ep if ep > 0 else 0.0
                 qty = min(qty, max_qty)
 

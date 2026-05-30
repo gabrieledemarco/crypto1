@@ -19,6 +19,16 @@ class RunParams(BaseModel):
     run_mc: bool = True
     mc_sims: int = Field(1000, ge=100, le=10_000)
     mc_bars: Optional[int] = Field(None, ge=0, le=100_000)
+    wfo_is_window: int = Field(500, ge=50, le=10_000)
+    wfo_oos_window: int = Field(100, ge=10, le=5_000)
+    max_positions: int = Field(1, ge=1, le=10)
+    cooldown_bars: int = Field(0, ge=0, le=100)
+    initial_capital: float = Field(10_000, ge=100, le=10_000_000)
+    leverage: float = Field(1.0, ge=1.0, le=100.0)
+    trailing_stop: bool = False
+    trailing_stop_method: Literal["atr", "pct", "pips"] = "atr"
+    trailing_stop_value: float = Field(1.5, ge=0.1, le=500.0)
+    position_size_method: Literal["risk_pct", "fixed_pct"] = "risk_pct"
 
     @field_validator("active_hours")
     @classmethod

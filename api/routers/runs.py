@@ -447,14 +447,20 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
 
     push("versions", 25, "running strategy versions")
     cfg = {
-        "sl_mult":        params.get("sl_mult", 2.0),
-        "tp_mult":        params.get("tp_mult", 5.0),
-        "active_hours":   params.get("active_hours", [6, 22]),
-        "commission":     params.get("commission", 0.0004),
-        "slippage":       params.get("slippage", 0.0001),
-        "risk_per_trade": params.get("risk_per_trade", 0.01),
-        "max_positions":  int(params.get("max_positions", 1)),
-        "cooldown_bars":  int(params.get("cooldown_bars", 0)),
+        "sl_mult":              params.get("sl_mult", 2.0),
+        "tp_mult":              params.get("tp_mult", 5.0),
+        "active_hours":         params.get("active_hours", [6, 22]),
+        "commission":           params.get("commission", 0.0004),
+        "slippage":             params.get("slippage", 0.0001),
+        "risk_per_trade":       params.get("risk_per_trade", 0.01),
+        "max_positions":        int(params.get("max_positions", 1)),
+        "cooldown_bars":        int(params.get("cooldown_bars", 0)),
+        "initial_capital":      float(params.get("initial_capital", 10_000)),
+        "leverage":             float(params.get("leverage", 1.0)),
+        "trailing_stop":        bool(params.get("trailing_stop", False)),
+        "trailing_stop_method": params.get("trailing_stop_method", "atr"),
+        "trailing_stop_value":  float(params.get("trailing_stop_value", 1.5)),
+        "position_size_method": params.get("position_size_method", "risk_pct"),
     }
     # Load and exec strategy code if this run is linked to a strategy
     strategy_id = params.get("_strategy_id")
@@ -643,18 +649,26 @@ def _sync_preview(df, params: dict) -> dict:
     risk     = params.get("risk_per_trade", 0.01)
     max_pos  = int(params.get("max_positions", 1))
     cooldown = int(params.get("cooldown_bars", 0))
+    cap      = float(params.get("initial_capital", INITIAL_CAPITAL))
+    lvg      = float(params.get("leverage", 1.0))
+    ts_on    = bool(params.get("trailing_stop", False))
+    ts_meth  = params.get("trailing_stop_method", "atr")
+    ts_val   = float(params.get("trailing_stop_value", 1.5))
+    ps_meth  = params.get("position_size_method", "risk_pct")
 
     df_s = generate_signals_v2(df_ind, atr_mult_sl=sl, atr_mult_tp=tp,
                                 active_hours=hrs, use_garch_filter=False)
     df_s = _apply_direction_filter(df_s, params.get("direction", "ALL"))
-    res  = backtest_v2(df_s, INITIAL_CAPITAL, risk, commission=comm, slippage=slip,
-                       max_positions=max_pos, cooldown_bars=cooldown)
-    m    = compute_metrics(res, INITIAL_CAPITAL)
+    res  = backtest_v2(df_s, cap, risk, commission_pips=comm, slippage_pips=slip,
+                       max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg,
+                       trailing_stop=ts_on, trailing_stop_method=ts_meth,
+                       trailing_stop_value=ts_val, position_size_method=ps_meth)
+    m    = compute_metrics(res, cap)
     # Sample equity curve (max 120 points) for preview chart
     eq_series = res.get("equity")
     equity_sample: list = []
     if eq_series is not None and len(eq_series) > 0:
-        eq_vals = (eq_series / INITIAL_CAPITAL).tolist()
+        eq_vals = (eq_series / cap).tolist()
         step = max(1, len(eq_vals) // 120)
         equity_sample = [round(float(v), 4) for v in eq_vals[::step][:120]]
     return {

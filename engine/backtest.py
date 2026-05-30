@@ -54,6 +54,11 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
     lvg  = cfg.get("leverage", 1.0)
     max_pos  = int(cfg.get("max_positions", 1))
     cooldown = int(cfg.get("cooldown_bars", 0))
+    cap      = float(cfg.get("initial_capital", INITIAL_CAPITAL))
+    ts_on    = bool(cfg.get("trailing_stop", False))
+    ts_meth  = cfg.get("trailing_stop_method", "atr")
+    ts_val   = float(cfg.get("trailing_stop_value", 1.5))
+    ps_meth  = cfg.get("position_size_method", "risk_pct")
 
     results = {}
     versions = [
@@ -68,11 +73,13 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
                                     active_hours=hrs,
                                     use_garch_filter=vcfg["use_garch_filter"])
         df_s = _apply_direction_filter(df_s, direction)
-        res  = backtest_v2(df_s, INITIAL_CAPITAL, risk,
+        res  = backtest_v2(df_s, cap, risk,
                            commission_pips=vcfg["commission_pips"],
                            slippage_pips=vcfg["slippage_pips"],
-                           max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg)
-        results[name] = {"result": res, "metrics": compute_metrics(res, INITIAL_CAPITAL)}
+                           max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg,
+                           trailing_stop=ts_on, trailing_stop_method=ts_meth,
+                           trailing_stop_value=ts_val, position_size_method=ps_meth)
+        results[name] = {"result": res, "metrics": compute_metrics(res, cap)}
 
     # V_Agent: use provided agent_fn if any
     agent_fn = cfg.get("agent_fn")
@@ -87,10 +94,12 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
             _call_args  = (df_ind, _ind) if len(_sig_params) >= 2 else (df_ind,)
             df_a = _apply_cfg_overrides(_apply_direction_filter(agent_fn(*_call_args), direction),
                                          sl, tp, hrs)
-            res_a = backtest_v2(df_a, INITIAL_CAPITAL, risk,
+            res_a = backtest_v2(df_a, cap, risk,
                                 commission_pips=comm, slippage_pips=slip,
-                                max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg)
-            results["V_Agent"] = {"result": res_a, "metrics": compute_metrics(res_a, INITIAL_CAPITAL)}
+                                max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg,
+                                trailing_stop=ts_on, trailing_stop_method=ts_meth,
+                                trailing_stop_value=ts_val, position_size_method=ps_meth)
+            results["V_Agent"] = {"result": res_a, "metrics": compute_metrics(res_a, cap)}
         except Exception as exc:
             results["V_Agent"] = {"error": str(exc)}
 
@@ -150,6 +159,11 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
     hrs  = tuple(cfg.get("active_hours", [6, 22]))
     max_pos  = int(cfg.get("max_positions", 1))
     cooldown = int(cfg.get("cooldown_bars", 0))
+    cap      = float(cfg.get("initial_capital", INITIAL_CAPITAL))
+    ts_on    = bool(cfg.get("trailing_stop", False))
+    ts_meth  = cfg.get("trailing_stop_method", "atr")
+    ts_val   = float(cfg.get("trailing_stop_value", 1.5))
+    ps_meth  = cfg.get("position_size_method", "risk_pct")
 
     if agent_fn is None:
         # fallback: use generate_signals_v2
@@ -194,17 +208,21 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
                 _apply_direction_filter(agent_fn(is_data), direction),
                 fold_sl, fold_tp, hrs,
             )
-            res_is = backtest_v2(df_is,  INITIAL_CAPITAL, risk, comm, slip,
-                                 max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg)
-            m_is   = compute_metrics(res_is, INITIAL_CAPITAL)
+            res_is = backtest_v2(df_is, cap, risk, comm, slip,
+                                 max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg,
+                                 trailing_stop=ts_on, trailing_stop_method=ts_meth,
+                                 trailing_stop_value=ts_val, position_size_method=ps_meth)
+            m_is   = compute_metrics(res_is, cap)
 
             df_os  = _apply_cfg_overrides(
                 _apply_direction_filter(agent_fn(oos_data), direction),
                 fold_sl, fold_tp, hrs,
             )
-            res_os = backtest_v2(df_os, INITIAL_CAPITAL, risk, comm, slip,
-                                 max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg)
-            m_os   = compute_metrics(res_os, INITIAL_CAPITAL)
+            res_os = backtest_v2(df_os, cap, risk, comm, slip,
+                                 max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg,
+                                 trailing_stop=ts_on, trailing_stop_method=ts_meth,
+                                 trailing_stop_value=ts_val, position_size_method=ps_meth)
+            m_os   = compute_metrics(res_os, cap)
 
             row: dict = {
                 "window_config": wcfg["label"],
@@ -240,6 +258,7 @@ def run_optimization(df_ind: pd.DataFrame, cfg: dict,
     slip = cfg.get("slippage_pips",   0.5)
     risk = cfg.get("risk_per_trade", 0.01)
     lvg  = cfg.get("leverage", 1.0)
+    cap  = float(cfg.get("initial_capital", INITIAL_CAPITAL))
 
     SL_RANGE = [1.0, 1.5, 2.0, 2.5, 3.0]
     TP_RANGE = [2.0, 3.0, 4.0, 5.0, 7.0]
@@ -252,8 +271,8 @@ def run_optimization(df_ind: pd.DataFrame, cfg: dict,
             progress_cb("sweep", int(idx / len(combos) * 100))
         df_s = generate_signals_v2(df_ind, atr_mult_sl=sl, atr_mult_tp=tp,
                                     active_hours=h, use_garch_filter=True)
-        res  = backtest_v2(df_s, INITIAL_CAPITAL, risk, comm, slip, leverage=lvg)
-        m    = compute_metrics(res, INITIAL_CAPITAL)
+        res  = backtest_v2(df_s, cap, risk, comm, slip, leverage=lvg)
+        m    = compute_metrics(res, cap)
         rows.append({
             "sl_mult":          sl,
             "tp_mult":          tp,
