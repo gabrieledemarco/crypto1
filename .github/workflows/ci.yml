@@ -18,6 +18,13 @@ jobs:
           cache-dependency-path: api/requirements.txt
       - name: Install dependencies
         run: pip install -r api/requirements.txt
+      - name: Lint Python (non-blocking)
+        continue-on-error: true
+        run: |
+          pip install black flake8 isort --quiet
+          black --check api/ engine/ tests/ --line-length 100 --quiet
+          isort --check-only api/ engine/ tests/ --profile black --quiet
+          flake8 api/ engine/ --max-line-length 100 --extend-ignore=E203,W503,E501 --quiet
       - name: Import smoke test
         run: python -c "import sys; sys.path.insert(0, '.'); import api.main; print('API imports OK')"
         env:
@@ -53,3 +60,7 @@ jobs:
           fi
       - name: TypeScript type check
         run: npx tsc --noEmit
+      - name: Build web
+        run: |
+          npm ci --prefer-offline 2>/dev/null || npm install --quiet
+          npm run build
