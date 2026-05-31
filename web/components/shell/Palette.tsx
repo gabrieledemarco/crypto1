@@ -40,6 +40,8 @@ export function Palette() {
     setActiveIdx(0);
   }, [setPaletteOpen]);
 
+  // IMPORTANT: Keep this list in sync with ScreenId in @/store/index.ts.
+  // Screens in the store not listed here (wfo, analysis) have no keyboard shortcut.
   const SCREEN_ACTIONS: { id: ScreenId; label: string; key: string }[] = [
     { id: "dashboard", label: "Dashboard", key: "1" },
     { id: "equity", label: "Equity Curve", key: "6" },
@@ -160,7 +162,7 @@ export function Palette() {
 
   return (
     <div className={styles.overlay} onClick={close}>
-      <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+      <div className={styles.modal} role="dialog" aria-label="Command palette" onClick={(e) => e.stopPropagation()}>
         <div className={styles.inputRow}>
           <span className={styles.inputIcon}>⌘</span>
           <input
@@ -170,6 +172,7 @@ export function Palette() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKey}
+            aria-label="Search commands"
           />
         </div>
 
@@ -186,6 +189,7 @@ export function Palette() {
                     className={`${styles.listItem} ${idx === activeIdx ? styles.listItemActive : ""}`}
                     onClick={item.action}
                     onMouseEnter={() => setActiveIdx(idx)}
+                    aria-label={item.label}
                   >
                     <span className={styles.listItemIcon}>{item.icon}</span>
                     <span className={styles.listItemLabel}>{item.label}</span>

@@ -557,17 +557,21 @@ function FoldChartsPanel({ folds }: { folds: WFOFold[] }) {
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
+function hasWfo(r: unknown): r is { wfo: unknown[] } {
+  return typeof r === 'object' && r !== null && 'wfo' in r && Array.isArray((r as { wfo: unknown }).wfo);
+}
+
 export function WFOScreen() {
   const { runs, activeRunId } = useStore();
   const wfoQuery = useRunWFO(activeRunId || null);
 
   // Use API data first; fall back to wfo stored on the run object (e.g. fixture data)
   const run = runs.find((r) => r.id === activeRunId);
-  const runWfo = (run as unknown as { wfo?: unknown[] })?.wfo;
+  const runWfo = hasWfo(run) ? run.wfo : [];
   const rawFolds: unknown[] =
     wfoQuery.data && wfoQuery.data.length > 0
       ? wfoQuery.data
-      : (runWfo ?? []);
+      : runWfo;
 
   const folds: WFOFold[] = (rawFolds as unknown[]).filter(
     (r): r is WFOFold =>

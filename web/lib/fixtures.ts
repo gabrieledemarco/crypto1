@@ -871,8 +871,6 @@ const runs: Run[] = [
   ),
 ];
 
-const rngAsset = mulberry32(77777);
-
 const assets: Asset[] = [
   genAsset(mulberry32(1001), "Bitcoin", "BTC", "spot", 30000, 0.72, 0.6, 1826),
   genAsset(mulberry32(1002), "Ethereum", "ETH", "spot", 2000, 0.85, 0.55, 1826),
@@ -881,10 +879,6 @@ const assets: Asset[] = [
   genAsset(mulberry32(1005), "Avalanche", "AVAX", "spot", 30, 1.2, 0.7, 1826),
   genAsset(mulberry32(1006), "Chainlink", "LINK", "spot", 15, 0.95, 0.45, 1826),
 ];
-
-void rngAsset; // suppress unused warning
-
-const libraryRng = mulberry32(55555);
 
 const library: LibraryEntry[] = [
   {
@@ -972,8 +966,6 @@ const library: LibraryEntry[] = [
     sparkline: makeSparkline(mulberry32(10006), 40),
   },
 ];
-
-void libraryRng; // suppress unused warning
 
 export const fixtures: ParetoData = {
   runs,

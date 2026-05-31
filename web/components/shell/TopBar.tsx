@@ -52,6 +52,7 @@ export function TopBar({ run, runs, setRunId, screenLabel, onOpenPalette }: Prop
         className={styles.runSelector}
         value={run?.id ?? ""}
         onChange={(e) => setRunId(e.target.value)}
+        aria-label="Select active run"
       >
         {runs.map((r) => (
           <option key={r.id} value={r.id}>

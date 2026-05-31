@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 import { fixtures } from "@/lib/fixtures";
 import { useAssets, useAssetBars, useAssetStats, useGarchForecast } from "@/hooks/useAssets";
 import type { AssetListItem } from "@/hooks/useAssets";
@@ -297,32 +298,22 @@ export function AssetsScreen() {
     setFetching(true);
     setFetchMsg(null);
     try {
-      const res = await fetch("/api/assets/fetch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ticker: fetchTicker,
-          source: "yfinance",
-          period: autoPeriod,
-          interval: fetchInterval,
-        }),
+      const data = await api.post<{ bars: number }>("/assets/fetch", {
+        ticker: fetchTicker,
+        source: "yfinance",
+        period: autoPeriod,
+        interval: fetchInterval,
       });
-      if (res.ok) {
-        const data = await res.json();
-        setFetchMsg(`✓ ${fetchTicker} (${fetchInterval}, ${autoPeriod}) — ${data.bars} bar`);
-        // Refresh asset list and select the new series
-        qc.invalidateQueries({ queryKey: ["assets"] });
-        setSelectedTicker(fetchTicker);
-        setViewInterval(fetchInterval);
-        setShowFetch(false);
-        setFetchTicker("");
-        setSearchVal("");
-      } else {
-        const err = await res.json().catch(() => ({}));
-        setFetchMsg(`Errore: ${err.detail ?? res.status}`);
-      }
-    } catch {
-      setFetchMsg("API non raggiungibile");
+      setFetchMsg(`✓ ${fetchTicker} (${fetchInterval}, ${autoPeriod}) — ${data.bars} bar`);
+      // Refresh asset list and select the new series
+      qc.invalidateQueries({ queryKey: ["assets"] });
+      setSelectedTicker(fetchTicker);
+      setViewInterval(fetchInterval);
+      setShowFetch(false);
+      setFetchTicker("");
+      setSearchVal("");
+    } catch (err) {
+      setFetchMsg(`Error: ${err instanceof Error ? err.message : "API unreachable"}`);
     } finally {
       setFetching(false);
     }
@@ -476,6 +467,7 @@ export function AssetsScreen() {
                       value={searchVal}
                       autoComplete="off"
                       spellCheck={false}
+                      aria-label="Search assets"
                       onChange={(e) => {
                         const v = e.target.value.toUpperCase();
                         setSearchVal(v);
@@ -491,7 +483,7 @@ export function AssetsScreen() {
                       }}
                     />
                     {dropOpen && suggestions.length > 0 && (
-                      <div className={styles.dropdown}>
+                      <div className={styles.dropdown} role="listbox">
                         {suggestions.map((t) => (
                           <button
                             key={t}

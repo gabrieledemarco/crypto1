@@ -86,3 +86,44 @@ export interface ApiStrategy {
   run_ref?: string | null;
   created_at?: string;
 }
+
+export interface RunParams {
+  ticker: string;
+  period: string;
+  interval: string;
+  sl_mult: number;
+  tp_mult: number;
+  risk_per_trade: number;
+  active_hours: [number, number];
+  commission_pips: number;
+  slippage_pips: number;
+  leverage: number;
+  max_positions: number;
+  cooldown_bars: number;
+  trailing_stop: boolean;
+  trailing_stop_method: string;
+  trailing_stop_value: number;
+  position_size_method: string;
+  initial_capital: number;
+}
+
+export interface RunMetrics {
+  sharpe_ratio?: number;
+  cagr_pct?: number;
+  max_drawdown_pct?: number;
+  n_trades?: number;
+  win_rate_pct?: number;
+  profit_factor?: number;
+  total_return_pct?: number;
+  sl_hits?: number;
+  tp_hits?: number;
+  avg_trade_pct?: number;
+  expectancy_pct?: number;
+  best_sl?: number;
+  best_tp?: number;
+}
+
+export interface VersionResult {
+  metrics: RunMetrics;
+  error?: string;
+}
