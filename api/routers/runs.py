@@ -22,12 +22,13 @@ from datetime import datetime
 from typing import Optional
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from api.db import get_conn
+from api.limiter import limiter
 from api.models import RunCreate, RunParams
 
 router = APIRouter()
@@ -313,7 +314,8 @@ def get_bootstrap_ci(run_id: str):
 # ── Create + async backtest ───────────────────────────────────────────────────
 
 @router.post("")
-async def create_run(body: RunCreate):
+@limiter.limit("20/minute")
+async def create_run(request: Request, body: RunCreate):
     run_id = str(uuid.uuid4()).replace('-', '')[:12]
     name   = body.name or f"run-{run_id}"
     params = body.params.model_dump()
@@ -323,6 +325,7 @@ async def create_run(body: RunCreate):
         "INSERT INTO runs (id, name, ticker, timeframe, params, status, strategy_id) VALUES (?,?,?,?,?,?,?)",
         [run_id, name, params["ticker"], params["timeframe"], json.dumps(params), "pending", body.strategy_id]
     )
+    conn.commit()  # Flush INSERT before fire-and-forget task reads the row
 
     params["_strategy_id"] = body.strategy_id
     asyncio.create_task(_run_backtest(run_id, params))
@@ -657,7 +660,8 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
 # ── Preview endpoint ──────────────────────────────────────────────────────────
 
 @router.post("/preview")
-async def preview_run(body: RunParams):
+@limiter.limit("30/minute")
+async def preview_run(request: Request, body: RunParams):
     """Lightweight preview: last 500 bars, V4 only, no WFO/MC."""
     import sys, os
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))

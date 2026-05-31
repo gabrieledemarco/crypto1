@@ -67,7 +67,11 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         "SELECT column_name FROM information_schema.columns WHERE table_name='runs'"
     ).fetchall()}
     if "strategy_id" not in existing_cols:
-        conn.execute("ALTER TABLE runs ADD COLUMN strategy_id TEXT")
+        try:
+            conn.execute("ALTER TABLE runs ADD COLUMN strategy_id TEXT")
+        except Exception as _e:
+            if "already exists" not in str(_e).lower():
+                raise
     conn.execute("""
         CREATE TABLE IF NOT EXISTS run_results (
             run_id    TEXT PRIMARY KEY,
@@ -104,7 +108,11 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         ("run_ref",  "TEXT"),
     ]:
         if _col not in _st_cols:
-            conn.execute(f"ALTER TABLE strategies ADD COLUMN {_col} {_def}")
+            try:
+                conn.execute(f"ALTER TABLE strategies ADD COLUMN {_col} {_def}")
+            except Exception as _e:
+                if "already exists" not in str(_e).lower():
+                    raise
     conn.execute("""
         CREATE TABLE IF NOT EXISTS brain_chunks (
             id         TEXT PRIMARY KEY,
@@ -128,4 +136,8 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         ("run_id",         "TEXT"),
     ]:
         if _col not in _bc_cols:
-            conn.execute(f"ALTER TABLE brain_chunks ADD COLUMN {_col} {_def}")
+            try:
+                conn.execute(f"ALTER TABLE brain_chunks ADD COLUMN {_col} {_def}")
+            except Exception as _e:
+                if "already exists" not in str(_e).lower():
+                    raise

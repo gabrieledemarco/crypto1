@@ -137,6 +137,7 @@ def create_strategy(body: StrategyCreate):
         "INSERT INTO strategies (id, name, strategy_type, config, code, status) VALUES (?,?,?,?,?,?)",
         [sid, body.name, body.strategy_type, json.dumps(body.config), body.code, body.status]
     )
+    conn.commit()
     return {"id": sid, "name": body.name}
 
 
@@ -148,6 +149,7 @@ def toggle_star(strategy_id: str):
         raise HTTPException(404, "Strategy not found")
     new_val = not bool(row[0])
     conn.execute("UPDATE strategies SET starred=? WHERE id=?", [new_val, strategy_id])
+    conn.commit()
     return {"id": strategy_id, "starred": new_val}
 
 
@@ -155,6 +157,7 @@ def toggle_star(strategy_id: str):
 def delete_strategy(strategy_id: str):
     conn = get_conn()
     conn.execute("DELETE FROM strategies WHERE id=?", [strategy_id])
+    conn.commit()
     return {"deleted": strategy_id}
 
 
@@ -183,6 +186,8 @@ def prune_strategies(min_sharpe: float = 0.0):
         else:
             kept.append({"id": sid, "name": name, "sharpe": sharpe})
 
+    if deleted:
+        conn.commit()
     return {
         "min_sharpe": min_sharpe,
         "total":   len(rows),
@@ -215,6 +220,9 @@ def promote_robust(min_sharpe: float = 1.0):
                     "UPDATE strategies SET starred=TRUE, status='live' WHERE id=?", [sid]
                 )
                 promoted.append({"id": sid, "name": name, "sharpe": sharpe})
+
+    if promoted:
+        conn.commit()
     return {
         "min_sharpe": min_sharpe,
         "promoted":  len(promoted),
