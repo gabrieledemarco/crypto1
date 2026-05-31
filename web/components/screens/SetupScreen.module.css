@@ -220,6 +220,12 @@
   50% { opacity: 0.4; }
 }
 
+.previewError {
+  font-size: 10px;
+  color: var(--coral);
+  font-family: var(--font-mono);
+}
+
 .previewMetrics {
   display: flex;
   gap: 12px;

@@ -135,8 +135,11 @@ def compute_indicators_v2(df: pd.DataFrame,
             _, _, _, h_all = fit_garch11(r_aligned[1:])
             h_padded = np.concatenate([[h_all[0]], h_all])
             df["garch_h"] = h_padded[:len(df)]
-        except Exception:
-            df["garch_h"] = df["ret"].rolling(24).var().fillna(df["ret"].var())
+            df.attrs["garch_status"] = "ok"
+        except Exception as _garch_exc:
+            # expanding() avoids the unstable first-24-bar window of rolling()
+            df["garch_h"] = df["ret"].expanding(min_periods=5).var().fillna(df["ret"].var())
+            df.attrs["garch_status"] = f"fallback:{_garch_exc}"
 
         regime = compute_garch_regime(df["garch_h"].values)
         df["garch_regime"] = regime
@@ -144,7 +147,7 @@ def compute_indicators_v2(df: pd.DataFrame,
         df["size_mult"] = np.where(regime == "LOW", 0.0,
                           np.where(regime == "HIGH", 0.5, 1.0))
     else:
-        df["garch_h"] = df["ret"].rolling(24).var().fillna(df["ret"].var())
+        df["garch_h"] = df["ret"].expanding(min_periods=5).var().fillna(df["ret"].var())
         df["garch_regime"] = "MED"
         df["size_mult"] = 1.0
 
@@ -300,6 +303,8 @@ def backtest_v2(df: pd.DataFrame,
                     trail_dist = trailing_stop_value * pip_size
                 else:  # atr
                     trail_dist = float(atrs[i]) * trailing_stop_value
+                # Guard: distance must be positive and at least one pip
+                trail_dist = max(trail_dist, pip_size)
                 if pos["dir"] == 1:
                     new_sl = cp - trail_dist
                     if new_sl > pos["sl"]:
@@ -374,7 +379,7 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
     avg_win = wins["pnl"].mean() if len(wins) > 0 else 0
     avg_loss = losses["pnl"].mean() if len(losses) > 0 else 0
     pf = wins["pnl"].sum() / abs(losses["pnl"].sum()) \
-         if len(losses) > 0 and losses["pnl"].sum() != 0 else np.inf
+         if len(losses) > 0 and losses["pnl"].sum() != 0 else 999.9
 
     equity_safe = equity.clip(lower=1e-10)
     ret_s = np.log(equity_safe / equity_safe.shift(1)).dropna()
@@ -395,9 +400,12 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
         cagr = float(qs.stats.cagr(ret_s)) * 100
         cagr = max(min(cagr, 999.0), -999.0)
         sharpe  = float(qs.stats.sharpe(ret_s, periods=_PERIODS))
+        sharpe  = sharpe if np.isfinite(sharpe) else 0.0
         sortino = float(qs.stats.sortino(ret_s, periods=_PERIODS))
+        sortino = sortino if np.isfinite(sortino) else 0.0
         max_dd  = float(qs.stats.max_drawdown(ret_s)) * 100   # decimal → %
         omega   = float(qs.stats.omega(ret_s, periods=_PERIODS))
+        omega   = omega if np.isfinite(omega) else 99.0
         ulcer   = float(qs.stats.ulcer_index(ret_s)) * 100
     except Exception:
         # fallback: pure numpy/pandas
@@ -438,7 +446,7 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
         "calmar_ratio":     round(calmar, 4) if np.isfinite(calmar) else 0.0,
         "n_trades":         n,
         "win_rate_pct":     win_rate,
-        "profit_factor":    pf,
+        "profit_factor":    round(min(pf, 999.9), 3) if np.isfinite(pf) else 999.9,
         "avg_win_usd":      avg_win,
         "avg_loss_usd":     avg_loss,
         "sl_hits":          len(trades[trades["exit_reason"] == "SL"]),

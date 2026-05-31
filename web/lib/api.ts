@@ -1,3 +1,10 @@
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 function extractDetail(errBody: unknown, fallback: string): string {
   if (!errBody || typeof errBody !== "object") return fallback;
   const body = errBody as Record<string, unknown>;
@@ -5,7 +12,13 @@ function extractDetail(errBody: unknown, fallback: string): string {
   if (!raw) return fallback;
   if (typeof raw === "string") return raw;
   if (Array.isArray(raw))
-    return raw.map((d) => (typeof d === "object" && d !== null ? (d as Record<string, unknown>).msg ?? JSON.stringify(d) : String(d))).join("; ");
+    return raw
+      .map((d) =>
+        typeof d === "object" && d !== null
+          ? (d as Record<string, unknown>).msg ?? JSON.stringify(d)
+          : String(d)
+      )
+      .join("; ");
   return String(raw);
 }
 
@@ -13,10 +26,8 @@ async function get<T>(path: string): Promise<T> {
   const res = await fetch(`/api${path}`);
   if (!res.ok) {
     let detail = `GET ${path} → ${res.status}`;
-    try { detail = extractDetail(await res.json(), detail); } catch {}
-    const err = new Error(detail);
-    (err as any).status = res.status;
-    throw err;
+    try { detail = extractDetail(await res.json(), detail); } catch { /* ignore */ }
+    throw new ApiError(detail, res.status);
   }
   return res.json() as Promise<T>;
 }
@@ -29,10 +40,8 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   });
   if (!res.ok) {
     let detail = `POST ${path} → ${res.status}`;
-    try { detail = extractDetail(await res.json(), detail); } catch {}
-    const err = new Error(detail);
-    (err as any).status = res.status;
-    throw err;
+    try { detail = extractDetail(await res.json(), detail); } catch { /* ignore */ }
+    throw new ApiError(detail, res.status);
   }
   return res.json() as Promise<T>;
 }
@@ -41,10 +50,8 @@ async function del<T>(path: string): Promise<T> {
   const res = await fetch(`/api${path}`, { method: "DELETE" });
   if (!res.ok) {
     let detail = `DELETE ${path} → ${res.status}`;
-    try { detail = extractDetail(await res.json(), detail); } catch {}
-    const err = new Error(detail);
-    (err as any).status = res.status;
-    throw err;
+    try { detail = extractDetail(await res.json(), detail); } catch { /* ignore */ }
+    throw new ApiError(detail, res.status);
   }
   return res.json() as Promise<T>;
 }

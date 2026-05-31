@@ -152,7 +152,7 @@ export function SetupScreen() {
       : null;
 
   // Live preview (debounced 80ms)
-  const { result: preview, loading: previewLoading } = usePreview(params as unknown as Record<string, unknown>);
+  const { result: preview, loading: previewLoading, error: previewError } = usePreview(params as unknown as Record<string, unknown>);
 
   // SSE progress
   useSSE(runId ? `/api/runs/${runId}/stream` : null, (data) => {
@@ -231,10 +231,12 @@ export function SetupScreen() {
             const { runs: cur } = useStore.getState();
             useStore.getState().setRuns([...cur, newRun]);
             useStore.getState().setRun(runId);
-            // Bust React Query cache so equity/trades screens refetch immediately.
+            // Bust React Query cache so equity/trades/library screens refetch immediately.
             queryClient.invalidateQueries({ queryKey: ["run-equity", runId] });
             queryClient.invalidateQueries({ queryKey: ["run-trades", runId] });
             queryClient.invalidateQueries({ queryKey: ["run-list"] });
+            queryClient.invalidateQueries({ queryKey: ["runs"] });
+            queryClient.invalidateQueries({ queryKey: ["run-list", activeStrategyId ?? null] });
           })
           .catch(() => {
             // Metadata fetch failed — still activate the run so panels try to load.
@@ -604,6 +606,9 @@ export function SetupScreen() {
           <span className={styles.panelTitle}>LIVE PREVIEW</span>
           <span className={styles.panelSub}>{params.ticker} · {params.timeframe} · 500 bars</span>
           {previewLoading && <span className={styles.loading}>loading…</span>}
+          {!previewLoading && previewError && (
+            <span className={styles.previewError}>{previewError}</span>
+          )}
         </div>
         <div className={styles.panelBody}>
           {previewEquity.length > 0 ? (

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Any, Literal, Optional
 
 
@@ -33,9 +33,20 @@ class RunParams(BaseModel):
     @field_validator("active_hours")
     @classmethod
     def validate_hours(cls, v):
-        if len(v) != 2 or not all(0 <= h <= 23 for h in v) or v[0] >= v[1]:
-            raise ValueError("active_hours must be [start, end] with 0 <= start < end <= 23")
+        if len(v) != 2 or not all(0 <= h <= 23 for h in v):
+            raise ValueError("active_hours must be [start, end] with 0 <= h <= 23")
+        # Allow midnight-crossing ranges (e.g. [22, 6]) by wrapping end hour
+        if v[0] == v[1]:
+            raise ValueError("active_hours start and end must differ")
         return v
+
+    @model_validator(mode="after")
+    def validate_tp_gt_sl(self) -> "RunParams":
+        if self.tp_mult <= self.sl_mult:
+            raise ValueError(
+                f"tp_mult ({self.tp_mult}) must be greater than sl_mult ({self.sl_mult})"
+            )
+        return self
 
     @field_validator("risk_per_trade")
     @classmethod

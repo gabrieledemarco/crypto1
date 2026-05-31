@@ -14,6 +14,7 @@ POST /runs/preview      → lightweight preview backtest (~100ms)
 """
 import asyncio
 import json
+import logging
 import uuid
 import sys
 import os
@@ -21,15 +22,63 @@ from datetime import datetime
 from typing import Optional
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from api.db import get_conn
+from api.limiter import limiter
 from api.models import RunCreate, RunParams
 
 router = APIRouter()
+log = logging.getLogger("runs")
+
+
+def _safe_float(val, ndigits: int = 3):
+    """Convert val to float, round, return None on failure or non-finite."""
+    try:
+        f = float(val)
+        if not (f == f) or f in (float("inf"), float("-inf")):  # NaN/inf guard
+            return None
+        return round(f, ndigits)
+    except (TypeError, ValueError):
+        return None
+
+
+_ANN_FACTORS = {
+    "1m":  365 * 24 * 60,
+    "5m":  365 * 24 * 12,
+    "15m": 365 * 24 * 4,
+    "30m": 365 * 24 * 2,
+    "1h":  365 * 24,
+    "4h":  365 * 6,
+    "1d":  365,
+}
+
+
+def _infer_ann_factor(equity_data: list) -> int:
+    """Infer annualisation factor from equity point timestamps.
+
+    Falls back to hourly (8760) if timestamps are absent or unreadable.
+    """
+    ts_list = [e.get("ts") for e in equity_data if e.get("ts")]
+    if len(ts_list) < 2:
+        return 365 * 24  # default: hourly
+    try:
+        from datetime import datetime
+        t0 = datetime.fromisoformat(str(ts_list[0]).replace("Z", "+00:00"))
+        t1 = datetime.fromisoformat(str(ts_list[1]).replace("Z", "+00:00"))
+        diff_secs = abs((t1 - t0).total_seconds())
+        if diff_secs <= 0:
+            return 365 * 24
+        bars_per_year = int(365 * 24 * 3600 / diff_secs)
+        # Snap to nearest known factor
+        known = sorted(_ANN_FACTORS.values())
+        return min(known, key=lambda x: abs(x - bars_per_year))
+    except Exception:
+        return 365 * 24  # hourly fallback
+
 
 # In-memory SSE queues — fine for single-user
 _sse_queues: dict[str, asyncio.Queue] = {}
@@ -55,26 +104,31 @@ async def stream_run(run_id: str):
 # ── List / get ────────────────────────────────────────────────────────────────
 
 @router.get("")
-def list_runs(strategy_id: Optional[str] = Query(None)):
+def list_runs(
+    strategy_id: Optional[str] = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
     conn = get_conn()
+    # Exclude equity blob from list query — it can be MBs per row
+    base_select = (
+        "SELECT r.id, r.name, r.ticker, r.timeframe, r.status, r.params, r.created_at,"
+        " r.strategy_id, rr.metrics"
+        " FROM runs r LEFT JOIN run_results rr ON r.id = rr.run_id"
+    )
     if strategy_id:
         rows = conn.execute(
-            "SELECT r.id, r.name, r.ticker, r.timeframe, r.status, r.params, r.created_at,"
-            " r.strategy_id, rr.metrics, rr.equity"
-            " FROM runs r LEFT JOIN run_results rr ON r.id = rr.run_id"
-            " WHERE r.strategy_id = ? ORDER BY r.created_at DESC",
-            [strategy_id]
+            f"{base_select} WHERE r.strategy_id = ? ORDER BY r.created_at DESC LIMIT ? OFFSET ?",
+            [strategy_id, limit, offset]
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT r.id, r.name, r.ticker, r.timeframe, r.status, r.params, r.created_at,"
-            " r.strategy_id, rr.metrics, rr.equity"
-            " FROM runs r LEFT JOIN run_results rr ON r.id = rr.run_id"
-            " ORDER BY r.created_at DESC"
+            f"{base_select} ORDER BY r.created_at DESC LIMIT ? OFFSET ?",
+            [limit, offset]
         ).fetchall()
     result = []
     for r in rows:
-        run_id, name, ticker, timeframe, status, params_str, created_at, strat_id, metrics_str, equity_str = r
+        run_id, name, ticker, timeframe, status, params_str, created_at, strat_id, metrics_str = r
         params = json.loads(params_str) if params_str else {}
         best_m: dict = {}
         if metrics_str:
@@ -83,12 +137,9 @@ def list_runs(strategy_id: Optional[str] = Query(None)):
             if best_key not in all_m and all_m:
                 best_key = next(iter(all_m))
             best_m = all_m.get(best_key, {})
-        start_date = end_date = None
-        if equity_str:
-            eq = json.loads(equity_str)
-            if eq:
-                start_date = str(eq[0].get("ts", ""))[:10] or None
-                end_date   = str(eq[-1].get("ts", ""))[:10] or None
+        # Derive date range from stored params or metrics rather than loading equity blob
+        start_date = params.get("_start_date")
+        end_date = params.get("_end_date")
         result.append({
             "id": run_id,
             "name": name,
@@ -100,12 +151,12 @@ def list_runs(strategy_id: Optional[str] = Query(None)):
             "created_at": str(created_at),
             "start_date": start_date,
             "end_date": end_date,
-            "sharpe": round(float(best_m["sharpe_ratio"]), 3) if "sharpe_ratio" in best_m else None,
-            "cagr": round(float(best_m["cagr_pct"]), 2) if "cagr_pct" in best_m else None,
-            "max_dd": round(float(best_m["max_drawdown_pct"]), 2) if "max_drawdown_pct" in best_m else None,
-            "pf": round(float(best_m["profit_factor"]), 2) if "profit_factor" in best_m and best_m["profit_factor"] != float("inf") else None,
+            "sharpe": _safe_float(best_m.get("sharpe_ratio"), 3),
+            "cagr": _safe_float(best_m.get("cagr_pct"), 2),
+            "max_dd": _safe_float(best_m.get("max_drawdown_pct"), 2),
+            "pf": _safe_float(best_m.get("profit_factor"), 2) if best_m.get("profit_factor") != float("inf") else None,
             "n_trades": int(best_m.get("n_trades", 0)) if best_m else None,
-            "win_rate": round(float(best_m["win_rate_pct"]), 1) if "win_rate_pct" in best_m else None,
+            "win_rate": _safe_float(best_m.get("win_rate_pct"), 1),
         })
     return result
 
@@ -208,6 +259,15 @@ def get_bootstrap_ci(run_id: str):
     from scipy.stats import bootstrap as sp_bootstrap
 
     conn = get_conn()
+    # Return cached result if already computed
+    cached_row = conn.execute(
+        "SELECT mc FROM run_results WHERE run_id=?", [run_id]
+    ).fetchone()
+    if cached_row and cached_row[0]:
+        mc_data = json.loads(cached_row[0]) if isinstance(cached_row[0], str) else cached_row[0]
+        if mc_data and "bootstrap_ci" in mc_data:
+            return mc_data["bootstrap_ci"]
+
     row = conn.execute("SELECT equity FROM run_results WHERE run_id=?", [run_id]).fetchone()
     if not row or not row[0]:
         raise HTTPException(404, "No results for this run")
@@ -224,8 +284,8 @@ def get_bootstrap_ci(run_id: str):
     if n < 20:
         raise HTTPException(400, "Not enough returns for bootstrap")
 
-    # Annualisation (assume hourly by default — stored equity is per-bar)
-    ann_factor = 24 * 365
+    # Infer bar interval from equity timestamps to get correct annualisation
+    ann_factor = _infer_ann_factor(equity_data)
 
     def sharpe_fn(x):
         m, s = float(np.mean(x)), float(np.std(x))
@@ -253,12 +313,12 @@ def get_bootstrap_ci(run_id: str):
         cagr_ci   = (float(bs_cagr.confidence_interval.low),   float(bs_cagr.confidence_interval.high))
     except Exception as e:
         import logging
-        logging.warning(f"Bootstrap CI failed: {e}")
+        log.warning(f"Bootstrap CI failed: {e}")
         sharpe_ci = (None, None)
         cagr_ci = (None, None)
         ci_method = "unavailable"
 
-    return {
+    result = {
         "run_id":    run_id,
         "n_returns": n,
         "sharpe": {
@@ -272,11 +332,27 @@ def get_bootstrap_ci(run_id: str):
             "ci_high": round(cagr_ci[1], 2) if cagr_ci[1] is not None else None,
         },
     }
+    # Persist CI result into mc JSON so subsequent calls are instant
+    try:
+        mc_row = conn.execute(
+            "SELECT mc FROM run_results WHERE run_id=?", [run_id]
+        ).fetchone()
+        if mc_row:
+            mc_data = (json.loads(mc_row[0]) if isinstance(mc_row[0], str) else mc_row[0]) or {}
+            mc_data["bootstrap_ci"] = result
+            conn.execute(
+                "UPDATE run_results SET mc=? WHERE run_id=?",
+                [json.dumps(mc_data), run_id]
+            )
+    except Exception as _cache_exc:
+        log.debug("Failed to cache bootstrap CI: %s", _cache_exc)
+    return result
 
 # ── Create + async backtest ───────────────────────────────────────────────────
 
 @router.post("")
-async def create_run(body: RunCreate):
+@limiter.limit("20/minute")
+async def create_run(request: Request, body: RunCreate):
     run_id = str(uuid.uuid4()).replace('-', '')[:12]
     name   = body.name or f"run-{run_id}"
     params = body.params.model_dump()
@@ -286,6 +362,7 @@ async def create_run(body: RunCreate):
         "INSERT INTO runs (id, name, ticker, timeframe, params, status, strategy_id) VALUES (?,?,?,?,?,?,?)",
         [run_id, name, params["ticker"], params["timeframe"], json.dumps(params), "pending", body.strategy_id]
     )
+    conn.commit()  # Flush INSERT before fire-and-forget task reads the row
 
     params["_strategy_id"] = body.strategy_id
     asyncio.create_task(_run_backtest(run_id, params))
@@ -322,7 +399,9 @@ def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
         if is_crypto_ticker(ticker):
             try:
                 df = ccxt_fetch(ticker, period=period, interval=interval)
-            except Exception:
+            except Exception as _ccxt_exc:
+                log.warning("ccxt fetch failed for %s/%s, falling back to yfinance: %s",
+                                ticker, interval, _ccxt_exc)
                 df = yf_fetch(ticker, period=period, interval=interval)
         else:
             df = yf_fetch(ticker, period=period, interval=interval)
@@ -356,6 +435,10 @@ async def _run_backtest(run_id: str, params: dict):
         conn.execute("UPDATE runs SET status='running' WHERE id=?", [run_id])
         push("start", 0, "loading data")
 
+        ticker_raw = params.get("ticker", "?")
+        tf = params.get("timeframe", "?")
+        log.info("backtest start run_id=%s ticker=%s tf=%s", run_id, ticker_raw, tf)
+
         # Load bars from DuckDB — strip any accidental double suffix e.g. "BNB-USD-USD"
         ticker = params["ticker"]
         while ticker.endswith("-USD-USD") or ticker.endswith("-USDT-USDT"):
@@ -375,17 +458,28 @@ async def _run_backtest(run_id: str, params: dict):
         import concurrent.futures
         loop = asyncio.get_running_loop()
 
+        _BACKTEST_TIMEOUT = 300  # seconds; prevents runaway backtests
         with concurrent.futures.ThreadPoolExecutor() as pool:
-            result = await loop.run_in_executor(
-                pool,
-                _sync_backtest_pipeline,
-                df, params, push
-            )
+            fut = loop.run_in_executor(pool, _sync_backtest_pipeline, df, params, push)
+            try:
+                result = await asyncio.wait_for(fut, timeout=_BACKTEST_TIMEOUT)
+            except asyncio.TimeoutError:
+                push("error", 0, "Backtest timed out after 300s")
+                raise HTTPException(status_code=504, detail="Backtest timed out")
 
         # Persist results
         push("saving", 95, "saving results")
+        # Store date range in params so list_runs never needs the equity blob
+        equity_raw = result["equity"]
+        if equity_raw:
+            params["_start_date"] = str(equity_raw[0].get("ts", ""))[:10] or None
+            params["_end_date"]   = str(equity_raw[-1].get("ts", ""))[:10] or None
+            conn.execute(
+                "UPDATE runs SET params=? WHERE id=?",
+                [json.dumps(params), run_id]
+            )
         metrics_json = json.dumps(result["metrics"])
-        equity_json  = json.dumps(result["equity"])
+        equity_json  = json.dumps(equity_raw)
         trades_json  = json.dumps(result["trades"])
         wfo_json     = json.dumps(result.get("wfo", []))
         sweep_json   = json.dumps(result.get("sweep", []))
@@ -404,6 +498,12 @@ async def _run_backtest(run_id: str, params: dict):
             )
         conn.execute("UPDATE runs SET status='done' WHERE id=?", [run_id])
         push("done", 100, "complete")
+        log.info(
+            "backtest done run_id=%s ticker=%s tf=%s n_trades=%s sharpe=%s",
+            run_id, ticker_raw, tf,
+            result.get("metrics", {}).get("n_trades"),
+            result.get("metrics", {}).get("sharpe_ratio"),
+        )
 
         # Post-run learning: extract lesson and store in brain_chunks
         try:
@@ -425,12 +525,20 @@ async def _run_backtest(run_id: str, params: dict):
                 wfo_folds=result.get("wfo", []),
                 df_ind=result.get("_df_ind"),
             )
-        except Exception:
-            pass  # learning never blocks the main pipeline
+        except Exception as _learn_exc:
+            log.warning("Learning update failed (non-blocking): %s", _learn_exc)
 
     except Exception as exc:
         conn.execute("UPDATE runs SET status='error' WHERE id=?", [run_id])
         push("error", 0, str(exc))
+        log.error(
+            "backtest error run_id=%s ticker=%s tf=%s error=%s",
+            run_id, params.get("ticker", "?"), params.get("timeframe", "?"), exc,
+            exc_info=True,
+        )
+    finally:
+        # Ensure queue is removed even when no SSE client ever connected
+        _sse_queues.pop(run_id, None)
 
 
 def _sync_backtest_pipeline(df, params: dict, push) -> dict:
@@ -444,6 +552,9 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
 
     push("indicators", 15, "computing GARCH indicators")
     df_ind = compute_indicators_v2(df, fit_garch=True)
+    garch_status = df_ind.attrs.get("garch_status", "unknown")
+    if garch_status != "ok":
+        push("indicators", 16, f"GARCH fallback: {garch_status}")
 
     push("versions", 25, "running strategy versions")
     cfg = {
@@ -467,15 +578,17 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
     if strategy_id:
         try:
             from api.db import get_conn as _get_conn
+            from engine.safe_exec import safe_exec_strategy, CodeSecurityError
             _conn = _get_conn()
             _row = _conn.execute(
                 "SELECT code FROM strategies WHERE id=?", [strategy_id]
             ).fetchone()
             if _row and _row[0] and _row[0].strip():
-                _ns: dict = {}
-                exec(compile(_row[0], f"strategy_{strategy_id}", "exec"), _ns)
+                _ns = safe_exec_strategy(_row[0], strategy_id=str(strategy_id))
                 if "agent_fn" in _ns:
                     cfg["agent_fn"] = _ns["agent_fn"]
+        except CodeSecurityError as _exc:
+            push("versions", 25, f"Strategy code blocked by security policy: {_exc}")
         except Exception as _exc:
             push("versions", 25, f"Strategy code load failed: {_exc}")
     direction = params.get("direction", "ALL")
@@ -552,7 +665,8 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
         if equity_s is not None and len(equity_s) >= 2:
             try:
                 mc_days = max((equity_s.index[-1] - equity_s.index[0]).days, 1)
-            except Exception:
+            except Exception as _ts_exc:
+                log.debug("Could not compute backtest date range: %s", _ts_exc)
                 mc_days = 365.0
         bs     = run_bootstrap(pnl_arr, n_sims=n_sims, n_bars=n_bars, initial_capital=INITIAL_CAPITAL, days_in_period=mc_days)
         stress = run_stress(pnl_arr, initial_capital=INITIAL_CAPITAL)
@@ -607,7 +721,8 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
 # ── Preview endpoint ──────────────────────────────────────────────────────────
 
 @router.post("/preview")
-async def preview_run(body: RunParams):
+@limiter.limit("30/minute")
+async def preview_run(request: Request, body: RunParams):
     """Lightweight preview: last 500 bars, V4 only, no WFO/MC."""
     import sys, os
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
