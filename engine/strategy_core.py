@@ -12,12 +12,17 @@ Provides:
 """
 
 import re
+import time
 import numpy as np
 import pandas as pd
 from arch import arch_model
 import warnings
 
 warnings.filterwarnings("ignore", message=".*Maximum Likelihood.*", category=UserWarning)
+
+# GARCH parameter cache: (n_bars, close_first, close_last) → (omega, alpha, beta, h_all, cached_at)
+_GARCH_CACHE: dict = {}
+_GARCH_TTL = 3600  # seconds — refit at most once per hour for the same dataset fingerprint
 warnings.filterwarnings("ignore", message=".*covariance of the parameters.*", category=RuntimeWarning)
 warnings.filterwarnings("ignore", message=".*optimization.*", category=UserWarning)
 
@@ -129,10 +134,16 @@ def compute_indicators_v2(df: pd.DataFrame,
 
     # GARCH regime
     if fit_garch and len(df) > 100:
-        log_ret = np.log(df["Close"] / df["Close"].shift(1)).dropna().values
         r_aligned = np.log(df["Close"] / df["Close"].shift(1)).fillna(0).values
+        _cache_key = (len(r_aligned), round(float(r_aligned[0]), 6), round(float(r_aligned[-1]), 6))
+        _cached = _GARCH_CACHE.get(_cache_key)
+        _now = time.monotonic()
         try:
-            _, _, _, h_all = fit_garch11(r_aligned[1:])
+            if _cached and (_now - _cached[1]) < _GARCH_TTL:
+                h_all = _cached[0]
+            else:
+                _, _, _, h_all = fit_garch11(r_aligned[1:])
+                _GARCH_CACHE[_cache_key] = (h_all, _now)
             h_padded = np.concatenate([[h_all[0]], h_all])
             df["garch_h"] = h_padded[:len(df)]
         except Exception:
