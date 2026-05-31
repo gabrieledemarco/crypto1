@@ -2,7 +2,7 @@
 import { useState, useMemo, useId } from "react";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
-import { useRunSweep } from "@/hooks/useRun";
+import { useRunSweep, isRealRunId } from "@/hooks/useRun";
 import { HeatmapGrid } from "@/components/charts/HeatmapGrid";
 import styles from "./SweepScreen.module.css";
 
@@ -61,6 +61,9 @@ export function SweepScreen() {
     return (run?.sweep ?? []) as number[][];
   }, [apiRecords, SL_RANGE, TP_RANGE, metric, run?.sweep]);
 
+  if (sweepQuery.isLoading) return <div className={styles.empty}>Loading sweep data…</div>;
+  if (sweepQuery.isError) return <div className={styles.empty}>Failed to load sweep data</div>;
+  if (!isRealRunId(activeRunId) && !apiRecords) return <div className={styles.empty}>Run a backtest to see parameter sweep results</div>;
   if (!grid.length) return <div className={styles.empty}>No sweep data</div>;
 
   const rows = grid.length;
