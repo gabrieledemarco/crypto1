@@ -300,6 +300,8 @@ def backtest_v2(df: pd.DataFrame,
                     trail_dist = trailing_stop_value * pip_size
                 else:  # atr
                     trail_dist = float(atrs[i]) * trailing_stop_value
+                # Guard: distance must be positive and at least one pip
+                trail_dist = max(trail_dist, pip_size)
                 if pos["dir"] == 1:
                     new_sl = cp - trail_dist
                     if new_sl > pos["sl"]:

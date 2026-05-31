@@ -31,6 +31,18 @@ from api.models import RunCreate, RunParams
 
 router = APIRouter()
 
+
+def _safe_float(val, ndigits: int = 3):
+    """Convert val to float, round, return None on failure or non-finite."""
+    try:
+        f = float(val)
+        if not (f == f) or f in (float("inf"), float("-inf")):  # NaN/inf guard
+            return None
+        return round(f, ndigits)
+    except (TypeError, ValueError):
+        return None
+
+
 # In-memory SSE queues — fine for single-user
 _sse_queues: dict[str, asyncio.Queue] = {}
 
@@ -100,12 +112,12 @@ def list_runs(strategy_id: Optional[str] = Query(None)):
             "created_at": str(created_at),
             "start_date": start_date,
             "end_date": end_date,
-            "sharpe": round(float(best_m["sharpe_ratio"]), 3) if "sharpe_ratio" in best_m else None,
-            "cagr": round(float(best_m["cagr_pct"]), 2) if "cagr_pct" in best_m else None,
-            "max_dd": round(float(best_m["max_drawdown_pct"]), 2) if "max_drawdown_pct" in best_m else None,
-            "pf": round(float(best_m["profit_factor"]), 2) if "profit_factor" in best_m and best_m["profit_factor"] != float("inf") else None,
+            "sharpe": _safe_float(best_m.get("sharpe_ratio"), 3),
+            "cagr": _safe_float(best_m.get("cagr_pct"), 2),
+            "max_dd": _safe_float(best_m.get("max_drawdown_pct"), 2),
+            "pf": _safe_float(best_m.get("profit_factor"), 2) if best_m.get("profit_factor") != float("inf") else None,
             "n_trades": int(best_m.get("n_trades", 0)) if best_m else None,
-            "win_rate": round(float(best_m["win_rate_pct"]), 1) if "win_rate_pct" in best_m else None,
+            "win_rate": _safe_float(best_m.get("win_rate_pct"), 1),
         })
     return result
 
@@ -375,12 +387,14 @@ async def _run_backtest(run_id: str, params: dict):
         import concurrent.futures
         loop = asyncio.get_running_loop()
 
+        _BACKTEST_TIMEOUT = 300  # seconds; prevents runaway backtests
         with concurrent.futures.ThreadPoolExecutor() as pool:
-            result = await loop.run_in_executor(
-                pool,
-                _sync_backtest_pipeline,
-                df, params, push
-            )
+            fut = loop.run_in_executor(pool, _sync_backtest_pipeline, df, params, push)
+            try:
+                result = await asyncio.wait_for(fut, timeout=_BACKTEST_TIMEOUT)
+            except asyncio.TimeoutError:
+                push("error", 0, "Backtest timed out after 300s")
+                raise HTTPException(status_code=504, detail="Backtest timed out")
 
         # Persist results
         push("saving", 95, "saving results")
@@ -467,15 +481,17 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
     if strategy_id:
         try:
             from api.db import get_conn as _get_conn
+            from engine.safe_exec import safe_exec_strategy, CodeSecurityError
             _conn = _get_conn()
             _row = _conn.execute(
                 "SELECT code FROM strategies WHERE id=?", [strategy_id]
             ).fetchone()
             if _row and _row[0] and _row[0].strip():
-                _ns: dict = {}
-                exec(compile(_row[0], f"strategy_{strategy_id}", "exec"), _ns)
+                _ns = safe_exec_strategy(_row[0], strategy_id=str(strategy_id))
                 if "agent_fn" in _ns:
                     cfg["agent_fn"] = _ns["agent_fn"]
+        except CodeSecurityError as _exc:
+            push("versions", 25, f"Strategy code blocked by security policy: {_exc}")
         except Exception as _exc:
             push("versions", 25, f"Strategy code load failed: {_exc}")
     direction = params.get("direction", "ALL")
