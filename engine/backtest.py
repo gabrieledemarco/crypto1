@@ -177,6 +177,12 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
         while i + is_len + oos_len <= len(df_ind):
             is_data  = df_ind.iloc[i : i + is_len].copy()
             oos_data = df_ind.iloc[i + is_len : i + is_len + oos_len].copy()
+            # Guard: IS must end strictly before OOS begins (no lookahead bias)
+            if not is_data.empty and not oos_data.empty:
+                assert is_data.index[-1] < oos_data.index[0], (
+                    f"WFO data overlap: IS ends {is_data.index[-1]}, "
+                    f"OOS starts {oos_data.index[0]}"
+                )
             # Refit GARCH on IS only — eliminates lookahead bias in WFO folds
             if "garch_h" in df_ind.columns and "Close" in df_ind.columns:
                 try:

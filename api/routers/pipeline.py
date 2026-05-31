@@ -42,6 +42,7 @@ for _p in (_ROOT, _SCRIPTS):
 
 from api.db import get_conn
 from api.strategies import get_archetype   # always available: COPY api/ ./api/
+from engine.safe_exec import safe_exec_strategy, CodeSecurityError
 
 router = APIRouter()
 _queues: dict[str, asyncio.Queue] = {}
@@ -323,12 +324,11 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
     }
 
     df_ind = compute_indicators_v2(df, fit_garch=True)
-    ns: dict = {}
     try:
-        exec(compile(code, "<agent_fn>", "exec"), ns)
+        ns = safe_exec_strategy(code, strategy_id="pipeline")
         if "agent_fn" in ns:
             config["agent_fn"] = ns["agent_fn"]
-    except Exception:
+    except (CodeSecurityError, RuntimeError):
         pass
 
     versions = run_versions(df_ind, config, direction=config["direction"])

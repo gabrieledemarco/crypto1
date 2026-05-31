@@ -10,10 +10,11 @@ import json
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 import pandas as pd
 import numpy as np
 from api.db import get_conn
+from api.limiter import limiter
 from api.models import AssetFetch
 
 router = APIRouter()
@@ -58,7 +59,8 @@ def list_ticker_series(ticker: str):
 
 
 @router.post("/fetch")
-def fetch_asset(body: AssetFetch):
+@limiter.limit("10/minute")
+def fetch_asset(request: Request, body: AssetFetch):
     VALID_INTERVALS = {"1m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
     if body.interval not in VALID_INTERVALS:
         raise HTTPException(400, f"Invalid interval '{body.interval}'. Must be one of: {sorted(VALID_INTERVALS)}")
