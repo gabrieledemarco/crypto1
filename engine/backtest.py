@@ -275,6 +275,11 @@ def run_optimization(df_ind: pd.DataFrame, cfg: dict,
 
     rows = []
     combos = [(sl, tp, h) for sl in SL_RANGE for tp in TP_RANGE for h in HOUR_WINDOWS if tp > sl]
+    if len(combos) > 10_000:
+        raise ValueError(
+            f"Sweep grid too large ({len(combos)} combinations). "
+            "Reduce SL_RANGE, TP_RANGE, or HOUR_WINDOWS."
+        )
     for idx, (sl, tp, h) in enumerate(combos):
         if progress_cb and idx % 5 == 0:
             progress_cb("sweep", int(idx / len(combos) * 100))

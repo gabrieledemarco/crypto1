@@ -85,13 +85,20 @@ _sse_queues: dict[str, asyncio.Queue] = {}
 
 # ── SSE stream ────────────────────────────────────────────────────────────────
 
+_SSE_TIMEOUT = 660  # 11 min — longer than max backtest (300s) + buffer
+
 @router.get("/{run_id}/stream")
 async def stream_run(run_id: str):
     queue = _sse_queues.setdefault(run_id, asyncio.Queue())
     async def generator():
         try:
             while True:
-                event = await queue.get()
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=_SSE_TIMEOUT)
+                except asyncio.TimeoutError:
+                    # Client still connected but backtest never finished — terminate gracefully
+                    yield f"data: {json.dumps({'phase': 'error', 'pct': 0, 'msg': 'stream timeout'})}\n\n"
+                    break
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("phase") in ("done", "error"):
                     break
@@ -133,10 +140,12 @@ def list_runs(
         best_m: dict = {}
         if metrics_str:
             all_m = json.loads(metrics_str)
-            best_key = "V_Agent" if "V_Agent" in all_m else "V4 +GARCH+Costi"
-            if best_key not in all_m and all_m:
-                best_key = next(iter(all_m))
-            best_m = all_m.get(best_key, {})
+            if isinstance(all_m, dict):
+                best_key = "V_Agent" if "V_Agent" in all_m else "V4 +GARCH+Costi"
+                if best_key not in all_m and all_m:
+                    best_key = next(iter(all_m))
+                candidate = all_m.get(best_key)
+                best_m = candidate if isinstance(candidate, dict) else {}
         # Derive date range from stored params or metrics rather than loading equity blob
         start_date = params.get("_start_date")
         end_date = params.get("_end_date")
