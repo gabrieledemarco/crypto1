@@ -1,9 +1,12 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
+import { api } from "@/lib/api";
 import { useLibrary, useStarStrategy } from "@/hooks/useLibrary";
 import { useRunList, useDeleteRun } from "@/hooks/useRun";
+import type { ApiRunListItem } from "@/lib/api-types";
 import styles from "./LibraryScreen.module.css";
 import type { LibraryEntry, Run, RunMetrics } from "@/lib/fixtures";
 import type { RunListItem } from "@/hooks/useRun";
@@ -86,11 +89,27 @@ export function LibraryScreen() {
   const [sortCol, setSortCol] = useState<SortCol>("sharpe");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
+  const queryClient = useQueryClient();
   const { data: apiLibrary } = useLibrary();
   const starMutation = useStarStrategy();
   const { data: runList, isLoading: runsLoading } = useRunList(selectedEntry?.id);
   const deleteMutation = useDeleteRun();
   const displayRuns: RunListItem[] = runList ?? [];
+
+  // Prefetch run list on hover so the panel opens instantly on click
+  const prefetchRuns = useCallback(
+    (strategyId: string) => {
+      queryClient.prefetchQuery({
+        queryKey: ["run-list", strategyId],
+        queryFn: () =>
+          api.get<ApiRunListItem[]>(
+            `/runs?strategy_id=${encodeURIComponent(strategyId)}`
+          ),
+        staleTime: 30_000,
+      });
+    },
+    [queryClient]
+  );
 
   const rawEntries: LibraryEntry[] =
     apiLibrary && apiLibrary.length > 0 ? (apiLibrary as unknown as LibraryEntry[]) : fixtures.library;
@@ -311,6 +330,7 @@ export function LibraryScreen() {
                 key={entry.id}
                 className={`${styles.trow} ${entry.starred ? styles.trowStarred : ""} ${selectedEntry?.id === entry.id ? styles.trowSelected : ""}`}
                 onClick={() => handleSelectEntry(entry)}
+                onMouseEnter={() => prefetchRuns(entry.id)}
               >
                 <button className={`${styles.starBtn} ${entry.starred ? styles.starBtnOn : ""}`} onClick={e => handleStar(e, entry.id)} title={entry.starred ? "Unstar" : "Star"}>
                   {entry.starred ? "★" : "☆"}
@@ -409,7 +429,7 @@ export function LibraryScreen() {
 
 function RunRow({ run, onLoad, onReRun, onVibe, onDelete, deleting }: {
   run: RunListItem; onLoad: (e: React.MouseEvent) => void; onReRun: (e: React.MouseEvent) => void;
-  onVibe: (e: React.MouseEvent) => void; onDelete: (e: React.MouseEvent) => void; deleting: boolean;
+  onVibe: (e: React.MouseEvent) => void | Promise<void>; onDelete: (e: React.MouseEvent) => void; deleting: boolean;
 }) {
   const params = run.params as Record<string, unknown>;
   const paramStr = Object.entries(params)

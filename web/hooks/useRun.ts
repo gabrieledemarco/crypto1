@@ -97,13 +97,12 @@ const _MAX_EQUITY_POINTS = 500;
 
 function downsampleEquity<T>(pts: T[]): T[] {
   if (pts.length <= _MAX_EQUITY_POINTS) return pts;
-  const step = pts.length / _MAX_EQUITY_POINTS;
-  const out: T[] = [];
-  for (let i = 0; i < _MAX_EQUITY_POINTS; i++) {
+  const step = (pts.length - 1) / (_MAX_EQUITY_POINTS - 1);
+  const out: T[] = [pts[0]]; // always include first
+  for (let i = 1; i < _MAX_EQUITY_POINTS - 1; i++) {
     out.push(pts[Math.round(i * step)]);
   }
-  // Always include the last point
-  if (out[out.length - 1] !== pts[pts.length - 1]) out.push(pts[pts.length - 1]);
+  out.push(pts[pts.length - 1]); // always include last
   return out;
 }
 
