@@ -1,5 +1,5 @@
 {
   "min_sharpe": 1.0,
-  "reason": "post-forex-pipeline cleanup",
-  "triggered_at": "2026-05-27T12:45:00Z"
+  "reason": "align cleanup threshold with _ROBUST_MIN_SHARPE=1.0 — keep all genuinely ROBUST strategies",
+  "triggered_at": "2026-05-27T18:30:00Z"
 }

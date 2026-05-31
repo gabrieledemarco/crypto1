@@ -9,9 +9,28 @@ function apiBase() {
   );
 }
 
+// Reject state-mutating requests that arrive from a foreign origin.
+// GET/HEAD are read-only and safe to allow unrestricted.
+function isCsrfSafe(req: NextRequest): boolean {
+  if (req.method === "GET" || req.method === "HEAD") return true;
+  const origin = req.headers.get("origin");
+  if (!origin) return true; // server-to-server or same-origin (no Origin header)
+  const host = req.headers.get("host") ?? "";
+  try {
+    const originHost = new URL(origin).host;
+    return originHost === host || originHost === "localhost" || originHost.startsWith("localhost:");
+  } catch {
+    return false;
+  }
+}
+
 type Ctx = { params: { path: string[] } };
 
 async function proxy(req: NextRequest, { params }: Ctx) {
+  if (!isCsrfSafe(req)) {
+    return NextResponse.json({ detail: "Forbidden" }, { status: 403 });
+  }
+
   const upstream = `${apiBase()}/${params.path.join("/")}${req.nextUrl.search}`;
 
   const init: RequestInit = {
@@ -23,8 +42,11 @@ async function proxy(req: NextRequest, { params }: Ctx) {
     init.body = await req.text();
   }
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+
   try {
-    const res = await fetch(upstream, init);
+    const res = await fetch(upstream, { ...init, signal: controller.signal });
     const body = await res.arrayBuffer();
     return new NextResponse(body, {
       status: res.status,
@@ -32,11 +54,14 @@ async function proxy(req: NextRequest, { params }: Ctx) {
         "content-type": res.headers.get("content-type") ?? "application/json",
       },
     });
-  } catch {
+  } catch (err: unknown) {
+    const isTimeout = err instanceof Error && err.name === "AbortError";
     return NextResponse.json(
-      { detail: `API non raggiungibile: ${upstream}` },
-      { status: 503 }
+      { detail: isTimeout ? "API request timed out" : "API non raggiungibile" },
+      { status: isTimeout ? 504 : 503 }
     );
+  } finally {
+    clearTimeout(timer);
   }
 }
 

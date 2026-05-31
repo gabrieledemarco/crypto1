@@ -1,9 +1,470 @@
 {
   "min_sharpe": 1.0,
-  "status": "fetch_failed",
-  "total": 0,
-  "deleted": 0,
-  "kept": 0,
-  "kept_strategies": [],
-  "error": "HTTP 500: Internal Server Error"
+  "status": "complete",
+  "total": 107,
+  "deleted": 15,
+  "kept": 92,
+  "kept_strategies": [
+    {
+      "id": "434b19b5",
+      "name": "pipe_039_15m_BTC_USD",
+      "sharpe": 1.902
+    },
+    {
+      "id": "42e05ec5",
+      "name": "pipe_027_15m_SOL_USD",
+      "sharpe": 2.19
+    },
+    {
+      "id": "ea765b4d",
+      "name": "pipe_053_15m_BTC_USD",
+      "sharpe": 1.994
+    },
+    {
+      "id": "832f850e",
+      "name": "pipe_020_4h_BTC_USD",
+      "sharpe": 1.727
+    },
+    {
+      "id": "09060088",
+      "name": "pipe_038_4h_SOL_USD",
+      "sharpe": 1.699
+    },
+    {
+      "id": "307358a1",
+      "name": "pipe_053_15m_BTC_USD",
+      "sharpe": 1.994
+    },
+    {
+      "id": "ca99d2fc",
+      "name": "pipe_053_15m_ETH_USD",
+      "sharpe": 1.689
+    },
+    {
+      "id": "90fe1389",
+      "name": "pipe_077_15m_BTC_USD",
+      "sharpe": 2.574
+    },
+    {
+      "id": "6885c835",
+      "name": "pipe_039_15m_BTC_USD",
+      "sharpe": 3.785
+    },
+    {
+      "id": "7666c908",
+      "name": "pipe_027_15m_SOL_USD",
+      "sharpe": 4.337
+    },
+    {
+      "id": "f4afa771",
+      "name": "pipe_006_1h_EURUSD=X",
+      "sharpe": 14.789
+    },
+    {
+      "id": "a45c81f4",
+      "name": "pipe_015_1h_EURUSD=X",
+      "sharpe": 9.686
+    },
+    {
+      "id": "0857ffce",
+      "name": "pipe_018_1h_EURUSD=X",
+      "sharpe": 12.993
+    },
+    {
+      "id": "9e0ca2c2",
+      "name": "pipe_021_1h_EURUSD=X",
+      "sharpe": 14.41
+    },
+    {
+      "id": "981cef83",
+      "name": "pipe_027_1h_EURUSD=X",
+      "sharpe": 7.295
+    },
+    {
+      "id": "4a9a2b28",
+      "name": "pipe_030_1h_EURUSD=X",
+      "sharpe": 11.344
+    },
+    {
+      "id": "40f7381f",
+      "name": "pipe_033_1h_EURUSD=X",
+      "sharpe": 11.31
+    },
+    {
+      "id": "cbb2fcbe",
+      "name": "pipe_036_1h_EURUSD=X",
+      "sharpe": 8.554
+    },
+    {
+      "id": "c2a1810e",
+      "name": "pipe_039_1h_EURUSD=X",
+      "sharpe": 4.773
+    },
+    {
+      "id": "082d0346",
+      "name": "pipe_041_15m_EURUSD=X",
+      "sharpe": 10.549
+    },
+    {
+      "id": "b2063f88",
+      "name": "pipe_042_1h_EURUSD=X",
+      "sharpe": 8.847
+    },
+    {
+      "id": "69b421e7",
+      "name": "pipe_045_1h_EURUSD=X",
+      "sharpe": 9.839
+    },
+    {
+      "id": "29c7d0a7",
+      "name": "pipe_048_1h_EURUSD=X",
+      "sharpe": 5.872
+    },
+    {
+      "id": "e52c2c5a",
+      "name": "pipe_006_1h_EURUSD=X",
+      "sharpe": 14.811
+    },
+    {
+      "id": "083cb876",
+      "name": "pipe_015_1h_EURUSD=X",
+      "sharpe": 9.693
+    },
+    {
+      "id": "329e70a5",
+      "name": "pipe_018_1h_EURUSD=X",
+      "sharpe": 12.921
+    },
+    {
+      "id": "73434143",
+      "name": "pipe_021_1h_EURUSD=X",
+      "sharpe": 14.412
+    },
+    {
+      "id": "7e7a5d1e",
+      "name": "pipe_027_1h_EURUSD=X",
+      "sharpe": 7.385
+    },
+    {
+      "id": "a006f6b2",
+      "name": "pipe_030_1h_EURUSD=X",
+      "sharpe": 11.265
+    },
+    {
+      "id": "b855c481",
+      "name": "pipe_033_1h_EURUSD=X",
+      "sharpe": 11.408
+    },
+    {
+      "id": "f6fff316",
+      "name": "pipe_036_1h_EURUSD=X",
+      "sharpe": 8.7
+    },
+    {
+      "id": "6d5bd738",
+      "name": "pipe_039_1h_EURUSD=X",
+      "sharpe": 5.536
+    },
+    {
+      "id": "8eda6f7e",
+      "name": "pipe_041_15m_EURUSD=X",
+      "sharpe": 10.548
+    },
+    {
+      "id": "ced12662",
+      "name": "pipe_042_1h_EURUSD=X",
+      "sharpe": 8.648
+    },
+    {
+      "id": "169ab92c",
+      "name": "pipe_045_1h_EURUSD=X",
+      "sharpe": 9.832
+    },
+    {
+      "id": "a4bd4860",
+      "name": "pipe_048_1h_EURUSD=X",
+      "sharpe": 5.912
+    },
+    {
+      "id": "fe83eebf",
+      "name": "pipe_015_1h_GBPUSD=X",
+      "sharpe": 9.996
+    },
+    {
+      "id": "c30019d0",
+      "name": "pipe_021_1h_GBPUSD=X",
+      "sharpe": 13.516
+    },
+    {
+      "id": "e76934fb",
+      "name": "pipe_024_1h_GBPUSD=X",
+      "sharpe": 11.444
+    },
+    {
+      "id": "321ee055",
+      "name": "pipe_027_1h_GBPUSD=X",
+      "sharpe": 7.277
+    },
+    {
+      "id": "8fac2cd1",
+      "name": "pipe_029_15m_GBPUSD=X",
+      "sharpe": 16.974
+    },
+    {
+      "id": "6c2a5c37",
+      "name": "pipe_030_1h_GBPUSD=X",
+      "sharpe": 10.687
+    },
+    {
+      "id": "e5f58258",
+      "name": "pipe_033_1h_GBPUSD=X",
+      "sharpe": 10.713
+    },
+    {
+      "id": "1e27a11a",
+      "name": "pipe_036_1h_GBPUSD=X",
+      "sharpe": 8.845
+    },
+    {
+      "id": "f992c495",
+      "name": "pipe_039_1h_GBPUSD=X",
+      "sharpe": 5.177
+    },
+    {
+      "id": "eb472444",
+      "name": "pipe_041_15m_GBPUSD=X",
+      "sharpe": 13.844
+    },
+    {
+      "id": "c7429f5f",
+      "name": "pipe_042_1h_GBPUSD=X",
+      "sharpe": 9.818
+    },
+    {
+      "id": "171ca003",
+      "name": "pipe_044_15m_GBPUSD=X",
+      "sharpe": 17.878
+    },
+    {
+      "id": "7cd5b694",
+      "name": "pipe_045_1h_GBPUSD=X",
+      "sharpe": 7.926
+    },
+    {
+      "id": "e4dac589",
+      "name": "pipe_048_1h_GBPUSD=X",
+      "sharpe": 6.386
+    },
+    {
+      "id": "899510a1",
+      "name": "pipe_015_1h_AUDUSD=X",
+      "sharpe": 11.105
+    },
+    {
+      "id": "94873e3c",
+      "name": "pipe_024_1h_AUDUSD=X",
+      "sharpe": 11.584
+    },
+    {
+      "id": "d633515a",
+      "name": "pipe_027_1h_AUDUSD=X",
+      "sharpe": 8.339
+    },
+    {
+      "id": "3e1e9891",
+      "name": "pipe_030_1h_AUDUSD=X",
+      "sharpe": 10.567
+    },
+    {
+      "id": "d471c111",
+      "name": "pipe_033_1h_AUDUSD=X",
+      "sharpe": 11.302
+    },
+    {
+      "id": "c8e5224e",
+      "name": "pipe_036_1h_AUDUSD=X",
+      "sharpe": 9.306
+    },
+    {
+      "id": "870d1adc",
+      "name": "pipe_039_1h_AUDUSD=X",
+      "sharpe": 6.924
+    },
+    {
+      "id": "7f487391",
+      "name": "pipe_042_1h_AUDUSD=X",
+      "sharpe": 9.385
+    },
+    {
+      "id": "caaa2a87",
+      "name": "pipe_045_1h_AUDUSD=X",
+      "sharpe": 9.493
+    },
+    {
+      "id": "f3e08285",
+      "name": "pipe_048_1h_AUDUSD=X",
+      "sharpe": 6.938
+    },
+    {
+      "id": "75a5fbcf",
+      "name": "pipe_015_1h_USDCHF=X",
+      "sharpe": 9.368
+    },
+    {
+      "id": "a9c2bfe7",
+      "name": "pipe_018_1h_USDCHF=X",
+      "sharpe": 12.389
+    },
+    {
+      "id": "d9f2e36f",
+      "name": "pipe_021_1h_USDCHF=X",
+      "sharpe": 12.733
+    },
+    {
+      "id": "be281077",
+      "name": "pipe_024_1h_USDCHF=X",
+      "sharpe": 10.511
+    },
+    {
+      "id": "9f383877",
+      "name": "pipe_027_1h_USDCHF=X",
+      "sharpe": 5.616
+    },
+    {
+      "id": "46dd1b93",
+      "name": "pipe_030_1h_USDCHF=X",
+      "sharpe": 10.213
+    },
+    {
+      "id": "8340ec48",
+      "name": "pipe_033_1h_USDCHF=X",
+      "sharpe": 9.634
+    },
+    {
+      "id": "867dd23c",
+      "name": "pipe_036_1h_USDCHF=X",
+      "sharpe": 7.85
+    },
+    {
+      "id": "658dd99e",
+      "name": "pipe_039_1h_USDCHF=X",
+      "sharpe": 3.986
+    },
+    {
+      "id": "376c38fe",
+      "name": "pipe_042_1h_USDCHF=X",
+      "sharpe": 7.221
+    },
+    {
+      "id": "b4924732",
+      "name": "pipe_045_1h_USDCHF=X",
+      "sharpe": 8.382
+    },
+    {
+      "id": "f9a91c47",
+      "name": "pipe_048_1h_USDCHF=X",
+      "sharpe": 5.514
+    },
+    {
+      "id": "05305cb7",
+      "name": "pipe_006_1h_EURUSD=X",
+      "sharpe": 14.811
+    },
+    {
+      "id": "28dec42f",
+      "name": "pipe_015_1h_EURUSD=X",
+      "sharpe": 9.693
+    },
+    {
+      "id": "874e054d",
+      "name": "pipe_018_1h_EURUSD=X",
+      "sharpe": 12.921
+    },
+    {
+      "id": "3c65ee6f",
+      "name": "pipe_002_15m_AUDUSD=X",
+      "sharpe": 1.692
+    },
+    {
+      "id": "2169bbcf",
+      "name": "pipe_029_15m_USDCHF=X",
+      "sharpe": 1.672
+    },
+    {
+      "id": "695b5fea",
+      "name": "pipe_002_15m_AUDUSD=X",
+      "sharpe": 1.692
+    },
+    {
+      "id": "7e0d1d78",
+      "name": "pipe_029_15m_USDCHF=X",
+      "sharpe": 1.671
+    },
+    {
+      "id": "c6f48d33",
+      "name": "pipe_041_1m_USDCHF=X",
+      "sharpe": 2.04
+    },
+    {
+      "id": "4288ad12",
+      "name": "pipe_039_15m_EURUSD=X",
+      "sharpe": 1.449
+    },
+    {
+      "id": "ea37cdf2",
+      "name": "pipe_051_15m_EURUSD=X",
+      "sharpe": 2.055
+    },
+    {
+      "id": "a7214acf",
+      "name": "pipe_002_5m_GBPUSD=X",
+      "sharpe": 1.638
+    },
+    {
+      "id": "41bce667",
+      "name": "pipe_039_15m_USDCHF=X",
+      "sharpe": 3.881
+    },
+    {
+      "id": "02ff74a8",
+      "name": "pipe_038_5m_USDJPY=X",
+      "sharpe": 1.128
+    },
+    {
+      "id": "0812d3dd",
+      "name": "pipe_041_5m_USDJPY=X",
+      "sharpe": 1.79
+    },
+    {
+      "id": "057038ef",
+      "name": "pipe_010_1h_BTC_USD",
+      "sharpe": 1.348
+    },
+    {
+      "id": "8283decf",
+      "name": "pipe_008_4h_ETH_USD",
+      "sharpe": 1.29
+    },
+    {
+      "id": "0ecf458c",
+      "name": "pipe_008_4h_ETH_USD",
+      "sharpe": 1.29
+    },
+    {
+      "id": "36bbc940",
+      "name": "pipe_008_4h_ETH_USD",
+      "sharpe": 1.29
+    },
+    {
+      "id": "c78f7044",
+      "name": "pipe_009_1h_BTC_USD",
+      "sharpe": 1.235
+    },
+    {
+      "id": "b1a70c12",
+      "name": "pipe_008_4h_ETH_USD",
+      "sharpe": 1.289
+    }
+  ],
+  "error": null
 }

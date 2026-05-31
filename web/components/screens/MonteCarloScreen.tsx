@@ -5,6 +5,7 @@ import { useRunMC } from "@/hooks/useRun";
 import { FanChart } from "@/components/charts/FanChart";
 import { Histogram } from "@/components/charts/Histogram";
 import styles from "./MonteCarloScreen.module.css";
+import type { ApiMCResult } from "@/lib/api-types";
 
 interface StressScenario {
   scenario: string;
@@ -71,6 +72,9 @@ export function MonteCarloScreen() {
       win_rate_p95?: number;
       n_sims?: number;
       path_len?: number;
+      p_daily_dd_1?: number;
+      p_daily_dd_5?: number;
+      p_daily_dd_10?: number;
     };
     if (d.percentiles) {
       mcData = {
@@ -131,13 +135,7 @@ export function MonteCarloScreen() {
   const sharpe  = run?.metricsOOS?.sharpe ?? 0;
 
   // Prefer server-computed p_profit/p_ruin (already correctly computed)
-  const mcRaw = mcQuery.data as {
-    sharpe_ci?: [number, number];
-    sharpe_lower?: number;
-    sharpe_upper?: number;
-    p_profit?: number;
-    p_ruin?: number;
-  } | undefined;
+  const mcRaw = mcQuery.data as ApiMCResult | undefined;
   const pProfit = mcRaw?.p_profit != null
     ? mcRaw.p_profit * 100
     : normFinals.filter(v => v > 1).length / (normFinals.length || 1) * 100;
@@ -237,6 +235,11 @@ export function MonteCarloScreen() {
   const pDD20 = pDDExceeds(20);
   const pDD30 = pDDExceeds(30);
 
+  // ── Daily drawdown risk (server-computed from equity matrix partitioned by day) ──
+  const pDailyDD1  = mcRaw?.p_daily_dd_1  ?? null;
+  const pDailyDD5  = mcRaw?.p_daily_dd_5  ?? null;
+  const pDailyDD10 = mcRaw?.p_daily_dd_10 ?? null;
+
   const fanData = {
     percentiles: normPcts,
   };
@@ -330,9 +333,9 @@ export function MonteCarloScreen() {
             </div>
           </div>
 
-          {/* Drawdown Risk table */}
+          {/* Drawdown Risk table — per-simulation max DD */}
           <div className={styles.quantDDBlock}>
-            <div className={styles.sectionLabel}>DRAWDOWN RISK</div>
+            <div className={styles.sectionLabel}>DRAWDOWN RISK · max per sim</div>
             <div className={styles.quantDDTable}>
               {([
                 { label: "P(DD > 10%)", val: pDD10 },
@@ -349,6 +352,34 @@ export function MonteCarloScreen() {
                         : val > 50 ? "#ff6b6b"
                         : val > 20 ? "var(--coral)"
                         : val > 5  ? "var(--amber)"
+                        : "var(--green)",
+                    }}
+                  >
+                    {val != null ? val.toFixed(1) + "%" : "—"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Daily Drawdown Risk — P(any day loses > X%) */}
+          <div className={styles.quantDDBlock} style={{ marginTop: 8 }}>
+            <div className={styles.sectionLabel}>DAILY DD RISK · P(single day loss &gt; X%)</div>
+            <div className={styles.quantDDTable}>
+              {([
+                { label: "P(daily > 1%)",  val: pDailyDD1,  lo: 10, hi: 30 },
+                { label: "P(daily > 5%)",  val: pDailyDD5,  lo: 2,  hi: 10 },
+                { label: "P(daily > 10%)", val: pDailyDD10, lo: 1,  hi: 5  },
+              ] as { label: string; val: number | null; lo: number; hi: number }[]).map(({ label, val, lo, hi }) => (
+                <div key={label} className={styles.quantDDRow}>
+                  <span className={styles.quantDDLabel}>{label}</span>
+                  <span
+                    className={styles.quantDDVal}
+                    style={{
+                      color:
+                        val == null ? "var(--dim)"
+                        : val > hi  ? "#ff6b6b"
+                        : val > lo  ? "var(--amber)"
                         : "var(--green)",
                     }}
                   >

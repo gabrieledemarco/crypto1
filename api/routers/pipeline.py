@@ -43,13 +43,20 @@ for _p in (_ROOT, _SCRIPTS):
 from api.db import get_conn
 from api.strategies import get_archetype   # always available: COPY api/ ./api/
 from engine.safe_exec import safe_exec_strategy, CodeSecurityError
+from engine.config import ANN_FACTORS as _ANN_FACTORS
 
 router = APIRouter()
 _queues: dict[str, asyncio.Queue] = {}
 
 # Minimum Sharpe for a strategy to be classified ROBUST, independent of stop_sharpe.
 # stop_sharpe controls early exit; _ROBUST_MIN_SHARPE controls classification.
-_ROBUST_MIN_SHARPE = 1.0
+_ROBUST_MIN_SHARPE = 1.5
+
+# Minimum number of closed trades required for a ROBUST verdict
+_MIN_TRADES_ROBUST = {
+    "1m": 50, "5m": 40, "15m": 30, "30m": 25,
+    "1h": 20, "4h": 12, "1d":  8,
+}
 
 _TF_NORM = {
     "1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m",
@@ -63,7 +70,16 @@ _ACTIVE_HOURS = {
     "1m": [0, 23], "5m": [0, 23], "15m": [6, 22],
     "30m": [6, 22], "1h": [6, 22], "4h": [0, 22], "1d": [0, 23],
 }
-from engine.config import ANN_FACTORS as _ANN_FACTORS
+_RISK_GRID = [
+    {"leverage": 1.0, "trailing_stop": False, "position_size_method": "risk_pct"},
+    {"leverage": 2.0, "trailing_stop": False, "position_size_method": "risk_pct"},
+    {"leverage": 1.0, "trailing_stop": True,  "trailing_stop_method": "atr",  "trailing_stop_value": 1.5,  "position_size_method": "risk_pct"},
+    {"leverage": 1.0, "trailing_stop": True,  "trailing_stop_method": "pct",  "trailing_stop_value": 1.5,  "position_size_method": "risk_pct"},
+    {"leverage": 1.0, "trailing_stop": False, "position_size_method": "fixed_pct"},
+    {"leverage": 2.0, "trailing_stop": True,  "trailing_stop_method": "atr",  "trailing_stop_value": 2.0,  "position_size_method": "risk_pct"},
+    {"leverage": 3.0, "trailing_stop": False, "position_size_method": "risk_pct"},
+    {"leverage": 1.0, "trailing_stop": True,  "trailing_stop_method": "atr",  "trailing_stop_value": 2.5,  "position_size_method": "risk_pct"},
+]
 
 
 class PipelineRequest(BaseModel):
@@ -138,6 +154,10 @@ async def _run_pipeline(job_id: str, body: PipelineRequest):
         push({"type": "error", "msg": str(exc)})
     finally:
         hb.cancel()
+        try:
+            await asyncio.shield(asyncio.sleep(0))  # let cancel propagate
+        except asyncio.CancelledError:
+            pass
 
 
 # ── Sync worker ───────────────────────────────────────────────────────────────────────────────
@@ -209,21 +229,26 @@ def _sync_pipeline(body: PipelineRequest, push):
             push({"type": "iter_start", "ticker": ticker, "iter": iteration,
                   "tf": tf, "arch": arch_name, "effective_iter": effective_iter})
 
+            risk_cfg = _RISK_GRID[(iteration - 1) % len(_RISK_GRID)]
             try:
-                sid, sharpe, dd, n_trades, win_rate, mc, drift = _run_iteration(
-                    ticker, tf, df, effective_iter, arch_name, sl, tp
+                sid, sharpe, dd, n_trades, win_rate, mc, drift, oos_sharpe = _run_iteration(
+                    ticker, tf, df, effective_iter, arch_name, sl, tp, risk_cfg=risk_cfg
                 )
             except Exception as exc:
                 push({"type": "iter_error", "ticker": ticker, "iter": iteration,
                       "msg": str(exc)})
                 continue
 
-            dd_ok     = abs(dd) <= body.max_dd                    # DD < max_dd%
-            drift_ok  = drift > 0                                  # positive expected value per trade
-            mc_ok     = (mc.get("p_profit", 0.0) >= 0.55          # majority of MC paths profitable
-                         and mc.get("p_ruin", 1.0) < 0.01         # prob(ruin) < 1%
+            min_tr    = _MIN_TRADES_ROBUST.get(tf, 20)
+            dd_ok     = abs(dd) <= body.max_dd
+            drift_ok  = drift > 0
+            trades_ok = n_trades >= min_tr
+            oos_ok    = (oos_sharpe is None) or (oos_sharpe > 0)  # None = skip gate (not enough data)
+            mc_ok     = (mc.get("p_profit", 0.0) >= 0.55
+                         and mc.get("p_ruin", 1.0) < 0.01
                          and drift_ok)
             verdict = ("ROBUST" if sharpe >= _ROBUST_MIN_SHARPE and dd_ok and mc_ok
+                                    and trades_ok and oos_ok
                        else "marginal" if sharpe >= 0 else "failed")
 
             push({
@@ -235,6 +260,9 @@ def _sync_pipeline(body: PipelineRequest, push):
                 "mc_p_profit": mc.get("p_profit"),
                 "mc_p_ruin":   mc.get("p_ruin"),
                 "drift":       round(drift, 6),
+                "oos_sharpe":  round(oos_sharpe, 3) if oos_sharpe is not None else None,
+                "trades_ok":   trades_ok,
+                "oos_ok":      oos_ok,
             })
             log.append({"iter": iteration, "tf": tf, "arch": arch_name,
                         "sid": sid, "sharpe": sharpe, "dd": dd,
@@ -303,21 +331,27 @@ def _resample(df: pd.DataFrame, tf: str) -> pd.DataFrame:
     return df.resample(freq).agg(agg).dropna()
 
 
-def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
+def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp, risk_cfg: dict | None = None):
     import numpy as np
     from engine.strategy_core import compute_indicators_v2
     from engine.backtest import run_versions, INITIAL_CAPITAL
     from engine.montecarlo import run_bootstrap
 
     _, code, sl_used, tp_used = get_archetype(iteration)
+    rc = risk_cfg or {}
 
     config = {
         "ticker": ticker, "timeframe": tf,
         "sl_mult": sl_used, "tp_mult": tp_used,
         "active_hours": _ACTIVE_HOURS.get(tf, [6, 22]),
-        "commission_pips": 1.0, "slippage_pips": 0.5, "leverage": 1.0,
+        "commission_pips": 1.0, "slippage_pips": 0.5,
         "risk_per_trade": 0.01, "direction": "ALL",
         "max_positions": 1, "cooldown_bars": 0,
+        "leverage":             float(rc.get("leverage", 1.0)),
+        "trailing_stop":        bool(rc.get("trailing_stop", False)),
+        "trailing_stop_method": rc.get("trailing_stop_method", "atr"),
+        "trailing_stop_value":  float(rc.get("trailing_stop_value", 1.5)),
+        "position_size_method": rc.get("position_size_method", "risk_pct"),
     }
 
     df_ind = compute_indicators_v2(df, fit_garch=True)
@@ -373,6 +407,22 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
         except Exception:
             pass
 
+    # ── OOS validation: hold out last 20% of bars as unseen data ────────────
+    # Requires OOS Sharpe > 0 so the strategy is profitable on data it never
+    # saw during IS selection — the simplest guard against data snooping.
+    oos_sharpe: float | None = None
+    n_oos = len(df_ind) // 5           # 20 % hold-out
+    min_oos_bars = 80                   # skip OOS gate if not enough history
+    if n_oos >= min_oos_bars and best_key:
+        try:
+            df_oos  = df_ind.iloc[-n_oos:]
+            oos_cfg = {k: v for k, v in config.items()}
+            v_oos   = run_versions(df_oos, oos_cfg, direction=oos_cfg.get("direction", "ALL"))
+            m_oos   = v_oos.get(best_key, {}).get("metrics", {})
+            oos_sharpe = float(m_oos.get("sharpe_ratio", m_oos.get("sharpe", -999)) or -999)
+        except Exception:
+            pass
+
     # Enrich config with best-version info and achieved metrics
     config.pop("agent_fn", None)   # not JSON-serialisable
     config["best_version"] = best_key
@@ -385,6 +435,8 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
         "win_rate":      round(win_rate, 1),
         "drift":         round(drift, 6),
     }
+    if oos_sharpe is not None:
+        config["perf"]["oos_sharpe"] = round(oos_sharpe, 3)
     if mc_result:
         config["perf"]["mc_p_profit"] = mc_result.get("p_profit")
         config["perf"]["mc_p_ruin"]   = mc_result.get("p_ruin")
@@ -412,7 +464,7 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp):
             [run_id, metrics_json, "[]", "[]", "[]", "[]", mc_json],
         )
 
-    return sid, sharpe, dd, n_trades, win_rate, mc_result, drift
+    return sid, sharpe, dd, n_trades, win_rate, mc_result, drift, oos_sharpe
 
 
 def _promote(sid: str, status: str) -> None:

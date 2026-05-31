@@ -2,6 +2,10 @@ name: Verify Library Strategies
 
 on:
   workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - '.verify-trigger'
 
 permissions:
   contents: write
@@ -10,48 +14,89 @@ jobs:
   verify:
     name: Check strategies visible on Railway
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     env:
       API_BASE: "https://illustrious-inspiration-production.up.railway.app"
 
     steps:
       - uses: actions/checkout@v4
 
+      - name: Wait for Railway redeploy
+        run: |
+          echo "Sleeping 10 min to let Railway finish deploying..."
+          sleep 600
+          echo "Polling /health until 200 (max 5 min)..."
+          for i in $(seq 1 10); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$API_BASE/health" 2>/dev/null || echo "000")
+            echo "  [$i/10] health=$CODE"
+            [ "$CODE" = "200" ] && { echo "Railway is ready!"; break; }
+            sleep 30
+          done
+
       - name: Check /strategies endpoint
         run: |
           python3 << 'PYEOF'
-          import json, urllib.request, sys
+          import json, urllib.request, urllib.error, sys, traceback
+          from datetime import datetime, timezone
 
           API_BASE = "https://illustrious-inspiration-production.up.railway.app"
+          result = {"run_at": datetime.now(timezone.utc).isoformat(),
+                    "api_base": API_BASE, "health": None, "total": 0,
+                    "live": 0, "starred": 0, "btc_eth": [], "error": None,
+                    "error_body": None}
 
+          # Health check
+          try:
+              with urllib.request.urlopen(f"{API_BASE}/health", timeout=15) as r:
+                  result["health"] = {"status": r.status, "body": json.loads(r.read())}
+              print(f"Health: {result['health']}")
+          except Exception as e:
+              result["health"] = {"error": str(e)}
+              print(f"Health FAILED: {e}")
+
+          # Strategies check
           try:
               req = urllib.request.Request(f"{API_BASE}/strategies")
-              with urllib.request.urlopen(req, timeout=20) as r:
+              with urllib.request.urlopen(req, timeout=30) as r:
                   strats = json.loads(r.read())
+
+              total   = len(strats)
+              live    = [s for s in strats if s.get("status") == "live"]
+              starred = [s for s in strats if s.get("starred")]
+              btc_eth = [s for s in strats if any(k in s.get("name","").upper()
+                                                    for k in ["BTC","ETH"])]
+
+              print(f"Total strategies : {total}")
+              print(f"Live (ROBUST)    : {len(live)}")
+              print(f"Starred          : {len(starred)}")
+              print(f"BTC/ETH entries  : {len(btc_eth)}")
+              for s in btc_eth:
+                  sh = s.get("metrics",{}).get("sharpe",0)
+                  print(f"  {s['id']}  {s['name']:<35}  status={s['status']}  starred={s['starred']}  sharpe={sh}")
+
+              result.update({
+                  "total": total, "live": len(live), "starred": len(starred),
+                  "btc_eth": [{"id":s["id"],"name":s["name"],"status":s["status"],
+                               "starred":s["starred"],
+                               "sharpe":s.get("metrics",{}).get("sharpe",0)}
+                              for s in btc_eth],
+              })
+              print("VERIFICATION COMPLETE")
+          except urllib.error.HTTPError as e:
+              body = ""
+              try:
+                  body = e.read(2000).decode("utf-8", errors="replace")
+              except Exception:
+                  pass
+              result["error"] = traceback.format_exc()
+              result["error_body"] = body
+              print(f"Strategies FAILED HTTP {e.code}: {body}")
           except Exception as e:
-              print(f"FAILED: {e}"); sys.exit(1)
+              result["error"] = traceback.format_exc()
+              print(f"Strategies FAILED: {e}")
 
-          total   = len(strats)
-          live    = [s for s in strats if s.get("status") == "live"]
-          starred = [s for s in strats if s.get("starred")]
-          btc_eth = [s for s in strats if any(k in s.get("name","").upper() for k in ["BTC","ETH"])]
-
-          print(f"Total strategies : {total}")
-          print(f"Live (ROBUST)    : {len(live)}")
-          print(f"Starred          : {len(starred)}")
-          print(f"BTC/ETH entries  : {len(btc_eth)}")
-          for s in btc_eth:
-              print(f"  {s['id']}  {s['name']:<35}  status={s['status']}  starred={s['starred']}  sharpe={s['metrics']['sharpe']}")
-
-          result = {
-              "total": total, "live": len(live), "starred": len(starred),
-              "btc_eth": [{"id":s["id"],"name":s["name"],"status":s["status"],
-                           "starred":s["starred"],"sharpe":s["metrics"]["sharpe"]}
-                          for s in btc_eth],
-          }
           with open("/tmp/verify_result.json", "w") as f:
               json.dump(result, f, indent=2)
-          print("VERIFICATION COMPLETE")
           PYEOF
 
       - name: Commit verification result
@@ -66,6 +111,7 @@ jobs:
             git pull --rebase origin master || true
             cp /tmp/verify_result.json library-verify-result.json
             git add library-verify-result.json
-            git diff --cached --quiet || git commit -m "ci: library verification $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            git push origin HEAD:master || echo "push failed"
+            # Always commit (timestamp ensures diff)
+            git commit -m "ci: library verification $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin HEAD:master
           fi

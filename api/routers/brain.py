@@ -28,8 +28,8 @@ _BRAIN_REPO  = "gabrieledemarco/Trading_agent_brain"
 _RAW_BASE    = f"https://raw.githubusercontent.com/{_BRAIN_REPO}/main"
 _BOOK_PATH   = "ML_for_Algorithmic_Trading"
 
-# Per i capitoli non in ML_for_Algorithmic_Trading, mappa l'ID al path relativo
-# nella repo Trading_agent_brain (e nella cartella locale api/brain_chapters/).
+# Chapters outside ML_for_Algorithmic_Trading: map chapter ID to relative path
+# in Trading_agent_brain repo (and in local api/brain_chapters/ as fallback).
 _CHAPTER_PATH_OVERRIDE: dict[str, str] = {
     "lorenz_01_esecuzione_ottimale":  "Optimal_Execution_Lorenz/01_optimal_execution_almgren_chriss.md",
     "cartea_01_mercati_lob":          "Algorithmic_HFT_Cartea/01_mercati_elettronici_lob.md",
@@ -71,7 +71,7 @@ _CHAPTERS: list[tuple[str, list[str]]] = [
     ("20_reinforcement_learning", ["reinforcement learning", "RL", "Q-learning", "reward",
                                    "policy", "agent", "DQN", "PPO", "A3C"]),
     ("21_next_steps",          ["deployment", "production", "live trading", "next steps"]),
-    # ── Nuovi libri: Lorenz (2008) + Cartea-Jaimungal-Penalva (2015) ──────────
+    # ── Optimal Execution (Lorenz 2008) + HFT (Cartea-Jaimungal-Penalva 2015) ─
     ("lorenz_01_esecuzione_ottimale", [
         "optimal execution", "implementation shortfall", "market impact",
         "almgren", "chriss", "lorenz", "traiettoria", "urgenza", "kappa",
@@ -411,15 +411,14 @@ def sync_brain():
     )
 
     for chapter_id, keywords in _CHAPTERS:
-        # Capitoli con path non-standard (nuovi libri fuori da ML_for_Algorithmic_Trading)
-        rel_path    = _CHAPTER_PATH_OVERRIDE.get(chapter_id, f"{_BOOK_PATH}/{chapter_id}.md")
-        github_url  = f"{_RAW_BASE}/{rel_path}"
-        local_path  = os.path.join(_local_base, rel_path)
+        rel_path   = _CHAPTER_PATH_OVERRIDE.get(chapter_id, f"{_BOOK_PATH}/{chapter_id}.md")
+        github_url = f"{_RAW_BASE}/{rel_path}"
+        local_path = os.path.join(_local_base, rel_path)
 
         try:
             resp = httpx.get(github_url, timeout=15.0, follow_redirects=True)
             if resp.status_code == 404:
-                # Fallback: carica dalla cartella locale api/brain_chapters/
+                # Fallback: load from bundled api/brain_chapters/
                 if os.path.exists(local_path):
                     with open(local_path, "r", encoding="utf-8") as fh:
                         content = fh.read()

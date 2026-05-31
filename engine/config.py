@@ -20,10 +20,10 @@ ANN_FACTORS: dict[str, int] = {
 }
 
 # ── Backtest / pipeline limits ────────────────────────────────────────────────
-BACKTEST_TIMEOUT: int = 300      # seconds, per run
-SSE_STREAM_TIMEOUT: int = 660    # seconds, SSE generator self-terminates after this
-BOOTSTRAP_N_RESAMPLES: int = 500 # default Monte Carlo paths
-MAX_SWEEP_COMBOS: int = 10_000   # guard against runaway grid search
+BACKTEST_TIMEOUT: int = 300
+SSE_STREAM_TIMEOUT: int = 660
+BOOTSTRAP_N_RESAMPLES: int = 500
+MAX_SWEEP_COMBOS: int = 10_000
 
 # ── Parameter sweep ranges ────────────────────────────────────────────────────
 SWEEP_SL_RANGE: list[float] = [1.0, 1.5, 2.0, 2.5, 3.0]

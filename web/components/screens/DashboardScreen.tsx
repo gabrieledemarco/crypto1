@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
-import { useRunEquity, useRunTrades } from "@/hooks/useRun";
+import { useRunEquity, useRunTrades, useValidateActiveRun, isRealRunId } from "@/hooks/useRun";
 import { EquityChart } from "@/components/charts/EquityChart";
 import { DrawdownChart } from "@/components/charts/DrawdownChart";
 import { MonthlyHeat } from "@/components/charts/MonthlyHeat";
@@ -11,8 +11,10 @@ import styles from "./DashboardScreen.module.css";
 import type { EquityPoint, Trade, MonthlyBucket } from "@/lib/fixtures";
 
 export function DashboardScreen() {
-  const { activeRunId, runs, goto } = useStore();
+  const { activeRunId, runs, goto, setRun } = useStore();
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+
+  useValidateActiveRun(activeRunId || null, () => setRun(""));
 
   // Try real API first; fall back to fixture
   const equityQuery = useRunEquity(activeRunId || null);
@@ -49,6 +51,7 @@ export function DashboardScreen() {
   const hasRealEquity = !!(equityQuery.data && equityQuery.data.length > 0);
   const showMonthlyWarning = !hasRealEquity && monthly.length > 0;
   const showDDWarning = !hasRealEquity && run?.ddPeriods && run.ddPeriods.length > 0;
+  const equityError = equityQuery.isError ? (equityQuery.error as Error)?.message ?? "Failed to load equity" : null;
 
   if (!run) return <div className={styles.empty}>No run selected</div>;
 
@@ -67,14 +70,20 @@ export function DashboardScreen() {
           </span>
         </div>
         <div className={styles.panelBody}>
-          <EquityChart
-            equity={equity}
-            oosStart={run.oosStart}
-            height={220}
-            color="#ffb53b"
-            showBench
-            onHoverIndex={setHoverIndex}
-          />
+          {equityQuery.isLoading && isRealRunId(activeRunId) ? (
+            <div className={styles.skeletonChart} />
+          ) : equityError && isRealRunId(activeRunId) ? (
+            <div className={styles.apiError}>{equityError}</div>
+          ) : (
+            <EquityChart
+              equity={equity}
+              oosStart={run.oosStart}
+              height={220}
+              color="#ffb53b"
+              showBench
+              onHoverIndex={setHoverIndex}
+            />
+          )}
           <DrawdownChart
             equity={equity}
             height={64}

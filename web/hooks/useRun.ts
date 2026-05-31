@@ -1,38 +1,12 @@
 "use client";
+import { useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { Trade } from "@/lib/fixtures";
+import type { ApiRunListItem, ApiTrade } from "@/lib/api-types";
 
-export interface RunListItem {
-  id: string;
-  name: string;
-  ticker: string;
-  timeframe: string;
-  status: string;
-  strategy_id?: string | null;
-  params: Record<string, unknown>;
-  created_at: string;
-  start_date?: string | null;
-  end_date?: string | null;
-  sharpe?: number | null;
-  cagr?: number | null;
-  max_dd?: number | null;
-  pf?: number | null;
-  n_trades?: number | null;
-  win_rate?: number | null;
-}
-
-// API trade shape from the engine serializer
-interface ApiTrade {
-  entry_time: string;
-  exit_time: string;
-  direction: "LONG" | "SHORT";
-  entry_price: number;
-  exit_price: number;
-  qty: number;
-  pnl: number;
-  exit_reason?: string;
-}
+// Re-export for backwards compatibility with existing imports
+export type RunListItem = ApiRunListItem;
 
 // Map the API trade shape to the frontend Trade type so all components work uniformly
 function normalizeApiTrade(t: ApiTrade, n: number): Trade {
@@ -120,6 +94,19 @@ export function useRun(runId: string | null) {
   });
 }
 
+const _MAX_EQUITY_POINTS = 500;
+
+function downsampleEquity<T>(pts: T[]): T[] {
+  if (pts.length <= _MAX_EQUITY_POINTS) return pts;
+  const step = (pts.length - 1) / (_MAX_EQUITY_POINTS - 1);
+  const out: T[] = [pts[0]]; // always include first
+  for (let i = 1; i < _MAX_EQUITY_POINTS - 1; i++) {
+    out.push(pts[Math.round(i * step)]);
+  }
+  out.push(pts[pts.length - 1]); // always include last
+  return out;
+}
+
 // Equity series  [{i, ts, v, dd}]
 export function useRunEquity(runId: string | null) {
   return useQuery({
@@ -128,6 +115,7 @@ export function useRunEquity(runId: string | null) {
       api.get<{ i: number; ts: string; v: number; dd: number }[]>(
         `/runs/${runId}/equity`
       ),
+    select: downsampleEquity,
     enabled: isRealRunId(runId),
     staleTime: Infinity,   // run results never change — cache forever, but invalidated on new run
     refetchOnMount: true,  // always load when screen mounts
@@ -206,4 +194,22 @@ export function useRunBootstrapCI(runId: string | null) {
     staleTime: 300_000,
     retry: false,
   });
+}
+
+// Call this on any screen that shows a run. If the server returns 404 (run was
+// deleted externally), clears activeRunId so the UI falls back to fixture data.
+export function useValidateActiveRun(
+  runId: string | null,
+  clearRun: () => void
+): void {
+  const query = useRun(runId);
+  useEffect(() => {
+    if (
+      query.isError &&
+      query.error instanceof ApiError &&
+      query.error.status === 404
+    ) {
+      clearRun();
+    }
+  }, [query.isError, query.error, clearRun]);
 }

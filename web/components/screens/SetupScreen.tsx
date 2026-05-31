@@ -29,6 +29,12 @@ interface Params {
   mc_bars: number;  // 0 = auto (use actual trade count)
   max_positions: number;
   cooldown_bars: number;
+  initial_capital: number;
+  leverage: number;
+  trailing_stop: boolean;
+  trailing_stop_method: "atr" | "pct" | "pips";
+  trailing_stop_value: number;
+  position_size_method: "risk_pct" | "fixed_pct";
 }
 
 export function SetupScreen() {
@@ -39,24 +45,30 @@ export function SetupScreen() {
   const { data: assetsData } = useAssets();
 
   const [params, setParams] = useState<Params>({
-    ticker:         p?.universe?.[0] ? `${p.universe[0].replace(/-USD$/, "")}-USD` : "BTC-USD",
-    timeframe:      p?.timeframe ?? "1h",
-    sl_mult:        p?.atrStop ?? 2.0,
-    tp_mult:        p?.takeProfit ?? 5.0,
-    active_hours:   [6, 22],
-    risk_per_trade: p?.riskPerTrade ?? 1.0,
-    commission:     0.0004,
-    slippage:       0.0001,
-    direction:      "ALL",
-    run_wfo:        true,
-    run_sweep:      true,
-    run_mc:         true,
-    wfo_is_window:  500,
-    wfo_oos_window: 100,
-    mc_sims:        1000,
-    mc_bars:        0,
-    max_positions:  1,
-    cooldown_bars:  0,
+    ticker:                p?.universe?.[0] ? `${p.universe[0].replace(/-USD$/, "")}-USD` : "BTC-USD",
+    timeframe:             p?.timeframe ?? "1h",
+    sl_mult:               p?.atrStop ?? 2.0,
+    tp_mult:               p?.takeProfit ?? 5.0,
+    active_hours:          [6, 22],
+    risk_per_trade:        p?.riskPerTrade ?? 1.0,
+    commission:            0.0004,
+    slippage:              0.0001,
+    direction:             "ALL",
+    run_wfo:               true,
+    run_sweep:             true,
+    run_mc:                true,
+    wfo_is_window:         500,
+    wfo_oos_window:        100,
+    mc_sims:               1000,
+    mc_bars:               0,
+    max_positions:         1,
+    cooldown_bars:         0,
+    initial_capital:       10_000,
+    leverage:              1.0,
+    trailing_stop:         false,
+    trailing_stop_method:  "atr",
+    trailing_stop_value:   1.5,
+    position_size_method:  "risk_pct",
   });
 
   const [runId, setRunId] = useState<string | null>(null);
@@ -77,8 +89,11 @@ export function SetupScreen() {
     return null;
   };
 
-  // Strips accidental double suffix: "BNB-USD-USD" → "BNB-USD"
-  const normalizeTicker = (t: string) => t.replace(/-USD-USD$/, "-USD").replace(/-USDT-USDT$/, "-USDT");
+  // Strips accidental double suffix and validates ticker format
+  const normalizeTicker = (t: string): string => {
+    const cleaned = t.replace(/-USD-USD$/, "-USD").replace(/-USDT-USDT$/, "-USDT").toUpperCase().trim();
+    return /^[A-Z0-9][A-Z0-9.\-]{0,19}$/.test(cleaned) ? cleaned : "BTC-USD";
+  };
 
   // Load pending params from Library "Re-run" (takes priority over localStorage)
   useEffect(() => {
@@ -151,7 +166,7 @@ export function SetupScreen() {
       : null;
 
   // Live preview (debounced 80ms)
-  const { result: preview, loading: previewLoading } = usePreview(params as unknown as Record<string, unknown>);
+  const { result: preview, loading: previewLoading, error: previewError } = usePreview(params as unknown as Record<string, unknown>);
 
   // SSE progress
   useSSE(runId ? `/api/runs/${runId}/stream` : null, (data) => {
@@ -230,10 +245,12 @@ export function SetupScreen() {
             const { runs: cur } = useStore.getState();
             useStore.getState().setRuns([...cur, newRun]);
             useStore.getState().setRun(runId);
-            // Bust React Query cache so equity/trades screens refetch immediately.
+            // Bust React Query cache so equity/trades/library screens refetch immediately.
             queryClient.invalidateQueries({ queryKey: ["run-equity", runId] });
             queryClient.invalidateQueries({ queryKey: ["run-trades", runId] });
             queryClient.invalidateQueries({ queryKey: ["run-list"] });
+            queryClient.invalidateQueries({ queryKey: ["runs"] });
+            queryClient.invalidateQueries({ queryKey: ["run-list", activeStrategyId ?? null] });
           })
           .catch(() => {
             // Metadata fetch failed — still activate the run so panels try to load.
@@ -245,10 +262,10 @@ export function SetupScreen() {
   });
 
   const handleRun = async () => {
+    if (running) return;  // prevent double-submit
     const err = validateParams(params);
     if (err) { setValidationError(err); return; }
     setValidationError(null);
-    if (running) return;
     setRunning(true);
     setProgress({ phase: "start", pct: 0 });
     try {
@@ -463,6 +480,96 @@ export function SetupScreen() {
               valueLabel={params.cooldown_bars === 0 ? "OFF" : `${params.cooldown_bars}b`}
             />
 
+            {/* Capital & Leverage */}
+            <SliderRow
+              label="CAPITAL"
+              min={100} max={1_000_000} step={100}
+              value={params.initial_capital}
+              onChange={(v) => update("initial_capital", v)}
+              valueLabel={`$${params.initial_capital.toLocaleString()}`}
+            />
+            <SliderRow
+              label="LEVERAGE"
+              min={1} max={50} step={0.5}
+              value={params.leverage}
+              onChange={(v) => update("leverage", v)}
+              valueLabel={`${params.leverage.toFixed(1)}×`}
+            />
+
+            {/* Position size method */}
+            <div className={styles.formRow}>
+              <span className={styles.rowLabel}>SIZE METHOD</span>
+              <div className={styles.pills}>
+                {(["risk_pct", "fixed_pct"] as const).map((m) => (
+                  <button
+                    key={m}
+                    className={`${styles.pill} ${params.position_size_method === m ? styles.active : ""}`}
+                    onClick={() => update("position_size_method", m)}
+                  >
+                    {m === "risk_pct" ? "RISK %" : "FIXED %"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className={styles.wfoFolds} style={{ textAlign: "left", paddingTop: 0, paddingLeft: 4 }}>
+              {params.position_size_method === "risk_pct"
+                ? "size = risk% × capital ÷ SL distance"
+                : "size = fixed% × capital ÷ entry price"}
+            </div>
+
+            {/* Trailing stop */}
+            <div className={styles.formRow}>
+              <span className={styles.rowLabel}>TRAIL STOP</span>
+              <div className={styles.pills}>
+                <button
+                  className={`${styles.pill} ${params.trailing_stop ? styles.active : ""}`}
+                  onClick={() => update("trailing_stop", !params.trailing_stop)}
+                >
+                  {params.trailing_stop ? "ON" : "OFF"}
+                </button>
+              </div>
+            </div>
+            {params.trailing_stop && (
+              <div className={styles.wfoConfig}>
+                <div className={styles.formRow}>
+                  <span className={styles.rowLabel}>TS METHOD</span>
+                  <div className={styles.pills}>
+                    {(["atr", "pct", "pips"] as const).map((m) => (
+                      <button
+                        key={m}
+                        className={`${styles.pill} ${params.trailing_stop_method === m ? styles.active : ""}`}
+                        onClick={() => update("trailing_stop_method", m)}
+                      >
+                        {m === "atr" ? "ATR×" : m === "pct" ? "%" : "PIPS"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <SliderRow
+                  label={params.trailing_stop_method === "atr" ? "ATR MULT" : params.trailing_stop_method === "pct" ? "% DIST" : "PIPS"}
+                  min={params.trailing_stop_method === "pips" ? 5 : 0.1}
+                  max={params.trailing_stop_method === "pips" ? 500 : params.trailing_stop_method === "pct" ? 20 : 10}
+                  step={params.trailing_stop_method === "pips" ? 5 : 0.1}
+                  value={params.trailing_stop_value}
+                  onChange={(v) => update("trailing_stop_value", v)}
+                  valueLabel={
+                    params.trailing_stop_method === "atr"
+                      ? `${params.trailing_stop_value.toFixed(1)}×ATR`
+                      : params.trailing_stop_method === "pct"
+                      ? `${params.trailing_stop_value.toFixed(1)}%`
+                      : `${params.trailing_stop_value}pip`
+                  }
+                />
+                <div className={styles.wfoFolds}>
+                  {params.trailing_stop_method === "atr"
+                    ? "SL trails close − ATR × mult (only moves in profit direction)"
+                    : params.trailing_stop_method === "pct"
+                    ? `SL trails at ${params.trailing_stop_value.toFixed(1)}% from close`
+                    : `SL trails at ${params.trailing_stop_value} pips from close`}
+                </div>
+              </div>
+            )}
+
             <div className={styles.formRow} style={{ marginTop: 4 }}>
               <span className={styles.rowLabel}>FEES · SLIP</span>
               <span className={styles.mono}>{(params.commission * 10000).toFixed(0)}bps · {(params.slippage * 10000).toFixed(0)}bps</span>
@@ -520,6 +627,9 @@ export function SetupScreen() {
           <span className={styles.panelTitle}>LIVE PREVIEW</span>
           <span className={styles.panelSub}>{params.ticker} · {params.timeframe} · 500 bars</span>
           {previewLoading && <span className={styles.loading}>loading…</span>}
+          {!previewLoading && previewError && (
+            <span className={styles.previewError}>{previewError}</span>
+          )}
         </div>
         <div className={styles.panelBody}>
           {previewEquity.length > 0 ? (

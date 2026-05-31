@@ -25,7 +25,7 @@ import uuid
 from typing import Optional
 
 import pandas as pd
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -34,6 +34,7 @@ _SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__
 sys.path.insert(0, _SCRIPTS)
 
 from api.db import get_conn
+from api.limiter import limiter
 from engine.strategy_core import compute_indicators_v2
 from engine.backtest import run_versions, run_wfo
 
@@ -69,7 +70,8 @@ class OptimizeRequest(BaseModel):
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @router.post("")
-async def start_optimize(body: OptimizeRequest):
+@limiter.limit("5/minute")
+async def start_optimize(request: Request, body: OptimizeRequest):
     job_id = uuid.uuid4().hex[:12]
     _queues[job_id] = asyncio.Queue()
     asyncio.create_task(_run_optimize(job_id, body))

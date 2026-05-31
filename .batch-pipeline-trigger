@@ -1,1 +1,1 @@
-{"triggered_at": "2026-05-25T18:25:00Z", "tickers": ["BTC-USD","ETH-USD","SOL-USD","EURUSD=X","GBPUSD=X","JPYUSD=X"], "timeframes": ["15m","1h","4h","1d"], "iters_per_run": 12}
+{"triggered_at": "2026-05-30T10:00:00Z", "tickers": ["BTC-USD","ETH-USD","SOL-USD"], "timeframes": ["1m","5m","15m","1h"], "iters_per_run": 10, "iter_offset": 12, "note": "HFT archetypes: order_flow_imbalance, tick_direction_momentum, spread_capture, vwap_scalp, ema_scalp_3_8"}

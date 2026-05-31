@@ -146,8 +146,11 @@ def compute_indicators_v2(df: pd.DataFrame,
                 _GARCH_CACHE[_cache_key] = (h_all, _now)
             h_padded = np.concatenate([[h_all[0]], h_all])
             df["garch_h"] = h_padded[:len(df)]
-        except Exception:
-            df["garch_h"] = df["ret"].rolling(24).var().fillna(df["ret"].var())
+            df.attrs["garch_status"] = "ok"
+        except Exception as _garch_exc:
+            # expanding() avoids the unstable first-24-bar window of rolling()
+            df["garch_h"] = df["ret"].expanding(min_periods=5).var().fillna(df["ret"].var())
+            df.attrs["garch_status"] = f"fallback:{_garch_exc}"
 
         regime = compute_garch_regime(df["garch_h"].values)
         df["garch_regime"] = regime
@@ -155,7 +158,7 @@ def compute_indicators_v2(df: pd.DataFrame,
         df["size_mult"] = np.where(regime == "LOW", 0.0,
                           np.where(regime == "HIGH", 0.5, 1.0))
     else:
-        df["garch_h"] = df["ret"].rolling(24).var().fillna(df["ret"].var())
+        df["garch_h"] = df["ret"].expanding(min_periods=5).var().fillna(df["ret"].var())
         df["garch_regime"] = "MED"
         df["size_mult"] = 1.0
 
@@ -214,6 +217,10 @@ def backtest_v2(df: pd.DataFrame,
                 max_positions: int = 1,         # max concurrent open positions
                 cooldown_bars: int = 0,         # bars to skip entry after a SL hit
                 leverage: float = 1.0,          # position leverage multiplier
+                trailing_stop: bool = False,    # enable trailing stop loss
+                trailing_stop_method: str = "atr",  # "atr" | "pct" | "pips"
+                trailing_stop_value: float = 1.5,   # ATR mult / % distance / pip count
+                position_size_method: str = "risk_pct",  # "risk_pct" | "fixed_pct"
                 ) -> dict:
     """
     Backtest event-driven con:
@@ -239,6 +246,7 @@ def backtest_v2(df: pd.DataFrame,
     lows = df["Low"].values
     times = df.index
     size_mults = df["size_mult"].values if "size_mult" in df.columns else np.ones(len(df))
+    atrs = df["ATR14"].values if ("ATR14" in df.columns and trailing_stop) else None
 
     # Convert pips → absolute price units.
     # Forex: price < 10  → pip = 0.0001 (EUR/USD, GBP/USD, AUD/USD, USD/CHF…)
@@ -296,6 +304,27 @@ def backtest_v2(df: pd.DataFrame,
         for j in reversed(closed_idxs):
             open_positions.pop(j)
 
+        # ── 1b. Update trailing stop for surviving positions ──────────────────
+        if trailing_stop and atrs is not None and open_positions:
+            cp = prices[i]
+            for pos in open_positions:
+                if trailing_stop_method == "pct":
+                    trail_dist = cp * trailing_stop_value / 100.0
+                elif trailing_stop_method == "pips":
+                    trail_dist = trailing_stop_value * pip_size
+                else:  # atr
+                    trail_dist = float(atrs[i]) * trailing_stop_value
+                # Guard: distance must be positive and at least one pip
+                trail_dist = max(trail_dist, pip_size)
+                if pos["dir"] == 1:
+                    new_sl = cp - trail_dist
+                    if new_sl > pos["sl"]:
+                        pos["sl"] = new_sl
+                else:
+                    new_sl = cp + trail_dist
+                    if new_sl < pos["sl"]:
+                        pos["sl"] = new_sl
+
         # ── 2. Decrement cooldown ─────────────────────────────────────────────
         if cooldown_remaining > 0:
             cooldown_remaining -= 1
@@ -309,8 +338,11 @@ def backtest_v2(df: pd.DataFrame,
             tp_d = tp_dists[i]
             sm = float(size_mults[i])
             if sl_d > 0 and sm > 0:
-                risk_amount = capital * risk_per_trade * sm
-                qty = risk_amount / sl_d
+                if position_size_method == "fixed_pct":
+                    qty = (capital * risk_per_trade * sm * leverage) / ep if ep > 0 else 0.0
+                else:  # risk_pct
+                    risk_amount = capital * risk_per_trade * sm
+                    qty = risk_amount / sl_d
                 max_qty = (capital * leverage) / ep if ep > 0 else 0.0
                 qty = min(qty, max_qty)
 
@@ -358,7 +390,7 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
     avg_win = wins["pnl"].mean() if len(wins) > 0 else 0
     avg_loss = losses["pnl"].mean() if len(losses) > 0 else 0
     pf = wins["pnl"].sum() / abs(losses["pnl"].sum()) \
-         if len(losses) > 0 and losses["pnl"].sum() != 0 else np.inf
+         if len(losses) > 0 and losses["pnl"].sum() != 0 else 999.9
 
     equity_safe = equity.clip(lower=1e-10)
     ret_s = np.log(equity_safe / equity_safe.shift(1)).dropna()
@@ -379,9 +411,12 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
         cagr = float(qs.stats.cagr(ret_s)) * 100
         cagr = max(min(cagr, 999.0), -999.0)
         sharpe  = float(qs.stats.sharpe(ret_s, periods=_PERIODS))
+        sharpe  = sharpe if np.isfinite(sharpe) else 0.0
         sortino = float(qs.stats.sortino(ret_s, periods=_PERIODS))
+        sortino = sortino if np.isfinite(sortino) else 0.0
         max_dd  = float(qs.stats.max_drawdown(ret_s)) * 100   # decimal → %
         omega   = float(qs.stats.omega(ret_s, periods=_PERIODS))
+        omega   = omega if np.isfinite(omega) else 99.0
         ulcer   = float(qs.stats.ulcer_index(ret_s)) * 100
     except Exception:
         # fallback: pure numpy/pandas
@@ -422,7 +457,7 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
         "calmar_ratio":     round(calmar, 4) if np.isfinite(calmar) else 0.0,
         "n_trades":         n,
         "win_rate_pct":     win_rate,
-        "profit_factor":    pf,
+        "profit_factor":    round(min(pf, 999.9), 3) if np.isfinite(pf) else 999.9,
         "avg_win_usd":      avg_win,
         "avg_loss_usd":     avg_loss,
         "sl_hits":          len(trades[trades["exit_reason"] == "SL"]),
