@@ -137,7 +137,8 @@ def compute_indicators_v2(df: pd.DataFrame,
             df["garch_h"] = h_padded[:len(df)]
             df.attrs["garch_status"] = "ok"
         except Exception as _garch_exc:
-            df["garch_h"] = df["ret"].rolling(24).var().fillna(df["ret"].var())
+            # expanding() avoids the unstable first-24-bar window of rolling()
+            df["garch_h"] = df["ret"].expanding(min_periods=5).var().fillna(df["ret"].var())
             df.attrs["garch_status"] = f"fallback:{_garch_exc}"
 
         regime = compute_garch_regime(df["garch_h"].values)
@@ -146,7 +147,7 @@ def compute_indicators_v2(df: pd.DataFrame,
         df["size_mult"] = np.where(regime == "LOW", 0.0,
                           np.where(regime == "HIGH", 0.5, 1.0))
     else:
-        df["garch_h"] = df["ret"].rolling(24).var().fillna(df["ret"].var())
+        df["garch_h"] = df["ret"].expanding(min_periods=5).var().fillna(df["ret"].var())
         df["garch_regime"] = "MED"
         df["size_mult"] = 1.0
 

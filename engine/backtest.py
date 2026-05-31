@@ -4,6 +4,7 @@ engine/backtest.py
 run_versions, run_wfo, run_optimization — parameterised, no file IO.
 All functions receive DataFrames and config dicts; return dicts/DataFrames.
 """
+import logging
 import numpy as np
 import pandas as pd
 from .strategy_core import (
@@ -177,6 +178,14 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
         {"label": "IS=8m OOS=2m",  "train": 8 * HOURS_MONTH, "test": 2 * HOURS_MONTH},
         {"label": "IS=8m OOS=3m",  "train": 8 * HOURS_MONTH, "test": 3 * HOURS_MONTH},
     ]
+
+    min_required = min(c["train"] + c["test"] for c in window_configs)
+    if len(df_ind) < min_required:
+        logging.warning(
+            "run_wfo: data length %d is shorter than minimum WFO window %d — skipping WFO",
+            len(df_ind), min_required,
+        )
+        return pd.DataFrame()
 
     rows = []
     total = sum(max(0, len(df_ind) - c["train"] - c["test"]) // c["test"] + 1

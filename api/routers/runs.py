@@ -45,6 +45,40 @@ def _safe_float(val, ndigits: int = 3):
         return None
 
 
+_ANN_FACTORS = {
+    "1m":  365 * 24 * 60,
+    "5m":  365 * 24 * 12,
+    "15m": 365 * 24 * 4,
+    "30m": 365 * 24 * 2,
+    "1h":  365 * 24,
+    "4h":  365 * 6,
+    "1d":  365,
+}
+
+
+def _infer_ann_factor(equity_data: list) -> int:
+    """Infer annualisation factor from equity point timestamps.
+
+    Falls back to hourly (8760) if timestamps are absent or unreadable.
+    """
+    ts_list = [e.get("ts") for e in equity_data if e.get("ts")]
+    if len(ts_list) < 2:
+        return 365 * 24  # default: hourly
+    try:
+        from datetime import datetime
+        t0 = datetime.fromisoformat(str(ts_list[0]).replace("Z", "+00:00"))
+        t1 = datetime.fromisoformat(str(ts_list[1]).replace("Z", "+00:00"))
+        diff_secs = abs((t1 - t0).total_seconds())
+        if diff_secs <= 0:
+            return 365 * 24
+        bars_per_year = int(365 * 24 * 3600 / diff_secs)
+        # Snap to nearest known factor
+        known = sorted(_ANN_FACTORS.values())
+        return min(known, key=lambda x: abs(x - bars_per_year))
+    except Exception:
+        return 365 * 24  # hourly fallback
+
+
 # In-memory SSE queues — fine for single-user
 _sse_queues: dict[str, asyncio.Queue] = {}
 
@@ -69,26 +103,31 @@ async def stream_run(run_id: str):
 # ── List / get ────────────────────────────────────────────────────────────────
 
 @router.get("")
-def list_runs(strategy_id: Optional[str] = Query(None)):
+def list_runs(
+    strategy_id: Optional[str] = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
     conn = get_conn()
+    # Exclude equity blob from list query — it can be MBs per row
+    base_select = (
+        "SELECT r.id, r.name, r.ticker, r.timeframe, r.status, r.params, r.created_at,"
+        " r.strategy_id, rr.metrics"
+        " FROM runs r LEFT JOIN run_results rr ON r.id = rr.run_id"
+    )
     if strategy_id:
         rows = conn.execute(
-            "SELECT r.id, r.name, r.ticker, r.timeframe, r.status, r.params, r.created_at,"
-            " r.strategy_id, rr.metrics, rr.equity"
-            " FROM runs r LEFT JOIN run_results rr ON r.id = rr.run_id"
-            " WHERE r.strategy_id = ? ORDER BY r.created_at DESC",
-            [strategy_id]
+            f"{base_select} WHERE r.strategy_id = ? ORDER BY r.created_at DESC LIMIT ? OFFSET ?",
+            [strategy_id, limit, offset]
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT r.id, r.name, r.ticker, r.timeframe, r.status, r.params, r.created_at,"
-            " r.strategy_id, rr.metrics, rr.equity"
-            " FROM runs r LEFT JOIN run_results rr ON r.id = rr.run_id"
-            " ORDER BY r.created_at DESC"
+            f"{base_select} ORDER BY r.created_at DESC LIMIT ? OFFSET ?",
+            [limit, offset]
         ).fetchall()
     result = []
     for r in rows:
-        run_id, name, ticker, timeframe, status, params_str, created_at, strat_id, metrics_str, equity_str = r
+        run_id, name, ticker, timeframe, status, params_str, created_at, strat_id, metrics_str = r
         params = json.loads(params_str) if params_str else {}
         best_m: dict = {}
         if metrics_str:
@@ -97,12 +136,9 @@ def list_runs(strategy_id: Optional[str] = Query(None)):
             if best_key not in all_m and all_m:
                 best_key = next(iter(all_m))
             best_m = all_m.get(best_key, {})
-        start_date = end_date = None
-        if equity_str:
-            eq = json.loads(equity_str)
-            if eq:
-                start_date = str(eq[0].get("ts", ""))[:10] or None
-                end_date   = str(eq[-1].get("ts", ""))[:10] or None
+        # Derive date range from stored params or metrics rather than loading equity blob
+        start_date = params.get("_start_date")
+        end_date = params.get("_end_date")
         result.append({
             "id": run_id,
             "name": name,
@@ -247,8 +283,8 @@ def get_bootstrap_ci(run_id: str):
     if n < 20:
         raise HTTPException(400, "Not enough returns for bootstrap")
 
-    # Annualisation (assume hourly by default — stored equity is per-bar)
-    ann_factor = 24 * 365
+    # Infer bar interval from equity timestamps to get correct annualisation
+    ann_factor = _infer_ann_factor(equity_data)
 
     def sharpe_fn(x):
         m, s = float(np.mean(x)), float(np.std(x))
@@ -428,8 +464,17 @@ async def _run_backtest(run_id: str, params: dict):
 
         # Persist results
         push("saving", 95, "saving results")
+        # Store date range in params so list_runs never needs the equity blob
+        equity_raw = result["equity"]
+        if equity_raw:
+            params["_start_date"] = str(equity_raw[0].get("ts", ""))[:10] or None
+            params["_end_date"]   = str(equity_raw[-1].get("ts", ""))[:10] or None
+            conn.execute(
+                "UPDATE runs SET params=? WHERE id=?",
+                [json.dumps(params), run_id]
+            )
         metrics_json = json.dumps(result["metrics"])
-        equity_json  = json.dumps(result["equity"])
+        equity_json  = json.dumps(equity_raw)
         trades_json  = json.dumps(result["trades"])
         wfo_json     = json.dumps(result.get("wfo", []))
         sweep_json   = json.dumps(result.get("sweep", []))
