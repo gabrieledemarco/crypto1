@@ -2,7 +2,7 @@
 import { useState, useMemo } from "react";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
-import { useRunEquity, useRunBootstrapCI, isRealRunId } from "@/hooks/useRun";
+import { useRunEquity, useRunBootstrapCI, isRealRunId, useValidateActiveRun } from "@/hooks/useRun";
 import { ACFPlot } from "@/components/charts/ACFPlot";
 import { EquityChart } from "@/components/charts/EquityChart";
 import { DrawdownChart } from "@/components/charts/DrawdownChart";
@@ -313,10 +313,12 @@ function ExitReasonChips({ slHits, tpHits, nTrades, label }: ExitReasonsProps) {
 // Main screen
 // ---------------------------------------------------------------------------
 export function EquityScreen() {
-  const { activeRunId, runs } = useStore();
+  const { activeRunId, runs, setRun } = useStore();
   const [logScale, setLogScale] = useState(false);
   const [showBench, setShowBench] = useState(true);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+
+  useValidateActiveRun(activeRunId || null, () => setRun(""));
 
   const equityQuery = useRunEquity(activeRunId || null);
   const bootstrapCI = useRunBootstrapCI(activeRunId || null);
@@ -465,6 +467,9 @@ export function EquityScreen() {
         )}
 
         <div className={styles.panelBody}>
+          {equityQuery.isLoading && isRealRunId(activeRunId) ? (
+            <div className={styles.skeletonChart} />
+          ) : (
           <EquityChart
             equity={equity}
             oosStart={run?.oosStart}
@@ -474,6 +479,7 @@ export function EquityScreen() {
             logScale={logScale}
             onHoverIndex={setHoverIndex}
           />
+          )}
           <DrawdownChart
             equity={equity}
             height={100}

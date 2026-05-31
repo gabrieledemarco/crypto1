@@ -1,6 +1,7 @@
 "use client";
+import { useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { Trade } from "@/lib/fixtures";
 import type { ApiRunListItem, ApiTrade } from "@/lib/api-types";
 
@@ -193,4 +194,22 @@ export function useRunBootstrapCI(runId: string | null) {
     staleTime: 300_000,
     retry: false,
   });
+}
+
+// Call this on any screen that shows a run. If the server returns 404 (run was
+// deleted externally), clears activeRunId so the UI falls back to fixture data.
+export function useValidateActiveRun(
+  runId: string | null,
+  clearRun: () => void
+): void {
+  const query = useRun(runId);
+  useEffect(() => {
+    if (
+      query.isError &&
+      query.error instanceof ApiError &&
+      query.error.status === 404
+    ) {
+      clearRun();
+    }
+  }, [query.isError, query.error, clearRun]);
 }

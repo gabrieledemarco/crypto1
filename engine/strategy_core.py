@@ -379,7 +379,7 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
     avg_win = wins["pnl"].mean() if len(wins) > 0 else 0
     avg_loss = losses["pnl"].mean() if len(losses) > 0 else 0
     pf = wins["pnl"].sum() / abs(losses["pnl"].sum()) \
-         if len(losses) > 0 and losses["pnl"].sum() != 0 else np.inf
+         if len(losses) > 0 and losses["pnl"].sum() != 0 else 999.9
 
     equity_safe = equity.clip(lower=1e-10)
     ret_s = np.log(equity_safe / equity_safe.shift(1)).dropna()
@@ -400,9 +400,12 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
         cagr = float(qs.stats.cagr(ret_s)) * 100
         cagr = max(min(cagr, 999.0), -999.0)
         sharpe  = float(qs.stats.sharpe(ret_s, periods=_PERIODS))
+        sharpe  = sharpe if np.isfinite(sharpe) else 0.0
         sortino = float(qs.stats.sortino(ret_s, periods=_PERIODS))
+        sortino = sortino if np.isfinite(sortino) else 0.0
         max_dd  = float(qs.stats.max_drawdown(ret_s)) * 100   # decimal → %
         omega   = float(qs.stats.omega(ret_s, periods=_PERIODS))
+        omega   = omega if np.isfinite(omega) else 99.0
         ulcer   = float(qs.stats.ulcer_index(ret_s)) * 100
     except Exception:
         # fallback: pure numpy/pandas
@@ -443,7 +446,7 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
         "calmar_ratio":     round(calmar, 4) if np.isfinite(calmar) else 0.0,
         "n_trades":         n,
         "win_rate_pct":     win_rate,
-        "profit_factor":    pf,
+        "profit_factor":    round(min(pf, 999.9), 3) if np.isfinite(pf) else 999.9,
         "avg_win_usd":      avg_win,
         "avg_loss_usd":     avg_loss,
         "sl_hits":          len(trades[trades["exit_reason"] == "SL"]),

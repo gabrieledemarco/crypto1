@@ -32,6 +32,7 @@ from api.limiter import limiter
 from api.models import RunCreate, RunParams
 
 router = APIRouter()
+log = logging.getLogger("runs")
 
 
 def _safe_float(val, ndigits: int = 3):
@@ -312,7 +313,7 @@ def get_bootstrap_ci(run_id: str):
         cagr_ci   = (float(bs_cagr.confidence_interval.low),   float(bs_cagr.confidence_interval.high))
     except Exception as e:
         import logging
-        logging.warning(f"Bootstrap CI failed: {e}")
+        log.warning(f"Bootstrap CI failed: {e}")
         sharpe_ci = (None, None)
         cagr_ci = (None, None)
         ci_method = "unavailable"
@@ -344,7 +345,7 @@ def get_bootstrap_ci(run_id: str):
                 [json.dumps(mc_data), run_id]
             )
     except Exception as _cache_exc:
-        logging.debug("Failed to cache bootstrap CI: %s", _cache_exc)
+        log.debug("Failed to cache bootstrap CI: %s", _cache_exc)
     return result
 
 # ── Create + async backtest ───────────────────────────────────────────────────
@@ -399,7 +400,7 @@ def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
             try:
                 df = ccxt_fetch(ticker, period=period, interval=interval)
             except Exception as _ccxt_exc:
-                logging.warning("ccxt fetch failed for %s/%s, falling back to yfinance: %s",
+                log.warning("ccxt fetch failed for %s/%s, falling back to yfinance: %s",
                                 ticker, interval, _ccxt_exc)
                 df = yf_fetch(ticker, period=period, interval=interval)
         else:
@@ -433,6 +434,10 @@ async def _run_backtest(run_id: str, params: dict):
     try:
         conn.execute("UPDATE runs SET status='running' WHERE id=?", [run_id])
         push("start", 0, "loading data")
+
+        ticker_raw = params.get("ticker", "?")
+        tf = params.get("timeframe", "?")
+        log.info("backtest start run_id=%s ticker=%s tf=%s", run_id, ticker_raw, tf)
 
         # Load bars from DuckDB — strip any accidental double suffix e.g. "BNB-USD-USD"
         ticker = params["ticker"]
@@ -493,6 +498,12 @@ async def _run_backtest(run_id: str, params: dict):
             )
         conn.execute("UPDATE runs SET status='done' WHERE id=?", [run_id])
         push("done", 100, "complete")
+        log.info(
+            "backtest done run_id=%s ticker=%s tf=%s n_trades=%s sharpe=%s",
+            run_id, ticker_raw, tf,
+            result.get("metrics", {}).get("n_trades"),
+            result.get("metrics", {}).get("sharpe_ratio"),
+        )
 
         # Post-run learning: extract lesson and store in brain_chunks
         try:
@@ -515,11 +526,16 @@ async def _run_backtest(run_id: str, params: dict):
                 df_ind=result.get("_df_ind"),
             )
         except Exception as _learn_exc:
-            logging.warning("Learning update failed (non-blocking): %s", _learn_exc)
+            log.warning("Learning update failed (non-blocking): %s", _learn_exc)
 
     except Exception as exc:
         conn.execute("UPDATE runs SET status='error' WHERE id=?", [run_id])
         push("error", 0, str(exc))
+        log.error(
+            "backtest error run_id=%s ticker=%s tf=%s error=%s",
+            run_id, params.get("ticker", "?"), params.get("timeframe", "?"), exc,
+            exc_info=True,
+        )
     finally:
         # Ensure queue is removed even when no SSE client ever connected
         _sse_queues.pop(run_id, None)
@@ -650,7 +666,7 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
             try:
                 mc_days = max((equity_s.index[-1] - equity_s.index[0]).days, 1)
             except Exception as _ts_exc:
-                logging.debug("Could not compute backtest date range: %s", _ts_exc)
+                log.debug("Could not compute backtest date range: %s", _ts_exc)
                 mc_days = 365.0
         bs     = run_bootstrap(pnl_arr, n_sims=n_sims, n_bars=n_bars, initial_capital=INITIAL_CAPITAL, days_in_period=mc_days)
         stress = run_stress(pnl_arr, initial_capital=INITIAL_CAPITAL)

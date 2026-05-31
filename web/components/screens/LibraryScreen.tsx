@@ -382,7 +382,11 @@ export function LibraryScreen() {
           </div>
           <div className={styles.tableWrap}>
             {runsLoading ? (
-              <div className={styles.emptyMsg}>Loading…</div>
+              <div style={{ padding: "4px 8px" }}>
+                {[0.8, 0.6, 0.9, 0.7].map((w, i) => (
+                  <div key={i} className={styles.skeletonRow} style={{ width: `${w * 100}%` }} />
+                ))}
+              </div>
             ) : displayRuns.length === 0 ? (
               <div className={styles.emptyMsg}>
                 Nessun run. Avvia un backtest da Setup dopo aver cliccato <strong>LOAD →</strong> su questa strategia.
