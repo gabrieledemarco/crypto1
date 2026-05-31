@@ -4,15 +4,18 @@ engine/backtest.py
 run_versions, run_wfo, run_optimization — parameterised, no file IO.
 All functions receive DataFrames and config dicts; return dicts/DataFrames.
 """
+import logging
 import numpy as np
 import pandas as pd
 from .strategy_core import (
     generate_signals_v2, backtest_v2, compute_metrics, apply_garch_to_fold,
 )
 from .indicators import make_ind
-
-INITIAL_CAPITAL = 10_000
-HOURS_MONTH = 24 * 30
+from .config import (
+    INITIAL_CAPITAL, HOURS_MONTH, MAX_SWEEP_COMBOS,
+    SWEEP_SL_RANGE, SWEEP_TP_RANGE, SWEEP_HOUR_WINDOWS,
+    WFO_SL_GRID, WFO_TP_GRID, StrategyVersion,
+)
 
 
 def _apply_direction_filter(df: pd.DataFrame, direction: str = "ALL") -> pd.DataFrame:
@@ -57,9 +60,9 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
 
     results = {}
     versions = [
-        ("V1 Base",         {"use_garch_filter": False, "commission_pips": 0.0,  "slippage_pips": 0.0}),
-        ("V2 +Costi",       {"use_garch_filter": False, "commission_pips": comm, "slippage_pips": slip}),
-        ("V4 +GARCH+Costi", {"use_garch_filter": True,  "commission_pips": comm, "slippage_pips": slip}),
+        (StrategyVersion.V1_BASE,  {"use_garch_filter": False, "commission_pips": 0.0,  "slippage_pips": 0.0}),
+        (StrategyVersion.V2_COSTS, {"use_garch_filter": False, "commission_pips": comm, "slippage_pips": slip}),
+        (StrategyVersion.V4_GARCH, {"use_garch_filter": True,  "commission_pips": comm, "slippage_pips": slip}),
     ]
     for i, (name, vcfg) in enumerate(versions):
         if progress_cb:
@@ -72,7 +75,7 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
                            commission_pips=vcfg["commission_pips"],
                            slippage_pips=vcfg["slippage_pips"],
                            max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg)
-        results[name] = {"result": res, "metrics": compute_metrics(res, INITIAL_CAPITAL)}
+        results[name.value] = {"result": res, "metrics": compute_metrics(res, INITIAL_CAPITAL)}
 
     # V_Agent: use provided agent_fn if any
     agent_fn = cfg.get("agent_fn")
@@ -90,15 +93,11 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
             res_a = backtest_v2(df_a, INITIAL_CAPITAL, risk,
                                 commission_pips=comm, slippage_pips=slip,
                                 max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg)
-            results["V_Agent"] = {"result": res_a, "metrics": compute_metrics(res_a, INITIAL_CAPITAL)}
+            results[StrategyVersion.V_AGENT.value] = {"result": res_a, "metrics": compute_metrics(res_a, INITIAL_CAPITAL)}
         except Exception as exc:
-            results["V_Agent"] = {"error": str(exc)}
+            results[StrategyVersion.V_AGENT.value] = {"error": str(exc)}
 
     return results
-
-
-_WFO_SL_GRID: list[float] = [1.5, 2.0, 2.5, 3.0]
-_WFO_TP_GRID: list[float] = [2.0, 3.0, 4.0, 5.0, 6.0]
 
 
 def _best_params_on_is(
@@ -111,9 +110,9 @@ def _best_params_on_is(
     Uses V1-Base settings (no GARCH, no commission) for speed.
     """
     best_sharpe = float("-inf")
-    best_sl, best_tp = _WFO_SL_GRID[1], _WFO_TP_GRID[1]   # sensible default
-    for sl_c in _WFO_SL_GRID:
-        for tp_c in _WFO_TP_GRID:
+    best_sl, best_tp = WFO_SL_GRID[1], WFO_TP_GRID[1]   # sensible default
+    for sl_c in WFO_SL_GRID:
+        for tp_c in WFO_TP_GRID:
             df_s = generate_signals_v2(
                 is_data, atr_mult_sl=sl_c, atr_mult_tp=tp_c,
                 active_hours=hrs, use_garch_filter=False,
@@ -247,12 +246,19 @@ def run_optimization(df_ind: pd.DataFrame, cfg: dict,
     risk = cfg.get("risk_per_trade", 0.01)
     lvg  = cfg.get("leverage", 1.0)
 
-    SL_RANGE = [1.0, 1.5, 2.0, 2.5, 3.0]
-    TP_RANGE = [2.0, 3.0, 4.0, 5.0, 7.0]
-    HOUR_WINDOWS = [(6, 22), (8, 20), (0, 23)]
-
     rows = []
-    combos = [(sl, tp, h) for sl in SL_RANGE for tp in TP_RANGE for h in HOUR_WINDOWS if tp > sl]
+    combos = [
+        (sl, tp, h)
+        for sl in SWEEP_SL_RANGE
+        for tp in SWEEP_TP_RANGE
+        for h  in SWEEP_HOUR_WINDOWS
+        if tp > sl
+    ]
+    if len(combos) > MAX_SWEEP_COMBOS:
+        raise ValueError(
+            f"Sweep grid too large ({len(combos)} combinations). "
+            "Reduce SWEEP_SL_RANGE, SWEEP_TP_RANGE, or SWEEP_HOUR_WINDOWS in engine/config.py."
+        )
     for idx, (sl, tp, h) in enumerate(combos):
         if progress_cb and idx % 5 == 0:
             progress_cb("sweep", int(idx / len(combos) * 100))

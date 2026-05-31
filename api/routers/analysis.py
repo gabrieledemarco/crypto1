@@ -15,11 +15,9 @@ from statsmodels.tsa.stattools import acf as sm_acf
 from fastapi import APIRouter, HTTPException, Query
 
 from api.db import get_conn
+from engine.config import ANN_FACTORS as BARS_PER_YEAR
 
 router = APIRouter()
-
-BARS_PER_YEAR = {"1m": 525600, "5m": 105120, "15m": 35040, "30m": 17520,
-                 "1h": 8760, "4h": 2190, "1d": 365, "1wk": 52, "1mo": 12}
 
 
 def _load_bars(ticker: str, interval: str) -> pd.DataFrame:

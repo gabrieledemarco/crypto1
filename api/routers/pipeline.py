@@ -63,10 +63,7 @@ _ACTIVE_HOURS = {
     "1m": [0, 23], "5m": [0, 23], "15m": [6, 22],
     "30m": [6, 22], "1h": [6, 22], "4h": [0, 22], "1d": [0, 23],
 }
-_ANN_FACTORS = {
-    "1m": 525600, "5m": 105120, "15m": 35040, "30m": 17520,
-    "1h": 8760, "4h": 2190, "1d": 365,
-}
+from engine.config import ANN_FACTORS as _ANN_FACTORS
 
 
 class PipelineRequest(BaseModel):
