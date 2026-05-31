@@ -23,8 +23,11 @@ async function proxy(req: NextRequest, { params }: Ctx) {
     init.body = await req.text();
   }
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+
   try {
-    const res = await fetch(upstream, init);
+    const res = await fetch(upstream, { ...init, signal: controller.signal });
     const body = await res.arrayBuffer();
     return new NextResponse(body, {
       status: res.status,
@@ -32,11 +35,14 @@ async function proxy(req: NextRequest, { params }: Ctx) {
         "content-type": res.headers.get("content-type") ?? "application/json",
       },
     });
-  } catch {
+  } catch (err: unknown) {
+    const isTimeout = err instanceof Error && err.name === "AbortError";
     return NextResponse.json(
-      { detail: `API non raggiungibile: ${upstream}` },
-      { status: 503 }
+      { detail: isTimeout ? "API request timed out" : "API non raggiungibile" },
+      { status: isTimeout ? 504 : 503 }
     );
+  } finally {
+    clearTimeout(timer);
   }
 }
 

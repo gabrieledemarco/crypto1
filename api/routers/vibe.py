@@ -368,6 +368,10 @@ async def _claude_stream(body: VibeGenerateRequest):
 
     await _ensure_brain_ready()
     brain_ctx = get_brain_context(body.prompt or "")
+    # Cap brain context at ~4000 tokens (16000 chars) to avoid filling the context window
+    _MAX_BRAIN_CHARS = 16_000
+    if len(brain_ctx) > _MAX_BRAIN_CHARS:
+        brain_ctx = brain_ctx[:_MAX_BRAIN_CHARS] + "\n…[brain context truncated]\n\n"
     effective_system = brain_ctx + SYSTEM_PROMPT if brain_ctx else SYSTEM_PROMPT
 
     messages = [{"role": "user", "content": _build_user_message(body)}]

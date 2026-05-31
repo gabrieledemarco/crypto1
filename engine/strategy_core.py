@@ -135,8 +135,10 @@ def compute_indicators_v2(df: pd.DataFrame,
             _, _, _, h_all = fit_garch11(r_aligned[1:])
             h_padded = np.concatenate([[h_all[0]], h_all])
             df["garch_h"] = h_padded[:len(df)]
-        except Exception:
+            df.attrs["garch_status"] = "ok"
+        except Exception as _garch_exc:
             df["garch_h"] = df["ret"].rolling(24).var().fillna(df["ret"].var())
+            df.attrs["garch_status"] = f"fallback:{_garch_exc}"
 
         regime = compute_garch_regime(df["garch_h"].values)
         df["garch_regime"] = regime

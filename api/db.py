@@ -25,9 +25,13 @@ def get_conn() -> duckdb.DuckDBPyConnection:
 
 
 def close_conn() -> None:
-    """Close the thread-local DuckDB connection if open."""
+    """Commit pending writes and close the thread-local DuckDB connection."""
     conn = getattr(_local, 'conn', None)
     if conn is not None:
+        try:
+            conn.commit()
+        except Exception:
+            pass
         try:
             conn.close()
         except Exception:
@@ -58,6 +62,7 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         )
     """)
     # Migrate existing DB: add strategy_id only if the column is truly missing
+    # (already guarded by _schema_lock in get_conn via double-checked locking)
     existing_cols = {row[0] for row in conn.execute(
         "SELECT column_name FROM information_schema.columns WHERE table_name='runs'"
     ).fetchall()}

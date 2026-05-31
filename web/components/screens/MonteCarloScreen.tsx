@@ -5,6 +5,7 @@ import { useRunMC } from "@/hooks/useRun";
 import { FanChart } from "@/components/charts/FanChart";
 import { Histogram } from "@/components/charts/Histogram";
 import styles from "./MonteCarloScreen.module.css";
+import type { ApiMCResult } from "@/lib/api-types";
 
 interface StressScenario {
   scenario: string;
@@ -134,16 +135,7 @@ export function MonteCarloScreen() {
   const sharpe  = run?.metricsOOS?.sharpe ?? 0;
 
   // Prefer server-computed p_profit/p_ruin (already correctly computed)
-  const mcRaw = mcQuery.data as {
-    sharpe_ci?: [number, number];
-    sharpe_lower?: number;
-    sharpe_upper?: number;
-    p_profit?: number;
-    p_ruin?: number;
-    p_daily_dd_1?: number;
-    p_daily_dd_5?: number;
-    p_daily_dd_10?: number;
-  } | undefined;
+  const mcRaw = mcQuery.data as ApiMCResult | undefined;
   const pProfit = mcRaw?.p_profit != null
     ? mcRaw.p_profit * 100
     : normFinals.filter(v => v > 1).length / (normFinals.length || 1) * 100;
