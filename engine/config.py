@@ -1,7 +1,6 @@
 """engine/config.py — single source of truth for engine constants and enums."""
 from enum import Enum
 
-
 # ── Capital & sizing ──────────────────────────────────────────────────────────
 INITIAL_CAPITAL: float = 10_000.0
 HOURS_MONTH: int = 24 * 30

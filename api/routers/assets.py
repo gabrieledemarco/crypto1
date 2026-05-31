@@ -8,6 +8,7 @@ GET  /assets                 → list available tickers
 """
 import json
 import sys, os
+import threading
 import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
@@ -21,6 +22,7 @@ from engine.config import ANN_FACTORS as _BARS_PER_YEAR
 
 # Simple TTL cache for quant stats (expensive: Hurst, ADF, GARCH)
 _QUANT_CACHE: dict[tuple, tuple] = {}  # key → (result, computed_at)
+_QUANT_CACHE_LOCK = threading.Lock()
 _QUANT_TTL = 300  # seconds
 
 router = APIRouter()
@@ -212,9 +214,14 @@ def get_stats(ticker: str, interval: str = "1d"):
 @router.get("/{ticker}/quant")
 def get_quant_stats(ticker: str, interval: str = Query("1h")):
     """Return Hurst, stationarity, VaR/CVaR for a stored asset series."""
+    _VALID_INTERVALS = set(_BARS_PER_YEAR.keys())
+    if interval not in _VALID_INTERVALS:
+        raise HTTPException(status_code=422, detail=f"Invalid interval '{interval}'. Valid: {sorted(_VALID_INTERVALS)}")
+
     cache_key = (ticker, interval)
     now = time.monotonic()
-    cached = _QUANT_CACHE.get(cache_key)
+    with _QUANT_CACHE_LOCK:
+        cached = _QUANT_CACHE.get(cache_key)
     if cached and now - cached[1] < _QUANT_TTL:
         return cached[0]
 
@@ -241,7 +248,8 @@ def get_quant_stats(ticker: str, interval: str = Query("1h")):
         "var_cvar": compute_var_cvar(rets),
         "rolling": rolling_metrics(prices),
     }
-    _QUANT_CACHE[cache_key] = (result, now)
+    with _QUANT_CACHE_LOCK:
+        _QUANT_CACHE[cache_key] = (result, now)
     return result
 
 

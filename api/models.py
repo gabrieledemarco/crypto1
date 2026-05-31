@@ -56,7 +56,7 @@ class RunParams(BaseModel):
     @classmethod
     def normalize_risk(cls, v: float) -> float:
         # Convert % form (e.g. 1.0) → decimal (0.01); leave decimal form unchanged.
-        return v / 100 if v > 0.1 else v
+        return v / 100 if v >= 0.1 else v
 
     @field_validator("mc_bars", mode="before")
     @classmethod

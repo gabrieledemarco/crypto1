@@ -204,6 +204,7 @@ def promote_robust(min_sharpe: float = 1.0):
     conn = get_conn()
     rows = conn.execute("SELECT id, name, config, starred, status FROM strategies").fetchall()
     promoted, already = [], []
+    to_promote_ids: list[str] = []
     for sid, name, config_raw, starred, status in rows:
         cfg = {}
         try:
@@ -216,12 +217,15 @@ def promote_robust(min_sharpe: float = 1.0):
             if bool(starred) and status == "live":
                 already.append({"id": sid, "name": name, "sharpe": sharpe})
             else:
-                conn.execute(
-                    "UPDATE strategies SET starred=TRUE, status='live' WHERE id=?", [sid]
-                )
+                to_promote_ids.append(sid)
                 promoted.append({"id": sid, "name": name, "sharpe": sharpe})
 
-    if promoted:
+    if to_promote_ids:
+        placeholders = ",".join("?" * len(to_promote_ids))
+        conn.execute(
+            f"UPDATE strategies SET starred=TRUE, status='live' WHERE id IN ({placeholders})",
+            to_promote_ids,
+        )
         conn.commit()
     return {
         "min_sharpe": min_sharpe,

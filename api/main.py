@@ -26,7 +26,7 @@ structlog.configure(
     logger_factory=structlog.PrintLoggerFactory(),
 )
 
-ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
 
 
 def _seed_library_if_empty(conn) -> None:

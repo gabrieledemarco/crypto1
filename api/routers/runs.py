@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from api.db import get_conn
 from api.limiter import limiter
 from api.models import RunCreate, RunParams
-from engine.config import ANN_FACTORS as _ANN_FACTORS, BACKTEST_TIMEOUT as _BACKTEST_TIMEOUT, BOOTSTRAP_N_RESAMPLES as _N_RESAMPLES, SSE_STREAM_TIMEOUT as _SSE_TIMEOUT
+from engine.config import ANN_FACTORS as _ANN_FACTORS, BACKTEST_TIMEOUT as _BACKTEST_TIMEOUT, BOOTSTRAP_N_RESAMPLES as _N_RESAMPLES, SSE_STREAM_TIMEOUT as _SSE_TIMEOUT, StrategyVersion
 
 router = APIRouter()
 log = logging.getLogger("runs")
@@ -101,7 +101,7 @@ async def stream_run(run_id: str):
 @router.get("")
 def list_runs(
     strategy_id: Optional[str] = Query(None),
-    limit: int = Query(200, ge=1, le=1000),
+    limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
     conn = get_conn()
@@ -124,15 +124,26 @@ def list_runs(
     result = []
     for r in rows:
         run_id, name, ticker, timeframe, status, params_str, created_at, strat_id, metrics_str = r
-        params = json.loads(params_str) if params_str else {}
+        try:
+            params = json.loads(params_str) if params_str else {}
+        except (json.JSONDecodeError, TypeError):
+            log.warning("Failed to parse JSON field: %r", params_str)
+            params = {}
         best_m: dict = {}
         if metrics_str:
-            all_m = json.loads(metrics_str)
+            try:
+                all_m = json.loads(metrics_str)
+            except (json.JSONDecodeError, TypeError):
+                log.warning("Failed to parse JSON field: %r", metrics_str)
+                all_m = {}
             if isinstance(all_m, dict):
-                best_key = "V_Agent" if "V_Agent" in all_m else "V4 +GARCH+Costi"
-                if best_key not in all_m and all_m:
+                best_key = next(
+                    (v.value for v in StrategyVersion.preference_order() if v.value in all_m),
+                    None
+                )
+                if best_key is None and all_m:
                     best_key = next(iter(all_m))
-                candidate = all_m.get(best_key)
+                candidate = all_m.get(best_key) if best_key else None
                 best_m = candidate if isinstance(candidate, dict) else {}
         # Derive date range from stored params or metrics rather than loading equity blob
         start_date = params.get("_start_date")
@@ -189,10 +200,20 @@ def get_run(run_id: str):
     if not row:
         raise HTTPException(404, "Run not found")
     result_row = conn.execute("SELECT metrics FROM run_results WHERE run_id=?", [run_id]).fetchone()
-    metrics = json.loads(result_row[0]) if result_row and result_row[0] else None
+    metrics = None
+    if result_row and result_row[0]:
+        try:
+            metrics = json.loads(result_row[0])
+        except (json.JSONDecodeError, TypeError):
+            log.warning("Failed to parse JSON field: %r", result_row[0])
+    try:
+        params = json.loads(row[4]) if row[4] else {}
+    except (json.JSONDecodeError, TypeError):
+        log.warning("Failed to parse JSON field: %r", row[4])
+        params = {}
     return {
         "id": row[0], "name": row[1], "ticker": row[2], "status": row[3],
-        "params": json.loads(row[4]) if row[4] else {},
+        "params": params,
         "created_at": str(row[5]),
         "metrics": metrics,
     }
@@ -203,7 +224,11 @@ def get_equity(run_id: str):
     row = conn.execute("SELECT equity FROM run_results WHERE run_id=?", [run_id]).fetchone()
     if not row or not row[0]:
         raise HTTPException(404, "Equity not ready")
-    return json.loads(row[0])
+    try:
+        return json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
+        log.warning("Failed to parse JSON field: %r", row[0])
+        return []
 
 @router.get("/{run_id}/trades")
 def get_trades(run_id: str,
@@ -215,7 +240,11 @@ def get_trades(run_id: str,
     row = conn.execute("SELECT trades FROM run_results WHERE run_id=?", [run_id]).fetchone()
     if not row or not row[0]:
         raise HTTPException(404, "Trades not ready")
-    trades = json.loads(row[0])
+    try:
+        trades = json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
+        log.warning("Failed to parse JSON field: %r", row[0])
+        trades = []
     if side and side.upper() in ("LONG", "SHORT"):
         trades = [t for t in trades if t.get("direction") == side.upper()]
     if pnl == "win":
@@ -231,7 +260,11 @@ def get_wfo(run_id: str):
     row = conn.execute("SELECT wfo FROM run_results WHERE run_id=?", [run_id]).fetchone()
     if not row or not row[0]:
         return []
-    return json.loads(row[0])
+    try:
+        return json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
+        log.warning("Failed to parse JSON field: %r", row[0])
+        return []
 
 @router.get("/{run_id}/sweep")
 def get_sweep(run_id: str):
@@ -239,7 +272,11 @@ def get_sweep(run_id: str):
     row = conn.execute("SELECT sweep FROM run_results WHERE run_id=?", [run_id]).fetchone()
     if not row or not row[0]:
         return []
-    return json.loads(row[0])
+    try:
+        return json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
+        log.warning("Failed to parse JSON field: %r", row[0])
+        return []
 
 @router.get("/{run_id}/mc")
 def get_mc(run_id: str):
@@ -247,7 +284,11 @@ def get_mc(run_id: str):
     row = conn.execute("SELECT mc FROM run_results WHERE run_id=?", [run_id]).fetchone()
     if not row or not row[0]:
         return {}
-    return json.loads(row[0])
+    try:
+        return json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
+        log.warning("Failed to parse JSON field: %r", row[0])
+        return {}
 
 @router.get("/{run_id}/bootstrap-ci")
 def get_bootstrap_ci(run_id: str):
@@ -526,12 +567,8 @@ async def _run_backtest(run_id: str, params: dict):
 
     except Exception as exc:
         conn.execute("UPDATE runs SET status='error' WHERE id=?", [run_id])
-        push("error", 0, str(exc))
-        log.error(
-            "backtest error run_id=%s ticker=%s tf=%s error=%s",
-            run_id, params.get("ticker", "?"), params.get("timeframe", "?"), exc,
-            exc_info=True,
-        )
+        log.exception("Backtest pipeline error for run_id=%s", run_id)
+        push("error", 0, "An internal error occurred. Please try again.")
     finally:
         # Ensure queue is removed even when no SSE client ever connected
         _sse_queues.pop(run_id, None)
@@ -613,9 +650,13 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
     versions = run_versions(df_ind, cfg, direction=direction, progress_cb=push)
 
     # Pick best version for equity/trades export
-    best_key = "V4 +GARCH+Costi"
-    if "V_Agent" in versions and "result" in versions.get("V_Agent", {}):
-        best_key = "V_Agent"
+    best_key = next(
+        (v.value for v in StrategyVersion.preference_order()
+         if v.value in versions and "result" in versions.get(v.value, {})),
+        None
+    )
+    if best_key is None:
+        best_key = next(iter(versions))
     best = versions.get(best_key, list(versions.values())[0])
     best_result = best.get("result", {})
     best_metrics = best.get("metrics", {})
