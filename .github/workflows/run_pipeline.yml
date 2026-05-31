@@ -295,6 +295,14 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Promote ROBUST strategies (star + live)
+        run: |
+          echo "POST $API_BASE/strategies/promote-robust?min_sharpe=1.0"
+          RESULT=$(curl -s --max-time 30 -X POST \
+            "$API_BASE/strategies/promote-robust?min_sharpe=1.0" \
+            -H 'Content-Type: application/json')
+          echo "Result: $RESULT"
+
       - name: Delete strategies with Sharpe < 1
         run: python3 scripts/cleanup_library.py
 

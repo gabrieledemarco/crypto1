@@ -219,7 +219,11 @@ export function LibraryScreen() {
     if (run.strategy_id) {
       try {
         const res = await fetch(`/api/strategies/${run.strategy_id}`);
-        if (res.ok) { const strat = await res.json(); code = strat.code || null; config = strat.config || null; }
+        if (res.ok) {
+          const strat = await res.json();
+          code = strat.code || null;
+          config = strat.config || null;
+        }
       } catch { /* ignore */ }
     }
     if (!config) {

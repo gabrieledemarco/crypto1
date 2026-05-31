@@ -14,7 +14,7 @@ from .indicators import make_ind
 from .config import (
     INITIAL_CAPITAL, HOURS_MONTH, MAX_SWEEP_COMBOS,
     SWEEP_SL_RANGE, SWEEP_TP_RANGE, SWEEP_HOUR_WINDOWS,
-    WFO_SL_GRID, WFO_TP_GRID,
+    WFO_SL_GRID, WFO_TP_GRID, StrategyVersion,
 )
 
 
@@ -65,9 +65,9 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
 
     results = {}
     versions = [
-        ("V1 Base",         {"use_garch_filter": False, "commission_pips": 0.0,  "slippage_pips": 0.0}),
-        ("V2 +Costi",       {"use_garch_filter": False, "commission_pips": comm, "slippage_pips": slip}),
-        ("V4 +GARCH+Costi", {"use_garch_filter": True,  "commission_pips": comm, "slippage_pips": slip}),
+        (StrategyVersion.V1_BASE,  {"use_garch_filter": False, "commission_pips": 0.0,  "slippage_pips": 0.0}),
+        (StrategyVersion.V2_COSTS, {"use_garch_filter": False, "commission_pips": comm, "slippage_pips": slip}),
+        (StrategyVersion.V4_GARCH, {"use_garch_filter": True,  "commission_pips": comm, "slippage_pips": slip}),
     ]
     for i, (name, vcfg) in enumerate(versions):
         if progress_cb:
@@ -82,7 +82,7 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
                            max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg,
                            trailing_stop=ts_on, trailing_stop_method=ts_meth,
                            trailing_stop_value=ts_val, position_size_method=ps_meth)
-        results[name] = {"result": res, "metrics": compute_metrics(res, cap)}
+        results[name.value] = {"result": res, "metrics": compute_metrics(res, cap)}
 
     # V_Agent: use provided agent_fn if any
     agent_fn = cfg.get("agent_fn")
@@ -102,15 +102,11 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
                                 max_positions=max_pos, cooldown_bars=cooldown, leverage=lvg,
                                 trailing_stop=ts_on, trailing_stop_method=ts_meth,
                                 trailing_stop_value=ts_val, position_size_method=ps_meth)
-            results["V_Agent"] = {"result": res_a, "metrics": compute_metrics(res_a, cap)}
+            results[StrategyVersion.V_AGENT.value] = {"result": res_a, "metrics": compute_metrics(res_a, cap)}
         except Exception as exc:
-            results["V_Agent"] = {"error": str(exc)}
+            results[StrategyVersion.V_AGENT.value] = {"error": str(exc)}
 
     return results
-
-
-_WFO_SL_GRID = WFO_SL_GRID
-_WFO_TP_GRID = WFO_TP_GRID
 
 
 def _best_params_on_is(
@@ -123,9 +119,9 @@ def _best_params_on_is(
     Uses V1-Base settings (no GARCH, no commission) for speed.
     """
     best_sharpe = float("-inf")
-    best_sl, best_tp = _WFO_SL_GRID[1], _WFO_TP_GRID[1]   # sensible default
-    for sl_c in _WFO_SL_GRID:
-        for tp_c in _WFO_TP_GRID:
+    best_sl, best_tp = WFO_SL_GRID[1], WFO_TP_GRID[1]   # sensible default
+    for sl_c in WFO_SL_GRID:
+        for tp_c in WFO_TP_GRID:
             df_s = generate_signals_v2(
                 is_data, atr_mult_sl=sl_c, atr_mult_tp=tp_c,
                 active_hours=hrs, use_garch_filter=False,
@@ -202,6 +198,12 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
         while i + is_len + oos_len <= len(df_ind):
             is_data  = df_ind.iloc[i : i + is_len].copy()
             oos_data = df_ind.iloc[i + is_len : i + is_len + oos_len].copy()
+            # Guard: IS must end strictly before OOS begins (no lookahead bias)
+            if not is_data.empty and not oos_data.empty:
+                assert is_data.index[-1] < oos_data.index[0], (
+                    f"WFO data overlap: IS ends {is_data.index[-1]}, "
+                    f"OOS starts {oos_data.index[0]}"
+                )
             # Refit GARCH on IS only — eliminates lookahead bias in WFO folds
             if "garch_h" in df_ind.columns and "Close" in df_ind.columns:
                 try:
@@ -276,7 +278,7 @@ def run_optimization(df_ind: pd.DataFrame, cfg: dict,
         (sl, tp, h)
         for sl in SWEEP_SL_RANGE
         for tp in SWEEP_TP_RANGE
-        for h in SWEEP_HOUR_WINDOWS
+        for h  in SWEEP_HOUR_WINDOWS
         if tp > sl
     ]
     if len(combos) > MAX_SWEEP_COMBOS:

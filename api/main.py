@@ -1,15 +1,20 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))  # allow `import engine`
 
+import uuid
+import logging
 from contextlib import asynccontextmanager
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from api.limiter import limiter
 from api.db import get_conn, close_conn
 from api.routers import runs, assets, strategies, vibe, brain, analysis, optimize, download, pipeline, vibe_pipeline
+
+log = logging.getLogger("api")
 
 structlog.configure(
     processors=[
@@ -81,6 +86,16 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next) -> Response:
+    """Attach a UUID4 request ID to every request; propagate it in the response header."""
+    rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    response: Response = await call_next(request)
+    response.headers["X-Request-ID"] = rid
+    log.debug("request path=%s status=%s rid=%s", request.url.path, response.status_code, rid)
+    return response
 
 
 @app.get("/health")

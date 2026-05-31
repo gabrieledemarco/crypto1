@@ -3,7 +3,7 @@ import datetime
 import logging
 import pandas as pd
 
-log = logging.getLogger("ccxt_client")
+log = logging.getLogger(__name__)
 
 
 # Mapping from yfinance-style ticker to ccxt symbol
@@ -103,15 +103,13 @@ def fetch(ticker: str, period: str = "2y", interval: str = "1h",
 
             all_bars.extend(batch)
             last_ts = batch[-1][0]
-
-            # Guard: if exchange returns non-monotonic timestamps, stop to avoid infinite loop
+            # Guard against non-monotonic exchange responses (infinite-loop prevention)
             if last_ts <= cursor:
                 log.warning(
                     "ccxt non-monotonic timestamp for %s: last_ts=%s <= cursor=%s — stopping",
                     symbol, last_ts, cursor,
                 )
                 break
-
             cursor = last_ts + tf_ms
 
             # Fewer bars than limit means we've reached the end

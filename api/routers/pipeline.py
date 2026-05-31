@@ -42,7 +42,8 @@ for _p in (_ROOT, _SCRIPTS):
 
 from api.db import get_conn
 from api.strategies import get_archetype   # always available: COPY api/ ./api/
-from engine.config import ANN_FACTORS as _ANN_FACTORS_CFG
+from engine.safe_exec import safe_exec_strategy, CodeSecurityError
+from engine.config import ANN_FACTORS as _ANN_FACTORS
 
 router = APIRouter()
 _queues: dict[str, asyncio.Queue] = {}
@@ -51,8 +52,7 @@ _queues: dict[str, asyncio.Queue] = {}
 # stop_sharpe controls early exit; _ROBUST_MIN_SHARPE controls classification.
 _ROBUST_MIN_SHARPE = 1.5
 
-# Minimum number of closed trades required for a ROBUST verdict — prevents
-# Sharpe estimates based on noise (< 30 trades → huge statistical uncertainty).
+# Minimum number of closed trades required for a ROBUST verdict
 _MIN_TRADES_ROBUST = {
     "1m": 50, "5m": 40, "15m": 30, "30m": 25,
     "1h": 20, "4h": 12, "1d":  8,
@@ -70,9 +70,6 @@ _ACTIVE_HOURS = {
     "1m": [0, 23], "5m": [0, 23], "15m": [6, 22],
     "30m": [6, 22], "1h": [6, 22], "4h": [0, 22], "1d": [0, 23],
 }
-_ANN_FACTORS = _ANN_FACTORS_CFG  # imported from engine.config
-
-# Risk configurations cycled across pipeline iterations
 _RISK_GRID = [
     {"leverage": 1.0, "trailing_stop": False, "position_size_method": "risk_pct"},
     {"leverage": 2.0, "trailing_stop": False, "position_size_method": "risk_pct"},
@@ -358,12 +355,11 @@ def _run_iteration(ticker, tf, df, iteration, arch_name, sl, tp, risk_cfg: dict 
     }
 
     df_ind = compute_indicators_v2(df, fit_garch=True)
-    ns: dict = {}
     try:
-        exec(compile(code, "<agent_fn>", "exec"), ns)
+        ns = safe_exec_strategy(code, strategy_id="pipeline")
         if "agent_fn" in ns:
             config["agent_fn"] = ns["agent_fn"]
-    except Exception:
+    except (CodeSecurityError, RuntimeError):
         pass
 
     versions = run_versions(df_ind, config, direction=config["direction"])

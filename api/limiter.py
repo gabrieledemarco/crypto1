@@ -1,4 +1,4 @@
-"""Shared slowapi limiter instance — imported by main.py and routers."""
+"""Shared rate-limiter instance (slowapi). Import here to avoid circular deps."""
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 

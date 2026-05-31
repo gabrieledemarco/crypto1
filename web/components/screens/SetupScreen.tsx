@@ -77,6 +77,17 @@ export function SetupScreen() {
   const [savedFlash, setSavedFlash] = useState(false);
   const [runMetrics, setRunMetrics] = useState<Record<string, number> | null>(null);
   const [libSaved, setLibSaved] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  const validateParams = (p: Params): string | null => {
+    if (p.tp_mult <= p.sl_mult) return `TP mult (${p.tp_mult}) must be greater than SL mult (${p.sl_mult})`;
+    if (p.sl_mult < 0.5 || p.sl_mult > 20) return "SL mult must be between 0.5 and 20";
+    if (p.tp_mult < 0.5 || p.tp_mult > 40) return "TP mult must be between 0.5 and 40";
+    if (p.risk_per_trade <= 0 || p.risk_per_trade > 100) return "Risk per trade must be between 0 and 100%";
+    if (p.active_hours[0] >= p.active_hours[1]) return "Active hours start must be before end";
+    if (!p.ticker || !/^[A-Z0-9][A-Z0-9.\-]{0,19}$/.test(p.ticker)) return "Invalid ticker format";
+    return null;
+  };
 
   // Strips accidental double suffix and validates ticker format
   const normalizeTicker = (t: string): string => {
@@ -252,6 +263,9 @@ export function SetupScreen() {
 
   const handleRun = async () => {
     if (running) return;  // prevent double-submit
+    const err = validateParams(params);
+    if (err) { setValidationError(err); return; }
+    setValidationError(null);
     setRunning(true);
     setProgress({ phase: "start", pct: 0 });
     try {
@@ -561,6 +575,9 @@ export function SetupScreen() {
               <span className={styles.mono}>{(params.commission * 10000).toFixed(0)}bps · {(params.slippage * 10000).toFixed(0)}bps</span>
             </div>
 
+            {validationError && (
+              <div className={styles.validationError}>{validationError}</div>
+            )}
             <div className={styles.actionRow}>
               <button className={`${styles.btnPrimary} ${running ? styles.running : ""}`}
                 onClick={handleRun} disabled={running}>

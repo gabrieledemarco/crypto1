@@ -299,3 +299,11 @@
   text-align: right;
   padding-top: 2px;
 }
+
+.validationError {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--coral);
+  padding: 4px 0 2px;
+  margin-bottom: 4px;
+}

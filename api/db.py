@@ -6,21 +6,20 @@ import duckdb
 DB_PATH = os.environ.get("DUCKDB_PATH", "/tmp/pareto.db")
 _local = threading.local()
 _schema_lock = threading.Lock()
-_schema_done = False
+_schema_ready = threading.Event()  # set once schema init is fully committed
 
 # Schema version — bump when adding new migrations so deploys are visible in logs
 _SCHEMA_VERSION = "2"
 
 
 def get_conn() -> duckdb.DuckDBPyConnection:
-    global _schema_done
     if not hasattr(_local, 'conn') or _local.conn is None:
         _local.conn = duckdb.connect(DB_PATH)
-        if not _schema_done:
+        if not _schema_ready.is_set():
             with _schema_lock:
-                if not _schema_done:        # double-checked locking
+                if not _schema_ready.is_set():
                     _init_schema(_local.conn)
-                    _schema_done = True
+                    _schema_ready.set()   # signal only after commit inside _init_schema
     return _local.conn
 
 

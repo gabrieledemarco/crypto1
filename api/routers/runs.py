@@ -537,6 +537,37 @@ async def _run_backtest(run_id: str, params: dict):
         _sse_queues.pop(run_id, None)
 
 
+def _validate_bars(df) -> None:
+    """Raise ValueError if the OHLCV DataFrame has data quality issues."""
+    if df is None or (hasattr(df, "empty") and df.empty):
+        raise ValueError("No price data available")
+    if df["Close"].isna().any():
+        raise ValueError(f"NaN values in Close ({int(df['Close'].isna().sum())} rows)")
+    if (df["Close"] <= 0).any():
+        raise ValueError("Non-positive Close prices detected")
+    if (df["High"] < df["Low"]).any():
+        raise ValueError("Price reversal: High < Low in one or more rows")
+    dups = int(df.index.duplicated().sum())
+    if dups > 0:
+        raise ValueError(f"Duplicate timestamps: {dups} rows")
+
+
+def _load_strategy_agent_fn(strategy_id: str, push) -> object | None:
+    """Load and sandboxed-exec strategy code; return agent_fn or None."""
+    try:
+        from api.db import get_conn as _get_conn
+        from engine.safe_exec import safe_exec_strategy, CodeSecurityError
+        _row = _get_conn().execute(
+            "SELECT code FROM strategies WHERE id=?", [strategy_id]
+        ).fetchone()
+        if _row and _row[0] and _row[0].strip():
+            ns = safe_exec_strategy(_row[0], strategy_id=str(strategy_id))
+            return ns.get("agent_fn")
+    except Exception as _exc:
+        push("versions", 25, f"Strategy code load failed: {type(_exc).__name__}: {_exc}")
+    return None
+
+
 def _sync_backtest_pipeline(df, params: dict, push) -> dict:
     """CPU-bound portion — runs in thread pool."""
     import numpy as np
@@ -545,6 +576,9 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
     from engine.strategy_core import compute_indicators_v2, compute_metrics
     from engine.backtest import run_versions, run_wfo, run_optimization, INITIAL_CAPITAL
     from engine.montecarlo import run_bootstrap, run_stress
+
+    # Validate data quality before any computation
+    _validate_bars(df)
 
     push("indicators", 15, "computing GARCH indicators")
     df_ind = compute_indicators_v2(df, fit_garch=True)
@@ -569,24 +603,11 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
         "trailing_stop_value":  float(params.get("trailing_stop_value", 1.5)),
         "position_size_method": params.get("position_size_method", "risk_pct"),
     }
-    # Load and exec strategy code if this run is linked to a strategy
     strategy_id = params.get("_strategy_id")
     if strategy_id:
-        try:
-            from api.db import get_conn as _get_conn
-            from engine.safe_exec import safe_exec_strategy, CodeSecurityError
-            _conn = _get_conn()
-            _row = _conn.execute(
-                "SELECT code FROM strategies WHERE id=?", [strategy_id]
-            ).fetchone()
-            if _row and _row[0] and _row[0].strip():
-                _ns = safe_exec_strategy(_row[0], strategy_id=str(strategy_id))
-                if "agent_fn" in _ns:
-                    cfg["agent_fn"] = _ns["agent_fn"]
-        except CodeSecurityError as _exc:
-            push("versions", 25, f"Strategy code blocked by security policy: {_exc}")
-        except Exception as _exc:
-            push("versions", 25, f"Strategy code load failed: {_exc}")
+        agent_fn = _load_strategy_agent_fn(strategy_id, push)
+        if agent_fn:
+            cfg["agent_fn"] = agent_fn
     direction = params.get("direction", "ALL")
 
     versions = run_versions(df_ind, cfg, direction=direction, progress_cb=push)
