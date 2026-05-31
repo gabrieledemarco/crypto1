@@ -51,6 +51,7 @@ export function DashboardScreen() {
   const hasRealEquity = !!(equityQuery.data && equityQuery.data.length > 0);
   const showMonthlyWarning = !hasRealEquity && monthly.length > 0;
   const showDDWarning = !hasRealEquity && run?.ddPeriods && run.ddPeriods.length > 0;
+  const equityError = equityQuery.isError ? (equityQuery.error as Error)?.message ?? "Failed to load equity" : null;
 
   if (!run) return <div className={styles.empty}>No run selected</div>;
 
@@ -71,6 +72,8 @@ export function DashboardScreen() {
         <div className={styles.panelBody}>
           {equityQuery.isLoading && isRealRunId(activeRunId) ? (
             <div className={styles.skeletonChart} />
+          ) : equityError && isRealRunId(activeRunId) ? (
+            <div className={styles.apiError}>{equityError}</div>
           ) : (
             <EquityChart
               equity={equity}

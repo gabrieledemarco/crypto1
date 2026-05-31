@@ -8,6 +8,7 @@ GET  /assets                 → list available tickers
 """
 import json
 import sys, os
+import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from fastapi import APIRouter, HTTPException, Query
@@ -15,6 +16,10 @@ import pandas as pd
 import numpy as np
 from api.db import get_conn
 from api.models import AssetFetch
+
+# Simple TTL cache for quant stats (expensive: Hurst, ADF, GARCH)
+_QUANT_CACHE: dict[tuple, tuple] = {}  # key → (result, computed_at)
+_QUANT_TTL = 300  # seconds
 
 router = APIRouter()
 
@@ -209,6 +214,12 @@ def get_stats(ticker: str, interval: str = "1d"):
 @router.get("/{ticker}/quant")
 def get_quant_stats(ticker: str, interval: str = Query("1h")):
     """Return Hurst, stationarity, VaR/CVaR for a stored asset series."""
+    cache_key = (ticker, interval)
+    now = time.monotonic()
+    cached = _QUANT_CACHE.get(cache_key)
+    if cached and now - cached[1] < _QUANT_TTL:
+        return cached[0]
+
     from engine.quant_stats import compute_hurst, test_stationarity, compute_var_cvar, rolling_metrics
     conn = get_conn()
     try:
@@ -223,7 +234,7 @@ def get_quant_stats(ticker: str, interval: str = Query("1h")):
         raise HTTPException(status_code=404, detail=f"No data for {ticker}/{interval} (need ≥50 bars)")
     prices = np.array([r[0] for r in rows], dtype=float)
     rets = np.diff(np.log(prices[prices > 0]))
-    return {
+    result = {
         "ticker": ticker,
         "interval": interval,
         "n_bars": len(prices),
@@ -232,6 +243,8 @@ def get_quant_stats(ticker: str, interval: str = Query("1h")):
         "var_cvar": compute_var_cvar(rets),
         "rolling": rolling_metrics(prices),
     }
+    _QUANT_CACHE[cache_key] = (result, now)
+    return result
 
 
 @router.get("/{ticker}/garch-forecast")

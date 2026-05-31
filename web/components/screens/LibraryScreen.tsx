@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
@@ -92,8 +92,18 @@ export function LibraryScreen() {
   const queryClient = useQueryClient();
   const { data: apiLibrary } = useLibrary();
   const starMutation = useStarStrategy();
-  const { data: runList, isLoading: runsLoading } = useRunList(selectedEntry?.id);
   const deleteMutation = useDeleteRun();
+
+  // Debounce strategy selection to prevent N+1 query bursts when user clicks quickly
+  const [debouncedStrategyId, setDebouncedStrategyId] = useState<string | undefined>(selectedEntry?.id);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedStrategyId(selectedEntry?.id), 180);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [selectedEntry?.id]);
+
+  const { data: runList, isLoading: runsLoading } = useRunList(debouncedStrategyId);
   const displayRuns: RunListItem[] = runList ?? [];
 
   // Prefetch run list on hover so the panel opens instantly on click

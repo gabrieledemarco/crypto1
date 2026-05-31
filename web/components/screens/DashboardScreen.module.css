@@ -159,3 +159,10 @@
   border-radius: 2px;
   margin-bottom: 4px;
 }
+
+.apiError {
+  font-size: 10px;
+  color: var(--coral);
+  font-family: var(--font-mono);
+  padding: 6px 0;
+}

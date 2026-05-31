@@ -159,6 +159,10 @@ async def _run_pipeline(job_id: str, body: PipelineRequest):
         push({"type": "error", "msg": str(exc)})
     finally:
         hb.cancel()
+        try:
+            await asyncio.shield(asyncio.sleep(0))  # let cancel propagate
+        except asyncio.CancelledError:
+            pass
 
 
 # ── Sync worker ───────────────────────────────────────────────────────────────────────────────
