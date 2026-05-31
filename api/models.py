@@ -3,7 +3,11 @@ from typing import Any, Literal, Optional
 
 
 class RunParams(BaseModel):
-    ticker: str = Field("BTC-USD", min_length=1, max_length=20)
+    ticker: str = Field(
+        "BTC-USD",
+        min_length=1, max_length=20,
+        pattern=r"^[A-Z0-9][A-Z0-9\.\-]{0,19}$",
+    )
     timeframe: str = Field("1h", pattern=r"^(1m|5m|15m|30m|1h|4h|1d|1wk|1mo)$")
     sl_mult: float = Field(2.0, ge=0.5, le=10.0)
     tp_mult: float = Field(5.0, ge=1.0, le=20.0)
@@ -64,9 +68,13 @@ class RunParams(BaseModel):
 
 
 class RunCreate(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(None, max_length=120)
     params: RunParams = RunParams()
-    strategy_id: Optional[str] = None
+    strategy_id: Optional[str] = Field(
+        None,
+        pattern=r"^[0-9a-f]{8,64}$",
+        description="Hex strategy ID (8-64 chars)",
+    )
 
 
 class AssetFetch(BaseModel):

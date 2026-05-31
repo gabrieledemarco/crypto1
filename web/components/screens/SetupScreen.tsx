@@ -78,8 +78,11 @@ export function SetupScreen() {
   const [runMetrics, setRunMetrics] = useState<Record<string, number> | null>(null);
   const [libSaved, setLibSaved] = useState(false);
 
-  // Strips accidental double suffix: "BNB-USD-USD" → "BNB-USD"
-  const normalizeTicker = (t: string) => t.replace(/-USD-USD$/, "-USD").replace(/-USDT-USDT$/, "-USDT");
+  // Strips accidental double suffix and validates ticker format
+  const normalizeTicker = (t: string): string => {
+    const cleaned = t.replace(/-USD-USD$/, "-USD").replace(/-USDT-USDT$/, "-USDT").toUpperCase().trim();
+    return /^[A-Z0-9][A-Z0-9.\-]{0,19}$/.test(cleaned) ? cleaned : "BTC-USD";
+  };
 
   // Load pending params from Library "Re-run" (takes priority over localStorage)
   useEffect(() => {
@@ -248,6 +251,7 @@ export function SetupScreen() {
   });
 
   const handleRun = async () => {
+    if (running) return;  // prevent double-submit
     setRunning(true);
     setProgress({ phase: "start", pct: 0 });
     try {

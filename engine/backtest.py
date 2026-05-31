@@ -11,9 +11,11 @@ from .strategy_core import (
     generate_signals_v2, backtest_v2, compute_metrics, apply_garch_to_fold,
 )
 from .indicators import make_ind
-
-INITIAL_CAPITAL = 10_000
-HOURS_MONTH = 24 * 30
+from .config import (
+    INITIAL_CAPITAL, HOURS_MONTH, MAX_SWEEP_COMBOS,
+    SWEEP_SL_RANGE, SWEEP_TP_RANGE, SWEEP_HOUR_WINDOWS,
+    WFO_SL_GRID, WFO_TP_GRID,
+)
 
 
 def _apply_direction_filter(df: pd.DataFrame, direction: str = "ALL") -> pd.DataFrame:
@@ -107,8 +109,8 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
     return results
 
 
-_WFO_SL_GRID: list[float] = [1.5, 2.0, 2.5, 3.0]
-_WFO_TP_GRID: list[float] = [2.0, 3.0, 4.0, 5.0, 6.0]
+_WFO_SL_GRID = WFO_SL_GRID
+_WFO_TP_GRID = WFO_TP_GRID
 
 
 def _best_params_on_is(
@@ -269,12 +271,19 @@ def run_optimization(df_ind: pd.DataFrame, cfg: dict,
     lvg  = cfg.get("leverage", 1.0)
     cap  = float(cfg.get("initial_capital", INITIAL_CAPITAL))
 
-    SL_RANGE = [1.0, 1.5, 2.0, 2.5, 3.0]
-    TP_RANGE = [2.0, 3.0, 4.0, 5.0, 7.0]
-    HOUR_WINDOWS = [(6, 22), (8, 20), (0, 23)]
-
     rows = []
-    combos = [(sl, tp, h) for sl in SL_RANGE for tp in TP_RANGE for h in HOUR_WINDOWS if tp > sl]
+    combos = [
+        (sl, tp, h)
+        for sl in SWEEP_SL_RANGE
+        for tp in SWEEP_TP_RANGE
+        for h in SWEEP_HOUR_WINDOWS
+        if tp > sl
+    ]
+    if len(combos) > MAX_SWEEP_COMBOS:
+        raise ValueError(
+            f"Sweep grid too large ({len(combos)} combinations). "
+            "Reduce SWEEP_SL_RANGE, SWEEP_TP_RANGE, or SWEEP_HOUR_WINDOWS in engine/config.py."
+        )
     for idx, (sl, tp, h) in enumerate(combos):
         if progress_cb and idx % 5 == 0:
             progress_cb("sweep", int(idx / len(combos) * 100))

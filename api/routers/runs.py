@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from api.db import get_conn
 from api.limiter import limiter
 from api.models import RunCreate, RunParams
+from engine.config import ANN_FACTORS as _ANN_FACTORS, BACKTEST_TIMEOUT as _BACKTEST_TIMEOUT, BOOTSTRAP_N_RESAMPLES as _N_RESAMPLES, SSE_STREAM_TIMEOUT as _SSE_TIMEOUT
 
 router = APIRouter()
 log = logging.getLogger("runs")
@@ -44,17 +45,6 @@ def _safe_float(val, ndigits: int = 3):
         return round(f, ndigits)
     except (TypeError, ValueError):
         return None
-
-
-_ANN_FACTORS = {
-    "1m":  365 * 24 * 60,
-    "5m":  365 * 24 * 12,
-    "15m": 365 * 24 * 4,
-    "30m": 365 * 24 * 2,
-    "1h":  365 * 24,
-    "4h":  365 * 6,
-    "1d":  365,
-}
 
 
 def _infer_ann_factor(equity_data: list) -> int:
@@ -91,7 +81,12 @@ async def stream_run(run_id: str):
     async def generator():
         try:
             while True:
-                event = await queue.get()
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=_SSE_TIMEOUT)
+                except asyncio.TimeoutError:
+                    # Client still connected but backtest never finished — terminate gracefully
+                    yield f"data: {json.dumps({'phase': 'error', 'pct': 0, 'msg': 'stream timeout'})}\n\n"
+                    break
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("phase") in ("done", "error"):
                     break
@@ -133,10 +128,12 @@ def list_runs(
         best_m: dict = {}
         if metrics_str:
             all_m = json.loads(metrics_str)
-            best_key = "V_Agent" if "V_Agent" in all_m else "V4 +GARCH+Costi"
-            if best_key not in all_m and all_m:
-                best_key = next(iter(all_m))
-            best_m = all_m.get(best_key, {})
+            if isinstance(all_m, dict):
+                best_key = "V_Agent" if "V_Agent" in all_m else "V4 +GARCH+Costi"
+                if best_key not in all_m and all_m:
+                    best_key = next(iter(all_m))
+                candidate = all_m.get(best_key)
+                best_m = candidate if isinstance(candidate, dict) else {}
         # Derive date range from stored params or metrics rather than loading equity blob
         start_date = params.get("_start_date")
         end_date = params.get("_end_date")
@@ -302,11 +299,11 @@ def get_bootstrap_ci(run_id: str):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             bs_sharpe = sp_bootstrap(
-                (rets,), sharpe_fn, n_resamples=500, confidence_level=0.95,
+                (rets,), sharpe_fn, n_resamples=_N_RESAMPLES, confidence_level=0.95,
                 method="percentile", random_state=42
             )
             bs_cagr = sp_bootstrap(
-                (rets,), cagr_fn, n_resamples=500, confidence_level=0.95,
+                (rets,), cagr_fn, n_resamples=_N_RESAMPLES, confidence_level=0.95,
                 method="percentile", random_state=42
             )
         sharpe_ci = (float(bs_sharpe.confidence_interval.low), float(bs_sharpe.confidence_interval.high))
@@ -458,7 +455,6 @@ async def _run_backtest(run_id: str, params: dict):
         import concurrent.futures
         loop = asyncio.get_running_loop()
 
-        _BACKTEST_TIMEOUT = 300  # seconds; prevents runaway backtests
         with concurrent.futures.ThreadPoolExecutor() as pool:
             fut = loop.run_in_executor(pool, _sync_backtest_pipeline, df, params, push)
             try:

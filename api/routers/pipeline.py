@@ -42,6 +42,7 @@ for _p in (_ROOT, _SCRIPTS):
 
 from api.db import get_conn
 from api.strategies import get_archetype   # always available: COPY api/ ./api/
+from engine.config import ANN_FACTORS as _ANN_FACTORS_CFG
 
 router = APIRouter()
 _queues: dict[str, asyncio.Queue] = {}
@@ -69,10 +70,7 @@ _ACTIVE_HOURS = {
     "1m": [0, 23], "5m": [0, 23], "15m": [6, 22],
     "30m": [6, 22], "1h": [6, 22], "4h": [0, 22], "1d": [0, 23],
 }
-_ANN_FACTORS = {
-    "1m": 525600, "5m": 105120, "15m": 35040, "30m": 17520,
-    "1h": 8760, "4h": 2190, "1d": 365,
-}
+_ANN_FACTORS = _ANN_FACTORS_CFG  # imported from engine.config
 
 # Risk configurations cycled across pipeline iterations
 _RISK_GRID = [
@@ -159,6 +157,10 @@ async def _run_pipeline(job_id: str, body: PipelineRequest):
         push({"type": "error", "msg": str(exc)})
     finally:
         hb.cancel()
+        try:
+            await asyncio.shield(asyncio.sleep(0))  # let cancel propagate
+        except asyncio.CancelledError:
+            pass
 
 
 # ── Sync worker ───────────────────────────────────────────────────────────────────────────────

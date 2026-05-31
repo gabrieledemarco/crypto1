@@ -141,3 +141,5 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             except Exception as _e:
                 if "already exists" not in str(_e).lower():
                     raise
+    # Commit all DDL so other threads immediately see the final schema
+    conn.commit()
