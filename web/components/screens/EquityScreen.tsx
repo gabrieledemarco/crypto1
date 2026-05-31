@@ -8,6 +8,7 @@ import { EquityChart } from "@/components/charts/EquityChart";
 import { DrawdownChart } from "@/components/charts/DrawdownChart";
 import styles from "./EquityScreen.module.css";
 import type { EquityPoint } from "@/lib/fixtures";
+import type { RunMetrics as ApiRunMetrics } from "@/lib/api-types";
 
 // ---------------------------------------------------------------------------
 // Rolling Sharpe inline component
@@ -373,23 +374,21 @@ export function EquityScreen() {
     ],
   ];
 
-  // Resolve exit reason counts — metrics may carry extra keys not in the base type
-  type AnyMetrics = Record<string, unknown>;
-  const isAny = IS as unknown as AnyMetrics | undefined;
-  const oosAny = OOS as unknown as AnyMetrics | undefined;
-  const metricsAny = (run as unknown as { metrics?: AnyMetrics })?.metrics;
+  // Resolve exit reason counts — metrics may carry extra API keys (ApiRunMetrics) not in the fixture type
+  const metricsAny = (run as unknown as { metrics?: ApiRunMetrics })?.metrics;
+  const isApiMetrics = IS as unknown as ApiRunMetrics | undefined;
+  const oosApiMetrics = OOS as unknown as ApiRunMetrics | undefined;
 
-  const slHitsIS = isAny?.sl_hits as number | undefined;
-  const tpHitsIS = isAny?.tp_hits as number | undefined;
-  const slHitsOOS = oosAny?.sl_hits as number | undefined;
-  const tpHitsOOS = oosAny?.tp_hits as number | undefined;
+  const slHitsIS = isApiMetrics?.sl_hits;
+  const tpHitsIS = isApiMetrics?.tp_hits;
+  const slHitsOOS = oosApiMetrics?.sl_hits;
+  const tpHitsOOS = oosApiMetrics?.tp_hits;
   const nTradesIS =
-    (isAny?.n_trades as number | undefined) ??
-    (metricsAny?.n_trades as number | undefined) ??
+    isApiMetrics?.n_trades ??
+    metricsAny?.n_trades ??
     run?.tradesCount;
-  const nTradesOOS =
-    (oosAny?.n_trades as number | undefined) ??
-    (nTradesIS as number | undefined);
+  // OOS trade count comes only from OOS metrics — do NOT fall back to IS count
+  const nTradesOOS = oosApiMetrics?.n_trades;
 
   const showExitIS =
     slHitsIS != null && tpHitsIS != null && !!nTradesIS && nTradesIS > 0;

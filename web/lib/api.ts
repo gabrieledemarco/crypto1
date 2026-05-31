@@ -11,14 +11,11 @@ function extractDetail(errBody: unknown, fallback: string): string {
   const raw = body.detail ?? body.message;
   if (!raw) return fallback;
   if (typeof raw === "string") return raw;
-  if (Array.isArray(raw))
-    return raw
-      .map((d) =>
-        typeof d === "object" && d !== null
-          ? (d as Record<string, unknown>).msg ?? JSON.stringify(d)
-          : String(d)
-      )
-      .join("; ");
+  if (Array.isArray(raw)) {
+    const items = raw.slice(0, 3).map((d: Record<string, unknown>) => String(d?.msg ?? JSON.stringify(d)));
+    const extra = raw.length > 3 ? ` … (${raw.length - 3} more)` : "";
+    return items.join("; ") + extra;
+  }
   return String(raw);
 }
 

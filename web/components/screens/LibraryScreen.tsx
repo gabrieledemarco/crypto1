@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
@@ -96,11 +96,12 @@ export function LibraryScreen() {
 
   // Debounce strategy selection to prevent N+1 query bursts when user clicks quickly
   const [debouncedStrategyId, setDebouncedStrategyId] = useState<string | undefined>(selectedEntry?.id);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => setDebouncedStrategyId(selectedEntry?.id), 180);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    let mounted = true;
+    const timer = setTimeout(() => {
+      if (mounted) setDebouncedStrategyId(selectedEntry?.id);
+    }, 300);
+    return () => { mounted = false; clearTimeout(timer); };
   }, [selectedEntry?.id]);
 
   const { data: runList, isLoading: runsLoading } = useRunList(debouncedStrategyId);
@@ -121,8 +122,11 @@ export function LibraryScreen() {
     [queryClient]
   );
 
+  // apiLibrary has the same shape as LibraryEntry (both from useLibrary which is typed LibraryEntryApi[])
   const rawEntries: LibraryEntry[] =
-    apiLibrary && apiLibrary.length > 0 ? (apiLibrary as unknown as LibraryEntry[]) : fixtures.library;
+    apiLibrary && apiLibrary.length > 0
+      ? (apiLibrary as LibraryEntry[])
+      : fixtures.library;
 
   const enriched = useMemo<EnrichedEntry[]>(
     () => rawEntries.map(e => ({ ...e, _tf: extractTF(e), _asset: extractAsset(e), _method: extractMethod(e.strategy) })),

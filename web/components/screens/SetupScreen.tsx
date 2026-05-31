@@ -1,6 +1,7 @@
 "use client";
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
 import type { Run, RunMetrics } from "@/lib/fixtures";
@@ -255,20 +256,10 @@ export function SetupScreen() {
     setRunning(true);
     setProgress({ phase: "start", pct: 0 });
     try {
-      const res = await fetch("/api/runs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ params, strategy_id: activeStrategyId ?? undefined }),
+      const data = await api.post<{ id: string }>("/runs", {
+        params,
+        strategy_id: activeStrategyId ?? undefined,
       });
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-        const raw = errBody?.detail ?? `HTTP ${res.status}`;
-        const msg = Array.isArray(raw)
-          ? raw.map((d: Record<string, unknown>) => d?.msg ?? JSON.stringify(d)).join("; ")
-          : String(raw);
-        throw new Error(msg);
-      }
-      const data = await res.json();
       setRunId(data.id);
     } catch (e: unknown) {
       setRunning(false);

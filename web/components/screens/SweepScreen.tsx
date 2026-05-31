@@ -22,7 +22,7 @@ export function SweepScreen() {
   // Determine if we have API flat-array data or fixture grid data
   const apiRecords = useMemo<SweepRecord[] | null>(() => {
     if (sweepQuery.data && Array.isArray(sweepQuery.data) && sweepQuery.data.length > 0) {
-      const first = (sweepQuery.data as unknown[])[0];
+      const first = sweepQuery.data[0];
       if (first && typeof first === "object" && "sl_mult" in (first as object)) {
         return sweepQuery.data as SweepRecord[];
       }
