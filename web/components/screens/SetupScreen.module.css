@@ -220,6 +220,10 @@
   50% { opacity: 0.4; }
 }
 
+@keyframes bfSpin {
+  to { transform: rotate(360deg); }
+}
+
 .previewError {
   font-size: 10px;
   color: var(--coral);

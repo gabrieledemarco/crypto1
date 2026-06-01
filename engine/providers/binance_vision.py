@@ -69,7 +69,18 @@ def _parse_zip(raw: bytes) -> pd.DataFrame:
         io.BytesIO(csv_bytes), header=None, names=_CSV_COLS,
         dtype={"Open": float, "High": float, "Low": float, "Close": float, "Volume": float},
     )
-    df.index = pd.to_datetime(df["open_time"], unit="ms")
+    # Auto-detect timestamp unit by magnitude.
+    # Binance Vision files are supposed to be ms, but some have µs (1000× too large).
+    # Reasonable ms range for 2017-2030: 1.4e12 – 1.9e12
+    # Reasonable µs range for 2017-2030: 1.4e15 – 1.9e15
+    ts_sample = df["open_time"].iloc[0] if not df.empty else 0
+    if ts_sample >= 1e15:
+        unit = "us"
+    elif ts_sample >= 1e12:
+        unit = "ms"
+    else:
+        unit = "s"
+    df.index = pd.to_datetime(df["open_time"], unit=unit, utc=False).dt.tz_localize(None)
     df.index.name = None
     return df[["Open", "High", "Low", "Close", "Volume"]].dropna()
 
