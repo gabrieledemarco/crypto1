@@ -31,7 +31,8 @@ from api.limiter import limiter
 log = logging.getLogger("vibe_v2")
 router = APIRouter()
 
-_ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
+def _get_anthropic_key() -> str | None:
+    return os.getenv("ANTHROPIC_API_KEY")
 
 _MODEL_ORCHESTRATOR = "claude-opus-4-8"
 _MODEL_GENERATOR    = "claude-sonnet-4-6"
@@ -600,10 +601,11 @@ async def generate_v2(request: Request, body: VibeV2Request):
     """SSE endpoint: orchestrated 3-agent strategy generation pipeline."""
 
     async def event_stream():
-        if not _ANTHROPIC_KEY:
+        _key = _get_anthropic_key()
+        if not _key:
             yield f"data: {json.dumps({'phase': 'error', 'msg': '[ANTHROPIC_API_KEY not set — configure it in Railway environment variables]'})}\n\n"
             return
-        client = AsyncAnthropic(api_key=_ANTHROPIC_KEY)
+        client = AsyncAnthropic(api_key=_key)
         loop: AbstractEventLoop = asyncio.get_event_loop()
 
         def _sse(payload: dict) -> str:
