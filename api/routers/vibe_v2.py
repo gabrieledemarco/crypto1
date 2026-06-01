@@ -9,18 +9,16 @@ Agents:
 
 POST /vibe/generate-v2  -> SSE stream of phase events
 """
+import atexit
 import asyncio
 import json
 import logging
+import os
 import re
 import uuid
-from asyncio import AbstractEventLoop
 from concurrent.futures import ThreadPoolExecutor
-from typing import AsyncIterator
 
-import os
-
-from anthropic import AsyncAnthropic
+import anthropic as _anthropic
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -38,7 +36,8 @@ _MODEL_ORCHESTRATOR = "claude-opus-4-8"
 _MODEL_GENERATOR    = "claude-sonnet-4-6"
 _MODEL_EVALUATOR    = "claude-opus-4-8"
 
-_executor = ThreadPoolExecutor(max_workers=2)
+_executor = ThreadPoolExecutor(max_workers=4)
+atexit.register(_executor.shutdown, wait=False)
 
 MAX_ATTEMPTS = 3
 
@@ -301,17 +300,22 @@ def _extract_config(text: str) -> dict:
 # ── Agent callers ──────────────────────────────────────────────────────────────
 
 async def _call_orchestrator_brief(
-    context: str, client: AsyncAnthropic
+    context: str,
+    client: _anthropic.Anthropic,
+    loop: asyncio.AbstractEventLoop,
 ) -> tuple[str, dict]:
     """Call orchestrator to design strategy brief. Returns (raw_text, parsed_brief)."""
-    response = await client.messages.create(
-        model=_MODEL_ORCHESTRATOR,
-        max_tokens=1500,
-        system=ORCHESTRATOR_SYSTEM,
-        messages=[{
-            "role": "user",
-            "content": f"Analyze this market context and design a strategy brief:\n\n{context}",
-        }],
+    response = await loop.run_in_executor(
+        _executor,
+        lambda: client.messages.create(
+            model=_MODEL_ORCHESTRATOR,
+            max_tokens=1500,
+            system=ORCHESTRATOR_SYSTEM,
+            messages=[{
+                "role": "user",
+                "content": f"Analyze this market context and design a strategy brief:\n\n{context}",
+            }],
+        ),
     )
     raw = response.content[0].text
     brief = _extract_json_block(raw)
@@ -322,11 +326,12 @@ async def _stream_generator(
     brief: dict,
     context: str,
     attempt: int,
-    client: AsyncAnthropic,
-) -> AsyncIterator[tuple[str, str]]:
+    client: _anthropic.Anthropic,
+    loop: asyncio.AbstractEventLoop,
+):
     """
-    Stream generator output.
-    Yields (event_type, value): event_type='chunk' for text, 'done' with full text.
+    Stream generator output via queue (mirrors vibe.py pattern).
+    Yields (event_type, value): 'chunk' | 'error' | 'done'.
     """
     prompt = (
         f"Implement this strategy brief exactly:\n\n"
@@ -336,18 +341,37 @@ async def _stream_generator(
         f"Step 2 (JSON config), Step 3 (Python agent_fn)."
     )
 
-    full_text = ""
-    async with client.messages.stream(
-        model=_MODEL_GENERATOR,
-        max_tokens=3000,
-        system=GENERATOR_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
-    ) as stream:
-        async for chunk in stream.text_stream:
-            full_text += chunk
-            yield ("chunk", chunk)
+    queue: asyncio.Queue = asyncio.Queue()
 
-    yield ("done", full_text)
+    def _run_stream():
+        try:
+            with client.messages.stream(
+                model=_MODEL_GENERATOR,
+                max_tokens=3000,
+                system=GENERATOR_SYSTEM,
+                messages=[{"role": "user", "content": prompt}],
+            ) as stream:
+                for text in stream.text_stream:
+                    asyncio.run_coroutine_threadsafe(queue.put(("chunk", text)), loop)
+        except Exception as exc:
+            asyncio.run_coroutine_threadsafe(queue.put(("error", str(exc))), loop)
+        finally:
+            asyncio.run_coroutine_threadsafe(queue.put(("done", None)), loop)
+
+    loop.run_in_executor(_executor, _run_stream)
+
+    full_text = ""
+    while True:
+        kind, val = await queue.get()
+        if kind == "chunk":
+            full_text += val
+            yield ("chunk", val)
+        elif kind == "error":
+            yield ("error", val)
+            return
+        else:
+            yield ("done", full_text)
+            return
 
 
 async def _call_evaluator(
@@ -356,7 +380,8 @@ async def _call_evaluator(
     metrics: dict,
     context: str,
     brief: dict,
-    client: AsyncAnthropic,
+    client: _anthropic.Anthropic,
+    loop: asyncio.AbstractEventLoop,
 ) -> dict:
     """Call evaluator for deep assessment. Returns parsed evaluation dict."""
     is_m = metrics.get("is_metrics", {})
@@ -387,11 +412,14 @@ async def _call_evaluator(
         "Provide your expert evaluation as the required JSON."
     )
 
-    response = await client.messages.create(
-        model=_MODEL_EVALUATOR,
-        max_tokens=1200,
-        system=EVALUATOR_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
+    response = await loop.run_in_executor(
+        _executor,
+        lambda: client.messages.create(
+            model=_MODEL_EVALUATOR,
+            max_tokens=1200,
+            system=EVALUATOR_SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+        ),
     )
     raw = response.content[0].text
     return _extract_json_block(raw)
@@ -402,7 +430,8 @@ async def _call_orchestrator_synthesis(
     metrics: dict,
     evaluation: dict,
     attempt: int,
-    client: AsyncAnthropic,
+    client: _anthropic.Anthropic,
+    loop: asyncio.AbstractEventLoop,
 ) -> dict:
     """Call orchestrator Phase B to decide promote/iterate/reject."""
     is_m = metrics.get("is_metrics", {})
@@ -424,11 +453,14 @@ async def _call_orchestrator_synthesis(
         f"This was attempt {attempt}/{MAX_ATTEMPTS}. Decide: promote, iterate, or reject."
     )
 
-    response = await client.messages.create(
-        model=_MODEL_ORCHESTRATOR,
-        max_tokens=800,
-        system=ORCHESTRATOR_SYNTHESIS_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
+    response = await loop.run_in_executor(
+        _executor,
+        lambda: client.messages.create(
+            model=_MODEL_ORCHESTRATOR,
+            max_tokens=800,
+            system=ORCHESTRATOR_SYNTHESIS_SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+        ),
     )
     raw = response.content[0].text
     return _extract_json_block(raw)
@@ -549,7 +581,7 @@ async def _save_strategy(
     verdict: str,
 ) -> str:
     """Save promoted strategy to DB. Returns strategy_id."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _do_save() -> str:
         conn = get_conn()
@@ -590,6 +622,7 @@ async def _save_strategy(
         )
         return sid
 
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(_executor, _do_save)
 
 
@@ -600,13 +633,19 @@ async def _save_strategy(
 async def generate_v2(request: Request, body: VibeV2Request):
     """SSE endpoint: orchestrated 3-agent strategy generation pipeline."""
 
-    async def event_stream():
-        _key = _get_anthropic_key()
-        if not _key:
+    _key = _get_anthropic_key()
+    if not _key:
+        async def _no_key():
             yield f"data: {json.dumps({'phase': 'error', 'msg': '[ANTHROPIC_API_KEY not set — configure it in Railway environment variables]'})}\n\n"
-            return
-        client = AsyncAnthropic(api_key=_key)
-        loop: AbstractEventLoop = asyncio.get_event_loop()
+        return StreamingResponse(
+            _no_key(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    async def event_stream():
+        client = _anthropic.Anthropic(api_key=_key, timeout=60.0)
+        loop = asyncio.get_running_loop()
 
         def _sse(payload: dict) -> str:
             return f"data: {json.dumps(payload)}\n\n"
@@ -618,7 +657,7 @@ async def generate_v2(request: Request, body: VibeV2Request):
             # ── 2. Orchestrator: design brief ──────────────────────────────────
             yield _sse({"phase": "orchestrating", "pct": 10, "msg": "Analyzing market context..."})
 
-            brief_raw, brief = await _call_orchestrator_brief(context, client)
+            brief_raw, brief = await _call_orchestrator_brief(context, client, loop)
 
             # Stream orchestrator text as brief_chunk events
             for line in brief_raw.splitlines(keepends=True):
@@ -632,7 +671,6 @@ async def generate_v2(request: Request, body: VibeV2Request):
 
             # ── 3. Iteration loop ──────────────────────────────────────────────
             current_brief = brief
-            # Track best attempt so we can always save something at the end
             last_code: str = ""
             last_config: dict = {}
             last_bt_metrics: dict = {"is_metrics": {}, "oos_metrics": {}, "equity_sample": []}
@@ -650,7 +688,7 @@ async def generate_v2(request: Request, body: VibeV2Request):
                 # ── 3a. Stream generator ───────────────────────────────────────
                 full_generator_text = ""
                 async for event_type, value in _stream_generator(
-                    current_brief, context, attempt, client
+                    current_brief, context, attempt, client, loop
                 ):
                     if event_type == "chunk":
                         yield _sse({"phase": "code_chunk", "text": value})
@@ -698,7 +736,6 @@ async def generate_v2(request: Request, body: VibeV2Request):
                         body.period,
                     )
                     yield _sse({"phase": "backtest_result", "metrics": bt_metrics, "config": config})
-                    # Surface safe_exec / agent_fn load errors immediately
                     if bt_metrics.get("safe_exec_error"):
                         yield _sse({
                             "phase": "warn",
@@ -718,18 +755,16 @@ async def generate_v2(request: Request, body: VibeV2Request):
                         "msg": f"Backtest error: {str(exc)[:100]}",
                     })
 
-                # Track best attempt state
                 last_code = code
                 last_config = config
                 last_bt_metrics = bt_metrics
-
 
                 # ── 3c. Evaluator ──────────────────────────────────────────────
                 yield _sse({"phase": "evaluating", "pct": 75, "msg": "Expert evaluation..."})
 
                 try:
                     evaluation = await _call_evaluator(
-                        code, config, bt_metrics, context, current_brief, client
+                        code, config, bt_metrics, context, current_brief, client, loop
                     )
                 except Exception as exc:
                     log.warning("Evaluator failed (attempt %d): %s", attempt, exc)
@@ -750,7 +785,7 @@ async def generate_v2(request: Request, body: VibeV2Request):
                 # ── 3d. Orchestrator synthesis ─────────────────────────────────
                 try:
                     synthesis = await _call_orchestrator_synthesis(
-                        current_brief, bt_metrics, evaluation, attempt, client
+                        current_brief, bt_metrics, evaluation, attempt, client, loop
                     )
                 except Exception as exc:
                     log.warning("Synthesis failed (attempt %d): %s", attempt, exc)
@@ -780,9 +815,7 @@ async def generate_v2(request: Request, body: VibeV2Request):
                         log.warning("DB save failed: %s", exc)
 
                     is_m = bt_metrics.get("is_metrics", {})
-                    sharpe = float(
-                        is_m.get("sharpe_ratio", is_m.get("sharpe", 0)) or 0
-                    )
+                    sharpe = float(is_m.get("sharpe_ratio", is_m.get("sharpe", 0)) or 0)
                     yield _sse({
                         "phase": "done",
                         "pct": 100,
@@ -795,7 +828,6 @@ async def generate_v2(request: Request, body: VibeV2Request):
                     return
 
                 elif decision == "reject":
-                    # Save as research (rejected) and return done rather than error
                     sid = None
                     try:
                         sid = await _save_strategy(
@@ -837,9 +869,7 @@ async def generate_v2(request: Request, body: VibeV2Request):
                             "phase": "iteration",
                             "attempt": attempt + 1,
                             "pct": 35,
-                            "msg": (
-                                f"Refining strategy (attempt {attempt + 1}/{MAX_ATTEMPTS})..."
-                            ),
+                            "msg": f"Refining strategy (attempt {attempt + 1}/{MAX_ATTEMPTS})...",
                         })
 
             # All attempts exhausted — save best result as research grade
@@ -865,12 +895,19 @@ async def generate_v2(request: Request, body: VibeV2Request):
                 "note": f"Research grade — best of {MAX_ATTEMPTS} attempts (promote threshold not met)",
             })
 
+        except asyncio.TimeoutError:
+            yield _sse({"phase": "error", "msg": "Pipeline timeout after 5 minutes"})
         except Exception as exc:
             log.exception("vibe-v2 pipeline error")
             yield _sse({"phase": "error", "msg": str(exc)[:200]})
 
+    async def _stream_with_timeout():
+        async with asyncio.timeout(300):  # 5 min hard limit (mirrors vibe.py pattern)
+            async for chunk in event_stream():
+                yield chunk
+
     return StreamingResponse(
-        event_stream(),
+        _stream_with_timeout(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
