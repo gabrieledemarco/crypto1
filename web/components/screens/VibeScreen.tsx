@@ -216,9 +216,9 @@ export function VibeScreen() {
       });
     }
     if (d.phase === 'backtest_result' && d.metrics) {
-      const m = d.metrics as Record<string, Record<string, unknown>>;
-      const isMetrics = (m.is_metrics ?? {}) as Record<string, unknown>;
-      const oosMetrics = (m.oos_metrics ?? {}) as Record<string, unknown>;
+      const m = d.metrics as Record<string, unknown>;
+      const isMetrics = ((m.is_metrics ?? {}) as Record<string, unknown>);
+      const oosMetrics = ((m.oos_metrics ?? {}) as Record<string, unknown>);
       const id = ++detailIdRef.current;
       setDetailLog(prev => [...prev, {
         id,
