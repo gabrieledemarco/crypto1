@@ -174,6 +174,7 @@ export interface VibeV2Progress {
   text?: string;
   brief?: StrategyBrief;
   metrics?: Record<string, unknown>;
+  config?: Record<string, unknown>;
   result?: StrategyEvaluation;
   verdict?: string;
   attempt?: number;

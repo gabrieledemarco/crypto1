@@ -5,7 +5,7 @@ import { useAssets } from "@/hooks/useAssets";
 import { StrategyBrief, StrategyEvaluation, VibeV2Progress } from "@/lib/api-types";
 import { EvaluationCard } from "./EvaluationCard";
 import { AgentWorkflow } from "./AgentWorkflow";
-import { AgentLog, LogEntry, LogAgent } from "./AgentLog";
+import { AgentDetailLog, DetailEntry } from "./AgentDetailLog";
 import styles from "./VibeScreen.module.css";
 
 const FALLBACK_ASSETS = ["BTC-USD", "ETH-USD", "SOL-USD", "ARB-USD", "OP-USD", "AVAX-USD"];
@@ -96,14 +96,16 @@ export function VibeScreen() {
   const [v2Evaluation, setV2Evaluation] = useState<StrategyEvaluation | null>(null);
   const [v2Verdict, setV2Verdict] = useState<string>('');
 
-  // Agent pipeline log
-  const [agentLog, setAgentLog] = useState<LogEntry[]>([]);
-  const logIdRef = useRef(0);
+  // Agent detail log state
+  const [detailLog, setDetailLog] = useState<DetailEntry[]>([]);
+  const detailIdRef = useRef(0);
+  const orchestratorCardId = useRef(-1);
+  const generatorCardId = useRef(-1);
+  const briefAccum = useRef("");
+  const codeAccum = useRef("");
 
-  const addLog = (agent: LogAgent, text: string, type: LogEntry["type"] = "msg") => {
-    const id = ++logIdRef.current;
-    setAgentLog(prev => [...prev, { id, ts: Date.now(), agent, text, type }]);
-  };
+  const patchDetail = (id: number, updates: Partial<DetailEntry>) =>
+    setDetailLog(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
 
   // Saved strategies for "load previous"
   const [strategies, setStrategies] = useState<SavedStrategy[]>([]);
@@ -156,103 +158,148 @@ export function VibeScreen() {
 
     if (d.phase === 'orchestrating') {
       setV2Phase('Orchestrating...');
-      addLog('ORCHESTRATOR', `Analyzing ${asset} ${timeframe} market context…`);
+      const id = ++detailIdRef.current;
+      orchestratorCardId.current = id;
+      briefAccum.current = "";
+      setDetailLog(prev => [...prev, {
+        id,
+        ts: Date.now(),
+        agent: "ORCHESTRATOR",
+        model: "claude-opus-4-8",
+        status: "streaming",
+        inputSummary: `${asset} ${timeframe}`,
+      }]);
     }
     if (d.phase === 'brief_chunk') {
       setText(prev => prev + (d.text ?? ''));
+      briefAccum.current += d.text ?? '';
     }
     if (d.phase === 'brief_done' && d.brief) {
       setV2Brief(d.brief);
-      const b = d.brief;
-      addLog('ORCHESTRATOR', `Brief: ${b.strategy_type} | confidence: ${b.confidence}`, 'data');
-      addLog('ORCHESTRATOR', `Edge: ${b.edge_hypothesis}`);
-      addLog('ORCHESTRATOR', `Entry: ${b.entry_logic}`);
-      if (b.recommended_indicators?.length) {
-        addLog('ORCHESTRATOR', `Indicators: ${b.recommended_indicators.join(', ')}`, 'data');
-      }
+      patchDetail(orchestratorCardId.current, {
+        status: "done",
+        brief: d.brief,
+        fullText: briefAccum.current,
+      });
     }
     if (d.phase === 'generating') {
       const att = d.attempt ?? 1;
       setV2Phase(`Generating strategy (attempt ${att}/3)...`);
       setV2Attempt(att);
-      addLog('GENERATOR', `Writing strategy code (attempt ${att}/3)…`);
+      const id = ++detailIdRef.current;
+      generatorCardId.current = id;
+      codeAccum.current = "";
+      setDetailLog(prev => [...prev, {
+        id,
+        ts: Date.now(),
+        agent: "GENERATOR",
+        model: "claude-sonnet-4-6",
+        attempt: att,
+        status: "streaming",
+        inputSummary: `implementing brief (attempt ${att}/3)`,
+      }]);
     }
     if (d.phase === 'code_chunk') {
       setText(prev => prev + (d.text ?? ''));
+      codeAccum.current += d.text ?? '';
     }
     if (d.phase === 'backtesting') {
       setV2Phase('Running backtest...');
       setText('');
-      addLog('ENGINE', 'Running in-sample + OOS backtest…');
+      // Finalize generator card with extracted code
+      const codeMatch = codeAccum.current.match(/```python\s*([\s\S]*?)```/);
+      const extractedCode = codeMatch ? codeMatch[1].trim() : undefined;
+      patchDetail(generatorCardId.current, {
+        status: "done",
+        code: extractedCode,
+        fullText: codeAccum.current,
+      });
     }
     if (d.phase === 'backtest_result' && d.metrics) {
-      const m = d.metrics as Record<string, Record<string, number>>;
-      const is = m.is_metrics ?? {};
-      const sharpe = is.sharpe_ratio ?? is.sharpe;
-      const dd = is.max_drawdown_pct ?? is.max_dd;
-      const n = is.n_trades;
-      const wr = is.win_rate_pct;
-      const ver = (m as Record<string, unknown>).best_version as string | undefined;
-      const fmt = (v: number | undefined, dec: number) =>
-        v !== undefined ? v.toFixed(dec) : 'N/A';
-      addLog('ENGINE',
-        `IS Sharpe: ${fmt(sharpe, 3)} | DD: ${fmt(dd, 1)}% | Trades: ${n ?? 'N/A'} | Win: ${fmt(wr, 1)}%${ver ? ` | ${ver}` : ''}`,
-        'data',
-      );
+      const m = d.metrics as Record<string, Record<string, unknown>>;
+      const isMetrics = (m.is_metrics ?? {}) as Record<string, unknown>;
+      const oosMetrics = (m.oos_metrics ?? {}) as Record<string, unknown>;
+      const id = ++detailIdRef.current;
+      setDetailLog(prev => [...prev, {
+        id,
+        ts: Date.now(),
+        agent: "ENGINE",
+        model: "backtest-engine",
+        status: (d as VibeV2Progress & { safe_exec_error?: string }).safe_exec_error
+          || !m.agent_fn_loaded ? "warn" : "done",
+        inputSummary: "running IS + OOS backtest",
+        isMetrics,
+        oosMetrics,
+        bestVersion: m.best_version as string | undefined,
+        agentFnLoaded: m.agent_fn_loaded as boolean | undefined,
+        config: d.config,
+        note: m.safe_exec_error as string | undefined,
+      }]);
     }
     if (d.phase === 'evaluating') {
       setV2Phase('Expert evaluation...');
-      addLog('EVALUATOR', 'Scoring strategy across 6 dimensions…');
     }
     if (d.phase === 'evaluation' && d.result) {
       setV2Evaluation(d.result);
-      const ev = d.result;
-      const sc = ev.scores ?? {};
-      addLog('EVALUATOR',
-        `Score: ${ev.overall_score?.toFixed(1) ?? 'N/A'}/5 | verdict: ${ev.verdict?.toUpperCase() ?? '?'}`,
-        'data',
-      );
-      const abbr: Record<string, string> = {
-        alpha_source: 'Alpha', signal_logic: 'Signal', risk_management: 'Risk',
-        regime_sensitivity: 'Regime', statistical_robustness: 'Stats',
-        implementation_quality: 'Impl',
-      };
-      const scoreStr = Object.entries(sc)
-        .map(([k, v]) => `${abbr[k] ?? k}:${v}`)
-        .join(' · ');
-      if (scoreStr) addLog('EVALUATOR', scoreStr, 'data');
-      if (ev.verdict_rationale) addLog('EVALUATOR', ev.verdict_rationale);
-      ev.weaknesses?.slice(0, 2).forEach(w => addLog('EVALUATOR', `⚠ ${w}`));
-      ev.fatal_flaws?.slice(0, 2).forEach(f => addLog('EVALUATOR', `✗ FATAL: ${f}`, 'error'));
+      const id = ++detailIdRef.current;
+      setDetailLog(prev => [...prev, {
+        id,
+        ts: Date.now(),
+        agent: "EVALUATOR",
+        model: "claude-opus-4-8",
+        status: "done",
+        inputSummary: "scoring code + backtest metrics",
+        evaluation: d.result,
+      }]);
     }
     if (d.phase === 'decision') {
       setV2Verdict(d.verdict ?? '');
       setV2Phase(d.msg ?? '');
-      addLog('DECISION', `→ ${(d.verdict ?? 'unknown').toUpperCase()}${d.msg ? `: ${d.msg}` : ''}`);
+      const id = ++detailIdRef.current;
+      setDetailLog(prev => [...prev, {
+        id,
+        ts: Date.now(),
+        agent: "DECISION",
+        model: "claude-opus-4-8",
+        status: "done",
+        inputSummary: "reviewing brief + metrics + evaluation",
+        verdict: d.verdict,
+        rationale: d.msg,
+      }]);
     }
     if (d.phase === 'iteration') {
       setV2Phase(`Refining strategy (attempt ${d.attempt}/3)...`);
       setV2Brief(null);
       setV2Evaluation(null);
       setText('');
-      addLog('SYSTEM', `Refining brief for attempt ${d.attempt}…`);
     }
     if (d.phase === 'done') {
       setGenerating(false);
       setV2Phase(d.note ? 'Done (research)' : 'Complete');
-      addLog('SYSTEM',
-        `${d.note ? '◎ SAVED' : '✓ PROMOTED'}${d.sharpe !== undefined ? ` — Sharpe: ${d.sharpe.toFixed(3)}` : ''}${d.overall_score !== undefined ? ` | Score: ${d.overall_score.toFixed(1)}/5` : ''}${d.name ? ` | ${d.name}` : ''}${d.note ? `\n  ${d.note}` : ''}`,
-        'data',
-      );
     }
     if (d.phase === 'warn') {
-      addLog('SYSTEM', `⚠ ${d.msg ?? 'warning'}`, 'error');
+      // Patch last card with warn status and note
+      setDetailLog(prev => {
+        if (prev.length === 0) return prev;
+        const last = prev[prev.length - 1];
+        return prev.map(e => e.id === last.id
+          ? { ...e, status: "warn" as const, note: d.msg ?? "warning" }
+          : e
+        );
+      });
     }
     if (d.phase === 'error') {
       setGenerating(false);
       setV2Phase('Error');
       setText(prev => prev + `\n\n[Error: ${d.msg ?? 'generation failed'}]`);
-      addLog('SYSTEM', `✗ ${d.msg ?? 'generation failed'}`, 'error');
+      setDetailLog(prev => {
+        if (prev.length === 0) return prev;
+        const last = prev[prev.length - 1];
+        return prev.map(e => e.id === last.id
+          ? { ...e, status: "error" as const, note: d.msg ?? "generation failed" }
+          : e
+        );
+      });
     }
   };
 
@@ -273,8 +320,12 @@ export function VibeScreen() {
     setV2Brief(null);
     setV2Evaluation(null);
     setV2Verdict('');
-    setAgentLog([]);
-    logIdRef.current = 0;
+    setDetailLog([]);
+    detailIdRef.current = 0;
+    orchestratorCardId.current = -1;
+    generatorCardId.current = -1;
+    briefAccum.current = "";
+    codeAccum.current = "";
 
     const enc = encodeURIComponent(asset);
     const [assetStats, quantAnalysis, garchForecast] = await Promise.all([
@@ -444,6 +495,9 @@ export function VibeScreen() {
     if (key === "risk_per_trade" && typeof val === "number") return `${val}%`;
     return String(val);
   };
+
+  // Suppress unused variable warnings for v2RawPhase (kept for future use)
+  void v2RawPhase;
 
   return (
     <div className={styles.grid}>
@@ -782,11 +836,11 @@ export function VibeScreen() {
         />
       </div>
 
-      {/* Pipeline Log — always shown, populated only in Enhanced Mode */}
+      {/* Agent Detail Log — always visible */}
       <div style={{ gridColumn: "span 12" }}>
-        <AgentLog
-          entries={agentLog}
-          onClear={() => { setAgentLog([]); logIdRef.current = 0; }}
+        <AgentDetailLog
+          entries={detailLog}
+          onClear={() => { setDetailLog([]); detailIdRef.current = 0; }}
         />
       </div>
     </div>
