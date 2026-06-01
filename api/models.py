@@ -92,6 +92,13 @@ class StrategyCreate(BaseModel):
     status: str = "research"
 
 
+class BackfillRequest(BaseModel):
+    ticker: str = Field(..., min_length=1, max_length=20)
+    start_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    end_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    interval: str = Field("1h", pattern=r"^(1m|5m|15m|30m|1h|4h|1d)$")
+
+
 class VibeGenerateRequest(BaseModel):
     prompt: str = ""
     asset: str = "BTC-USD"

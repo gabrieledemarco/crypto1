@@ -190,6 +190,17 @@ export function AssetsScreen() {
   const searchRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // ── Backfill state ──────────────────────────────────────────────────────────
+  const [showBackfill, setShowBackfill] = useState(false);
+  const [bfInterval, setBfInterval] = useState<string>("1h");
+  const today = new Date().toISOString().slice(0, 10);
+  const fiveYearsAgo = `${new Date().getFullYear() - 5}-01-01`;
+  const [bfStart, setBfStart] = useState<string>(fiveYearsAgo);
+  const [bfEnd, setBfEnd] = useState<string>(today);
+  const [bfJobId, setBfJobId] = useState<string | null>(null);
+  const [bfRunning, setBfRunning] = useState(false);
+  const [bfMsg, setBfMsg] = useState<string | null>(null);
+
   // Close dropdown on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -319,6 +330,50 @@ export function AssetsScreen() {
     }
   };
 
+  // ── Backfill SSE ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!bfJobId) return;
+    const es = new EventSource(`/api/assets/backfill/${bfJobId}/stream`);
+    es.onmessage = (e) => {
+      try {
+        const ev = JSON.parse(e.data) as { phase: string; msg: string };
+        setBfMsg(ev.msg);
+        if (ev.phase === "done" || ev.phase === "error") {
+          setBfRunning(false);
+          setBfJobId(null);
+          es.close();
+          if (ev.phase === "done") qc.invalidateQueries({ queryKey: ["assets"] });
+        }
+      } catch {}
+    };
+    es.onerror = () => { setBfRunning(false); setBfJobId(null); es.close(); };
+    return () => es.close();
+  }, [bfJobId, qc]);
+
+  const handleBackfill = async () => {
+    if (!fetchTicker || bfRunning) return;
+    setBfRunning(true);
+    setBfMsg(`Avviando backfill ${fetchTicker}…`);
+    try {
+      const res = await fetch("/api/assets/backfill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: fetchTicker, start_date: bfStart, end_date: bfEnd, interval: bfInterval }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "errore API" }));
+        setBfMsg(`Errore: ${err.detail ?? "API non raggiungibile"}`);
+        setBfRunning(false);
+        return;
+      }
+      const { job_id } = await res.json() as { job_id: string };
+      setBfJobId(job_id);
+    } catch {
+      setBfMsg("Errore: API non raggiungibile");
+      setBfRunning(false);
+    }
+  };
+
   const selectTicker = (t: string) => {
     setFetchTicker(t);
     setSearchVal(t);
@@ -442,18 +497,79 @@ export function AssetsScreen() {
                   })}
             </div>
 
-            {/* Fetch form */}
+            {/* Fetch / Backfill section */}
             <div className={styles.fetchSection}>
-              {!showFetch ? (
-                <button
-                  className={styles.btnFetch}
-                  onClick={() => {
-                    setShowFetch(true);
-                    setTimeout(() => inputRef.current?.focus(), 50);
-                  }}
-                >
-                  + FETCH
-                </button>
+              {!showFetch && !showBackfill ? (
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button className={styles.btnFetch} onClick={() => { setShowFetch(true); setTimeout(() => inputRef.current?.focus(), 50); }}>+ FETCH</button>
+                  <button className={styles.btnFetch} style={{ background: "rgba(92,193,255,0.08)", borderColor: "var(--cyan)" }}
+                    onClick={() => { setShowBackfill(true); setTimeout(() => inputRef.current?.focus(), 50); }}>
+                    ⬇ BACKFILL
+                  </button>
+                </div>
+              ) : showBackfill ? (
+                <div className={styles.fetchForm}>
+                  <div className={styles.label}>BACKFILL STORICO M1</div>
+                  <div className={styles.label} style={{ color: "var(--faint)", marginTop: -4 }}>
+                    Download profondo via Binance Vision / Dukascopy / Alpaca
+                  </div>
+
+                  {/* Ticker search (same as FETCH) */}
+                  <div className={styles.label} style={{ marginTop: 4 }}>ASSET</div>
+                  <div className={styles.searchWrap} ref={searchRef}>
+                    <input ref={inputRef} className={styles.searchInput}
+                      placeholder="es. BTC-USD, AAPL, EURUSD…"
+                      value={searchVal} autoComplete="off" spellCheck={false}
+                      onChange={(e) => { setSearchVal(e.target.value.toUpperCase()); setFetchTicker(""); setDropOpen(true); }}
+                      onFocus={() => setDropOpen(true)}
+                      onKeyDown={(e) => { if (e.key === "Escape") setDropOpen(false); if (e.key === "Enter" && suggestions.length > 0) selectTicker(suggestions[0]); }}
+                    />
+                    {dropOpen && suggestions.length > 0 && (
+                      <div className={styles.dropdown} role="listbox">
+                        {suggestions.map((t) => (
+                          <button key={t} className={`${styles.dropItem} ${fetchTicker === t ? styles.dropItemActive : ""}`}
+                            onMouseDown={(e) => { e.preventDefault(); selectTicker(t); }}>{t}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Date range */}
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
+                    <div style={{ flex: 1 }}>
+                      <div className={styles.label}>DA</div>
+                      <input type="date" className={styles.searchInput} value={bfStart} onChange={(e) => setBfStart(e.target.value)} style={{ width: "100%", colorScheme: "dark" }} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div className={styles.label}>A</div>
+                      <input type="date" className={styles.searchInput} value={bfEnd} onChange={(e) => setBfEnd(e.target.value)} style={{ width: "100%", colorScheme: "dark" }} />
+                    </div>
+                  </div>
+
+                  {/* Timeframe pills */}
+                  <div className={styles.label} style={{ marginTop: 4 }}>TIMEFRAME TARGET</div>
+                  <div className={styles.periodPills}>
+                    {(["1m","5m","15m","1h","4h","1d"] as const).map((tf) => (
+                      <button key={tf} className={`${styles.pill} ${bfInterval === tf ? styles.pillActive : ""}`}
+                        onClick={() => setBfInterval(tf)}>{tf}</button>
+                    ))}
+                  </div>
+
+                  {bfMsg && (
+                    <div className={styles.fetchMsg} style={{ color: bfMsg.startsWith("✓") ? "var(--green)" : bfMsg.startsWith("Errore") ? "var(--coral)" : "var(--amber)" }}>
+                      {bfMsg}
+                    </div>
+                  )}
+
+                  <div className={styles.fetchActions}>
+                    <button className={styles.btnFetch} onClick={handleBackfill} disabled={bfRunning || !fetchTicker}>
+                      {bfRunning ? "SCARICANDO…" : `BACKFILL${fetchTicker ? ` ${fetchTicker}` : ""}`}
+                    </button>
+                    <button className={styles.btnCancel} onClick={() => { setShowBackfill(false); setBfMsg(null); setFetchTicker(""); setSearchVal(""); }}>
+                      CANCEL
+                    </button>
+                  </div>
+                </div>
               ) : (
                 <div className={styles.fetchForm}>
                   <div className={styles.label}>CERCA TICKER</div>
