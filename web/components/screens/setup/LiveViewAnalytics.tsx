@@ -166,9 +166,18 @@ export function LiveViewAnalytics({ activeStrategyId, ticker, timeframe, preview
   }, [runs, query, assetFilter, tfFilter, outcomeFilter, sortKey, sortDir]);
 
   useEffect(() => {
-    if (selectedIds.length > 0 || filteredRuns.length === 0) return;
-    setSelectedIds(filteredRuns.slice(0, 4).map((r) => r.id));
-  }, [filteredRuns, selectedIds.length]);
+    if (filteredRuns.length === 0) {
+      if (selectedIds.length > 0) setSelectedIds([]);
+      return;
+    }
+    const visibleIds = new Set(filteredRuns.map((r) => r.id));
+    const stillVisible = selectedIds.filter((id) => visibleIds.has(id));
+    if (stillVisible.length !== selectedIds.length) {
+      setSelectedIds(stillVisible);
+      return;
+    }
+    if (selectedIds.length === 0) setSelectedIds(filteredRuns.slice(0, 4).map((r) => r.id));
+  }, [filteredRuns, selectedIds]);
 
   const selectedRuns = useMemo(() => {
     const set = new Set(selectedIds);

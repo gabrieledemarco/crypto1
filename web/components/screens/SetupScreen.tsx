@@ -631,7 +631,7 @@ export function SetupScreen() {
             previewEquity={previewEquity}
             previewLoading={previewLoading}
             previewError={previewError}
-            fallbackRuns={runs}
+            fallbackRuns={runs.length > 0 ? runs : fixtures.runs}
           />
         </div>
       </div>
@@ -655,4 +655,3 @@ function SliderRow({ label, min, max, step, value, onChange, valueLabel }: {
     </div>
   );
 }
-

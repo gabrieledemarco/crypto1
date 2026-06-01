@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { createChart, IChartApi, LineStyle, Time } from "lightweight-charts";
+import { createChart, LineStyle, Time } from "lightweight-charts";
 import { api } from "@/lib/api";
 import type { ApiEquityPoint } from "@/lib/api-types";
 
@@ -34,8 +34,6 @@ function normalizeEquity(points: ApiEquityPoint[]) {
 
 export function MultiEquityChart({ runs, height = 260 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-
   const queries = useQueries({
     queries: runs.map((run) => ({
       queryKey: ["run-equity", run.id],
@@ -111,7 +109,6 @@ export function MultiEquityChart({ runs, height = 260 }: Props) {
     }
 
     chart.timeScale().fitContent();
-    chartRef.current = chart;
     return () => chart.remove();
   }, [series, average, height]);
 
