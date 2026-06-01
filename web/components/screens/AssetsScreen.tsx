@@ -199,7 +199,9 @@ export function AssetsScreen() {
   const [bfEnd, setBfEnd] = useState<string>(today);
   const [bfJobId, setBfJobId] = useState<string | null>(null);
   const [bfRunning, setBfRunning] = useState(false);
-  const [bfMsg, setBfMsg] = useState<string | null>(null);
+  const [bfLog, setBfLog] = useState<{ ts: string; msg: string; phase: string }[]>([]);
+  const [bfPct, setBfPct] = useState(0);
+  const bfLogRef = useRef<HTMLDivElement>(null);
   const [repairing, setRepairing] = useState(false);
   const [repairMsg, setRepairMsg] = useState<string | null>(null);
 
@@ -351,8 +353,10 @@ export function AssetsScreen() {
     const es = new EventSource(`/api/assets/backfill/${bfJobId}/stream`);
     es.onmessage = (e) => {
       try {
-        const ev = JSON.parse(e.data) as { phase: string; msg: string };
-        setBfMsg(ev.msg);
+        const ev = JSON.parse(e.data) as { phase: string; pct?: number; msg: string };
+        const ts = new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        setBfLog(prev => [...prev, { ts, msg: ev.msg, phase: ev.phase }]);
+        if (ev.pct !== undefined) setBfPct(ev.pct);
         if (ev.phase === "done" || ev.phase === "error") {
           setBfRunning(false);
           setBfJobId(null);
@@ -361,14 +365,28 @@ export function AssetsScreen() {
         }
       } catch {}
     };
-    es.onerror = () => { setBfRunning(false); setBfJobId(null); es.close(); };
+    es.onerror = () => {
+      const ts = new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      setBfLog(prev => [...prev, { ts, msg: "Connessione SSE persa", phase: "error" }]);
+      setBfRunning(false);
+      setBfJobId(null);
+      es.close();
+    };
     return () => es.close();
   }, [bfJobId, qc]);
+
+  // Auto-scroll log to bottom
+  useEffect(() => {
+    if (bfLogRef.current) {
+      bfLogRef.current.scrollTop = bfLogRef.current.scrollHeight;
+    }
+  }, [bfLog]);
 
   const handleBackfill = async () => {
     if (!fetchTicker || bfRunning) return;
     setBfRunning(true);
-    setBfMsg(`Avviando backfill ${fetchTicker}…`);
+    setBfLog([]);
+    setBfPct(0);
     try {
       const res = await fetch("/api/assets/backfill", {
         method: "POST",
@@ -377,14 +395,17 @@ export function AssetsScreen() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: "errore API" }));
-        setBfMsg(`Errore: ${err.detail ?? "API non raggiungibile"}`);
+        const msg = `Errore: ${err.detail ?? "API non raggiungibile"}`;
+        const ts = new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        setBfLog([{ ts, msg, phase: "error" }]);
         setBfRunning(false);
         return;
       }
       const { job_id } = await res.json() as { job_id: string };
       setBfJobId(job_id);
     } catch {
-      setBfMsg("Errore: API non raggiungibile");
+      const ts = new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      setBfLog([{ ts, msg: "Errore: API non raggiungibile", phase: "error" }]);
       setBfRunning(false);
     }
   };
@@ -570,9 +591,35 @@ export function AssetsScreen() {
                     ))}
                   </div>
 
-                  {bfMsg && (
-                    <div className={styles.fetchMsg} style={{ color: bfMsg.startsWith("✓") ? "var(--green)" : bfMsg.startsWith("Errore") ? "var(--coral)" : "var(--amber)" }}>
-                      {bfMsg}
+                  {/* Progress: shown while running or after completion */}
+                  {bfLog.length > 0 && (
+                    <div className={styles.bfProgress}>
+                      <div className={styles.bfHeader}>
+                        {bfRunning && <div className={styles.bfSpinner} />}
+                        {bfLog.length > 0 && (
+                          <span className={`${styles.bfStatus} ${
+                            bfLog[bfLog.length - 1].phase === "done" ? styles.bfStatusDone :
+                            bfLog[bfLog.length - 1].phase === "error" ? styles.bfStatusError : ""
+                          }`}>
+                            {bfLog[bfLog.length - 1].msg}
+                          </span>
+                        )}
+                        {bfRunning && <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, color: "var(--faint)", flexShrink: 0 }}>{bfPct}%</span>}
+                      </div>
+                      <div className={styles.bfBarWrap}>
+                        <div
+                          className={`${styles.bfBar} ${!bfRunning && bfPct === 100 ? styles.bfBarDone : ""}`}
+                          style={{ width: `${bfPct}%` }}
+                        />
+                      </div>
+                      <div className={styles.bfLog} ref={bfLogRef}>
+                        {bfLog.map((line, i) => (
+                          <div key={i} className={styles.bfLogLine}>
+                            <span className={styles.bfLogTs}>{line.ts}</span>
+                            {line.msg}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
 
@@ -580,7 +627,7 @@ export function AssetsScreen() {
                     <button className={styles.btnFetch} onClick={handleBackfill} disabled={bfRunning || !fetchTicker}>
                       {bfRunning ? "SCARICANDO…" : `BACKFILL${fetchTicker ? ` ${fetchTicker}` : ""}`}
                     </button>
-                    <button className={styles.btnCancel} onClick={() => { setShowBackfill(false); setBfMsg(null); setFetchTicker(""); setSearchVal(""); }}>
+                    <button className={styles.btnCancel} onClick={() => { setShowBackfill(false); setBfLog([]); setBfPct(0); setFetchTicker(""); setSearchVal(""); }}>
                       CANCEL
                     </button>
                   </div>
