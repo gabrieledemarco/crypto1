@@ -20,16 +20,15 @@ export function useSSE(url: string | null, onMessage: (data: unknown) => void) {
         try {
           const parsed = JSON.parse(e.data) as { phase?: string; msg?: string };
           cbRef.current(parsed);
-          // Auto-reconnect when the server closes the stream due to timeout
-          // and the run hasn't finished yet
-          if (parsed.phase === "error" && parsed.msg?.includes("stream timeout") && !done) {
+          // Reconnect on any server-side error during a live run
+          if (parsed.phase === "error" && !done) {
             if (attempts < _MAX_RECONNECTS) {
               attempts++;
               es.close();
               reconnectTimer = setTimeout(connect, 1500 * attempts);
             }
           }
-          if (parsed.phase === "done" || (parsed.phase === "error" && !parsed.msg?.includes("stream timeout"))) {
+          if (parsed.phase === "done") {
             done = true;
           }
         } catch {

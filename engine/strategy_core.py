@@ -11,18 +11,26 @@ Provides:
   - compute_metrics(): metriche di performance complete
 """
 
+import logging
 import re
+import threading
 import time
+from collections import OrderedDict
+
 import numpy as np
 import pandas as pd
 from arch import arch_model
 import warnings
 
-warnings.filterwarnings("ignore", message=".*Maximum Likelihood.*", category=UserWarning)
+log = logging.getLogger("strategy_core")
 
-# GARCH parameter cache: (n_bars, close_first, close_last) → (omega, alpha, beta, h_all, cached_at)
-_GARCH_CACHE: dict = {}
-_GARCH_TTL = 3600  # seconds — refit at most once per hour for the same dataset fingerprint
+# ── Thread-safe LRU GARCH cache ───────────────────────────────────────────────
+_GARCH_CACHE: OrderedDict = OrderedDict()
+_GARCH_CACHE_LOCK = threading.Lock()
+_GARCH_CACHE_MAX = 128
+_GARCH_TTL = 3600  # seconds
+
+warnings.filterwarnings("ignore", message=".*Maximum Likelihood.*", category=UserWarning)
 warnings.filterwarnings("ignore", message=".*covariance of the parameters.*", category=RuntimeWarning)
 warnings.filterwarnings("ignore", message=".*optimization.*", category=UserWarning)
 
@@ -63,8 +71,9 @@ def fit_garch11(returns: np.ndarray) -> tuple:
         if not np.all(np.isfinite(h)) or len(h) != len(r):
             raise ValueError("bad h")
         return omega, alpha, beta, h.values if hasattr(h, 'values') else h
-    except Exception:
+    except Exception as exc:
         # fallback to rolling variance
+        log.warning("GARCH fit failed (n=%d), falling back to rolling variance: %s", len(r), exc)
         var_r = float(np.var(r)) if np.var(r) > 0 else 1e-6
         h = np.full(len(r), var_r)
         return var_r * 0.03, 0.05, 0.90, h
@@ -135,15 +144,24 @@ def compute_indicators_v2(df: pd.DataFrame,
     # GARCH regime
     if fit_garch and len(df) > 100:
         r_aligned = np.log(df["Close"] / df["Close"].shift(1)).fillna(0).values
-        _cache_key = (len(r_aligned), round(float(r_aligned[0]), 6), round(float(r_aligned[-1]), 6))
-        _cached = _GARCH_CACHE.get(_cache_key)
+        _cache_key = (len(r_aligned), float(r_aligned[-1]) if len(r_aligned) > 0 else 0.0,
+                      float(r_aligned[0]) if len(r_aligned) > 0 else 0.0)
         _now = time.monotonic()
+        with _GARCH_CACHE_LOCK:
+            _cached = _GARCH_CACHE.get(_cache_key)
+        if _cached and _now - _cached[1] < _GARCH_TTL:
+            h_all = _cached[0]
+            _from_cache = True
+        else:
+            _from_cache = False
+            h_all = None
         try:
-            if _cached and (_now - _cached[1]) < _GARCH_TTL:
-                h_all = _cached[0]
-            else:
+            if not _from_cache:
                 _, _, _, h_all = fit_garch11(r_aligned[1:])
-                _GARCH_CACHE[_cache_key] = (h_all, _now)
+                with _GARCH_CACHE_LOCK:
+                    if len(_GARCH_CACHE) >= _GARCH_CACHE_MAX:
+                        _GARCH_CACHE.popitem(last=False)  # evict oldest
+                    _GARCH_CACHE[_cache_key] = (h_all, _now)
             h_padded = np.concatenate([[h_all[0]], h_all])
             df["garch_h"] = h_padded[:len(df)]
             df.attrs["garch_status"] = "ok"

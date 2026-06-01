@@ -465,3 +465,127 @@
 .cancelBtn:hover {
   color: var(--text);
 }
+
+/* Enhanced Mode toggle */
+.modeToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toggleLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  user-select: none;
+}
+
+.toggleLabel input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: var(--amber);
+}
+
+.toggleLabel input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.modeBadge {
+  background: var(--amber);
+  color: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 700;
+  padding: 1px 5px;
+  letter-spacing: 0.04em;
+  border-radius: 2px;
+}
+
+/* v2 progress */
+.v2Progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.v2Phase {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 0.03em;
+}
+
+.progressBar {
+  height: 2px;
+  width: 100%;
+  background: var(--border-l);
+  position: relative;
+  overflow: hidden;
+}
+
+.progressFill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: var(--amber);
+  transition: width 0.3s ease;
+}
+
+.attemptBadge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: #f59e0b;
+  letter-spacing: 0.04em;
+}
+
+/* Architecture brief panel */
+.briefPanel {
+  border: 1px solid var(--border-l);
+  background: var(--panel-2);
+  padding: 6px 8px;
+  flex-shrink: 0;
+}
+
+.briefPanel summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--dim);
+  letter-spacing: 0.03em;
+  list-style: none;
+  outline: none;
+}
+
+.briefPanel summary::-webkit-details-marker {
+  display: none;
+}
+
+.briefPanel summary::before {
+  content: '▶ ';
+  color: var(--amber);
+  font-size: 8px;
+}
+
+.briefPanel[open] summary::before {
+  content: '▼ ';
+}
+
+.briefPanel p {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text);
+  line-height: 1.5;
+  margin: 4px 0 0;
+}
+
+.briefPanel strong {
+  color: var(--amber);
+}

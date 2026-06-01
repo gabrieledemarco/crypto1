@@ -7,6 +7,13 @@ All functions receive DataFrames and config dicts; return dicts/DataFrames.
 import logging
 import numpy as np
 import pandas as pd
+
+
+def _require_columns(df: pd.DataFrame, cols: list, context: str) -> None:
+    """Raise ValueError if any required columns are missing from df."""
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"{context}: missing required columns {missing}")
 from .strategy_core import (
     generate_signals_v2, backtest_v2, compute_metrics, apply_garch_to_fold,
 )
@@ -62,6 +69,10 @@ def run_versions(df_ind: pd.DataFrame, cfg: dict, direction: str = "ALL",
     ts_meth  = cfg.get("trailing_stop_method", "atr")
     ts_val   = float(cfg.get("trailing_stop_value", 1.5))
     ps_meth  = cfg.get("position_size_method", "risk_pct")
+
+    _require_columns(df_ind, ["Close", "High", "Low", "Open", "Volume",
+                               "ATR14", "RSI14", "EMA50", "EMA200",
+                               "RollHigh6", "RollLow6", "ATR_pct", "hour"], "run_versions")
 
     results = {}
     versions = [
@@ -163,6 +174,10 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
     ts_meth  = cfg.get("trailing_stop_method", "atr")
     ts_val   = float(cfg.get("trailing_stop_value", 1.5))
     ps_meth  = cfg.get("position_size_method", "risk_pct")
+
+    _require_columns(df_ind, ["Close", "High", "Low", "Open", "Volume",
+                               "ATR14", "RSI14", "EMA50", "EMA200",
+                               "RollHigh6", "RollLow6", "ATR_pct", "hour"], "run_wfo")
 
     if agent_fn is None:
         # fallback: use generate_signals_v2

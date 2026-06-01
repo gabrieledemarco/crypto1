@@ -46,9 +46,10 @@ class _SecurityVisitor(ast.NodeVisitor):
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if node.module:
-            root = node.module.split(".")[0]
-            if root in _BLOCKED_IMPORTS:
-                raise CodeSecurityError(f"Blocked import: {node.module!r}")
+            parts = node.module.split(".")
+            for part in parts:
+                if part in _BLOCKED_IMPORTS:
+                    raise CodeSecurityError(f"Blocked import: {node.module!r}")
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -62,7 +63,8 @@ class _SecurityVisitor(ast.NodeVisitor):
         # Block dunder attribute access used to escape sandbox
         if node.attr.startswith("__") and node.attr.endswith("__"):
             blocked = {"__class__", "__bases__", "__subclasses__", "__globals__",
-                       "__code__", "__builtins__", "__dict__", "__import__"}
+                       "__code__", "__builtins__", "__dict__", "__import__",
+                       "__loader__", "__spec__", "__cached__", "__builtins__"}
             if node.attr in blocked:
                 raise CodeSecurityError(f"Blocked dunder attribute: {node.attr!r}")
         self.generic_visit(node)

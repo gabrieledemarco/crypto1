@@ -13,6 +13,7 @@ from slowapi.errors import RateLimitExceeded
 from api.limiter import limiter
 from api.db import get_conn, close_conn
 from api.routers import runs, assets, strategies, vibe, brain, analysis, optimize, download, pipeline, vibe_pipeline
+from api.routers.vibe_v2 import router as vibe_v2_router
 
 log = logging.getLogger("api")
 
@@ -26,7 +27,7 @@ structlog.configure(
     logger_factory=structlog.PrintLoggerFactory(),
 )
 
-ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
 
 
 def _seed_library_if_empty(conn) -> None:
@@ -111,5 +112,6 @@ app.include_router(download.router,   prefix="/assets/download",  tags=["downloa
 app.include_router(assets.router,     prefix="/assets",           tags=["assets"])
 app.include_router(strategies.router, prefix="/strategies", tags=["strategies"])
 app.include_router(vibe.router,       prefix="/vibe",       tags=["vibe"])
+app.include_router(vibe_v2_router,    prefix="/vibe",       tags=["vibe-v2"])
 app.include_router(brain.router,      prefix="/brain",      tags=["brain"])
 app.include_router(analysis.router,   prefix="/analysis",   tags=["analysis"])

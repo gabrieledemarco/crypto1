@@ -188,6 +188,8 @@ def _sync_optimize(body: OptimizeRequest, push):
     best_sharpe, best_sid, best_tf = float("-inf"), None, None
     log: list[dict] = []
 
+    _MAX_OPT_STRATEGIES = 200
+
     for iteration in range(1, body.max_iter + 1):
         tf = avail[(iteration - 1) % len(avail)]
         df = tf_data[tf]
@@ -204,8 +206,13 @@ def _sync_optimize(body: OptimizeRequest, push):
             "commission": 0.0004, "slippage": 0.0001,
         }
 
-        # Persist strategy
+        # Persist strategy — guard against unbounded growth
         conn = get_conn()
+        existing_count = conn.execute(
+            "SELECT COUNT(*) FROM strategies WHERE run_ref = ?", [job_id]
+        ).fetchone()[0]
+        if existing_count >= _MAX_OPT_STRATEGIES:
+            break
         sid  = uuid.uuid4().hex[:8]
         conn.execute(
             "INSERT INTO strategies (id,name,strategy_type,config,code,status) "
@@ -229,10 +236,14 @@ def _sync_optimize(body: OptimizeRequest, push):
                 "risk_per_trade": risk,
             }
             if code and code.strip():
-                ns: dict = {}
-                exec(compile(code, "<agent_fn>", "exec"), ns)
-                if "agent_fn" in ns:
-                    cfg["agent_fn"] = ns["agent_fn"]
+                from engine.safe_exec import safe_exec_strategy, CodeSecurityError
+                try:
+                    ns = safe_exec_strategy(code, strategy_id="optimize")
+                    if "agent_fn" in ns:
+                        cfg["agent_fn"] = ns["agent_fn"]
+                except CodeSecurityError as exc:
+                    push({"type": "iter_error", "iter": iteration, "msg": f"Security policy violation: {exc}"})
+                    continue
 
             versions = run_versions(df_ind, cfg, direction="ALL")
             try:

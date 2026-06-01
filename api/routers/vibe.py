@@ -2,6 +2,7 @@
 /vibe router — Claude streaming proxy
 POST /vibe/generate  → SSE stream: {type:"delta",text} … {type:"done",config:{},code:""}
 """
+import atexit
 import asyncio
 import json
 import os
@@ -16,6 +17,7 @@ from api.routers.brain import get_brain_context, sync_brain
 
 router = APIRouter()
 _executor = ThreadPoolExecutor(max_workers=2)
+atexit.register(_executor.shutdown, wait=False)
 _ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 # Auto-sync brain once per process if DB is empty

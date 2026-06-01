@@ -118,7 +118,7 @@ export function useRunEquity(runId: string | null) {
     select: downsampleEquity,
     enabled: isRealRunId(runId),
     staleTime: Infinity,   // run results never change — cache forever, but invalidated on new run
-    refetchOnMount: true,  // always load when screen mounts
+    refetchOnMount: false, // cached result is sufficient on screen switch; invalidated on new run
   });
 }
 
@@ -145,7 +145,7 @@ export function useRunTrades(
     },
     enabled: isRealRunId(runId),
     staleTime: Infinity,   // run results never change — cache forever, but invalidated on new run
-    refetchOnMount: true,
+    refetchOnMount: false, // cached result is sufficient on screen switch; invalidated on new run
   });
 }
 
