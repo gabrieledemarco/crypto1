@@ -182,4 +182,5 @@ export interface VibeV2Progress {
   sharpe?: number;
   overall_score?: number;
   attempts?: number;
+  note?: string;
 }
