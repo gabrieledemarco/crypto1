@@ -185,7 +185,7 @@ export function VibeScreen() {
     if (d.phase === 'error') {
       setGenerating(false);
       setV2Phase('Error');
-      setText(prev => prev + '\n\n[Generation error in v2 pipeline]');
+      setText(prev => prev + `\n\n[Error: ${d.msg ?? 'generation failed'}]`);
     }
   };
 
