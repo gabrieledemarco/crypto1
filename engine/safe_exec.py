@@ -1,7 +1,11 @@
 """engine/safe_exec.py — AST-based security validator + restricted exec for strategy code."""
 import ast
 import builtins
+import re
 from typing import Any
+
+import numpy as np
+import pandas as pd
 
 
 class CodeSecurityError(ValueError):
@@ -79,14 +83,30 @@ def validate_strategy_code(code: str) -> None:
     _SecurityVisitor().visit(tree)
 
 
+_PD_NP_IMPORT_RE = re.compile(
+    r"^\s*(import\s+(pandas|numpy)|from\s+(pandas|numpy)\s+import)\b.*$",
+    re.MULTILINE,
+)
+
+
+def _strip_pd_np_imports(code: str) -> str:
+    """Remove pandas/numpy import lines — they are pre-injected into the namespace."""
+    return _PD_NP_IMPORT_RE.sub("", code)
+
+
 def safe_exec_strategy(code: str, strategy_id: str = "unknown") -> dict[str, Any]:
     """Validate and execute strategy code in a restricted namespace.
 
     Returns the resulting namespace dict so caller can extract agent_fn etc.
     Raises CodeSecurityError for policy violations, SyntaxError for bad code.
     """
+    code = _strip_pd_np_imports(code)
     validate_strategy_code(code)
-    ns: dict[str, Any] = {"__builtins__": _SAFE_BUILTINS}
+    ns: dict[str, Any] = {
+        "__builtins__": _SAFE_BUILTINS,
+        "pd": pd,
+        "np": np,
+    }
     try:
         exec(compile(code, f"strategy_{strategy_id}", "exec"), ns)  # noqa: S102
     except CodeSecurityError:
