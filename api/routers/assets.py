@@ -40,6 +40,38 @@ _QUANT_TTL = 300  # seconds
 router = APIRouter()
 
 
+@router.post("/repair")
+def repair_assets(conn=None):
+    """
+    Remove all 'parquet:*' rows from the assets table.
+
+    These rows were written by old versions of _load_or_fetch which incorrectly
+    cached Parquet data into DuckDB. Interrupting that write left the table with
+    partial/corrupted rows. After this repair, historical data is served directly
+    from the Parquet files (the authoritative store).
+
+    Safe to call multiple times — idempotent.
+    """
+    if conn is None:
+        conn = get_conn()
+    try:
+        before = conn.execute(
+            "SELECT COUNT(*) FROM assets WHERE source LIKE 'parquet:%'"
+        ).fetchone()[0]
+        conn.execute("DELETE FROM assets WHERE source LIKE 'parquet:%'")
+        conn.commit()
+        return {
+            "ok": True,
+            "deleted": before,
+            "message": (
+                f"Removed {before} cached rows (parquet:* source). "
+                "Historical data is now served directly from Parquet files."
+            ),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Repair failed: {exc}")
+
+
 @router.get("")
 def list_assets():
     conn = get_conn()
@@ -143,52 +175,63 @@ def _run_backfill_thread(job_id: str, ticker: str,
                           interval: str, loop: asyncio.AbstractEventLoop) -> None:
     queue = _backfill_queues.get(job_id)
 
-    def push(msg: str, phase: str = "running") -> None:
+    def push(msg: str, phase: str = "running", pct: int = 0, rows_total: int = 0) -> None:
         if queue:
             asyncio.run_coroutine_threadsafe(
-                queue.put({"phase": phase, "msg": msg}), loop
+                queue.put({"phase": phase, "pct": pct, "msg": msg, "rows_total": rows_total}),
+                loop,
             )
 
     try:
-        push(f"Backfilling {ticker} {start_year}-{start_month:02d} → {end_year}-{end_month:02d}…")
+        total_months = (end_year - start_year) * 12 + (end_month - start_month + 1)
+        push(
+            f"Avvio backfill {ticker} · {start_year}-{start_month:02d} → {end_year}-{end_month:02d} ({total_months} mesi)",
+            pct=0,
+        )
+
         from engine.backfill import backfill_ticker, classify_ticker
-        result = backfill_ticker(ticker, start_year, start_month, end_year, end_month)
+
+        def on_progress(year, month, month_idx, total_mo, month_rows, rows_total):
+            pct = int(month_idx / total_mo * 90)  # reserve last 10% for resample
+            cached = month_rows == 0
+            label = "cached" if cached else f"+{month_rows:,} righe"
+            push(
+                f"{year}-{month:02d}  [{month_idx}/{total_mo}]  {label}  · totale {rows_total:,}",
+                pct=pct,
+                rows_total=rows_total,
+            )
+
+        result = backfill_ticker(
+            ticker, start_year, start_month, end_year, end_month,
+            on_progress=on_progress,
+        )
 
         if not result.get("ok"):
-            push(result.get("error", "Backfill failed"), "error")
+            push(result.get("error", "Backfill fallito"), "error", pct=0)
             return
 
-        rows = result.get("rows", 0)
-        push(f"Downloaded {rows:,} M1 bars — resampling to {interval}…")
+        m1_rows = result.get("rows", 0)
+        push(f"Download completato · {m1_rows:,} righe M1 · verifica file Parquet…", pct=92, rows_total=m1_rows)
 
+        # Count available months in Parquet store for final summary
         try:
-            from engine.storage.parquet_store import list_available, load_and_resample
-            from engine.storage.bulk_writer import bulk_store
-
-            asset_class = classify_ticker(ticker)
+            from engine.backfill import classify_ticker as _cls
+            from engine.storage.parquet_store import list_available
+            asset_class = _cls(ticker)
             available = list_available(asset_class, ticker)
-            if available:
-                sy, sm = available[0]
-                ey, em = available[-1]
-                nm = em + 1
-                ny = ey + (1 if nm > 12 else 0)
-                nm = nm if nm <= 12 else 1
-                end_ts = pd.Timestamp(ny, nm, 1) - pd.Timedelta(days=1)
-                df = load_and_resample(
-                    asset_class, ticker,
-                    pd.Timestamp(sy, sm, 1), end_ts, interval,
-                )
-                if not df.empty:
-                    conn = get_conn()
-                    bulk_store(conn, ticker, f"parquet:{interval}", df)
-                    push(f"✓ {rows:,} M1 bars → {len(df):,} {interval} bars", "done")
-                    return
-            push(f"✓ {rows:,} M1 bars stored (no {interval} resample output)", "done")
-        except Exception as exc:
-            push(f"✓ {rows:,} M1 bars stored; resample failed: {exc}", "done")
+            n_months = len(available)
+        except Exception:
+            n_months = total_months
+
+        push(
+            f"✓ {m1_rows:,} righe M1 · {n_months} mesi Parquet · pronto per backtest",
+            "done",
+            pct=100,
+            rows_total=m1_rows,
+        )
 
     except Exception as exc:
-        push(f"Backfill failed: {exc}", "error")
+        push(f"Backfill fallito: {exc}", "error", pct=0)
 
 
 @router.get("/backfill/{job_id}/stream")

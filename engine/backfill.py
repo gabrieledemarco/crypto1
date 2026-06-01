@@ -35,8 +35,12 @@ def backfill_ticker(
     start_month: int = 1,
     end_year: int | None = None,
     end_month: int | None = None,
+    on_progress=None,
 ) -> dict:
-    """Download missing M1 history for one ticker. Returns a summary dict."""
+    """Download missing M1 history for one ticker. Returns a summary dict.
+
+    on_progress is forwarded to the provider if it accepts it (crypto/binance_vision).
+    """
     asset_class = classify_ticker(ticker)
     log.info("backfill %s  asset_class=%s  from=%d-%02d", ticker, asset_class, start_year, start_month)
 
@@ -50,6 +54,8 @@ def backfill_ticker(
 
     if asset_class == "crypto":
         from engine.providers.binance_vision import backfill
+        if on_progress:
+            kwargs["on_progress"] = on_progress
     elif asset_class == "forex":
         from engine.providers.dukascopy_client import backfill
     else:

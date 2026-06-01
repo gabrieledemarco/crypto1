@@ -346,6 +346,99 @@
   color: var(--amber);
 }
 
+/* ── Backfill progress UI ── */
+
+.bfProgress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.bfHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bfSpinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-l);
+  border-top-color: var(--amber);
+  border-radius: 50%;
+  animation: bfSpin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes bfSpin {
+  to { transform: rotate(360deg); }
+}
+
+.bfStatus {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--amber);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bfStatusDone {
+  color: var(--green);
+}
+
+.bfStatusError {
+  color: var(--coral);
+}
+
+.bfBarWrap {
+  height: 3px;
+  background: var(--border-l);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.bfBar {
+  height: 100%;
+  background: var(--amber);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.bfBarDone {
+  background: var(--green);
+}
+
+.bfLog {
+  background: var(--panel-3);
+  border: 1px solid var(--border-l);
+  padding: 6px 8px;
+  height: 120px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.bfLogLine {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--dim);
+  white-space: nowrap;
+  line-height: 1.5;
+}
+
+.bfLogLine:last-child {
+  color: var(--text);
+}
+
+.bfLogTs {
+  color: var(--faint);
+  margin-right: 6px;
+}
+
 /* Chart */
 
 .chartWrap {

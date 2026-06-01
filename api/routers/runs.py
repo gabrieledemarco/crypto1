@@ -409,25 +409,17 @@ async def create_run(request: Request, body: RunCreate):
 
 def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
     """
-    Return OHLCV rows for ticker+interval from DuckDB.
-    Priority: DuckDB cache → Parquet deep history → live ccxt/yfinance fetch.
+    Return OHLCV rows for ticker+interval.
+    Priority: Parquet deep history (files) → DuckDB live cache → live ccxt/yfinance fetch.
+
+    Parquet data is never written to DuckDB — it's read directly from files.
+    This prevents partial-write corruption when a backfill is interrupted.
     """
-    source_key = f"yfinance:{interval}"
-    rows = conn.execute(
-        "SELECT ts, open, high, low, close, volume FROM assets "
-        "WHERE ticker=? AND (source=? OR source=? OR source LIKE ?) ORDER BY ts",
-        [ticker, source_key, "yfinance", f"%:{interval}"]
-    ).fetchall()
-
-    if rows:
-        return rows
-
-    # Try Parquet deep history store (populated by engine.backfill)
+    # ── 1. Parquet deep history (source of truth for large historical data) ────
     try:
         import pandas as pd
         from engine.backfill import classify_ticker
         from engine.storage.parquet_store import list_available, load_and_resample
-        from engine.storage.bulk_writer import bulk_store as _bulk_store
 
         asset_class = classify_ticker(ticker)
         available = list_available(asset_class, ticker)
@@ -436,7 +428,6 @@ def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
                 push("start", 2, f"loading {ticker} from Parquet store…")
             start_y, start_mo = available[0]
             end_y, end_mo = available[-1]
-            # End = last day of end_mo
             nm = end_mo + 1
             ny = end_y + (1 if nm > 12 else 0)
             nm = nm if nm <= 12 else 1
@@ -448,17 +439,31 @@ def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
                 interval,
             )
             if not df.empty:
-                parquet_src = f"parquet:{interval}"
-                _bulk_store(conn, ticker, parquet_src, df)
-                rows = conn.execute(
-                    "SELECT ts, open, high, low, close, volume FROM assets "
-                    "WHERE ticker=? AND source=? ORDER BY ts",
-                    [ticker, parquet_src]
-                ).fetchall()
-                if rows:
-                    return rows
+                # Convert directly to tuples — never write Parquet data into DuckDB.
+                # Parquet files are the authoritative store; writing them into DuckDB
+                # would double the storage and can corrupt the assets table if
+                # interrupted mid-insert.
+                rows = list(zip(
+                    df.index,
+                    df["Open"], df["High"], df["Low"], df["Close"], df["Volume"],
+                ))
+                log.info("Parquet load ok ticker=%s interval=%s rows=%d", ticker, interval, len(rows))
+                return rows
     except Exception as exc:
         log.warning("Parquet store lookup failed for %s/%s: %s", ticker, interval, exc)
+
+    # ── 2. DuckDB live cache (short-term data from ccxt/yfinance) ─────────────
+    # Explicitly exclude parquet-sourced rows — they may be partial from old writes.
+    source_key = f"yfinance:{interval}"
+    rows = conn.execute(
+        "SELECT ts, open, high, low, close, volume FROM assets "
+        "WHERE ticker=? AND source NOT LIKE 'parquet:%' "
+        "AND (source=? OR source=? OR source LIKE ?) ORDER BY ts",
+        [ticker, source_key, "yfinance", f"%:{interval}"]
+    ).fetchall()
+
+    if rows:
+        return rows
 
     # Auto-fetch live data — no data in DB or Parquet yet
     if push:

@@ -77,14 +77,18 @@ def _parse_zip(raw: bytes) -> pd.DataFrame:
 def backfill(ticker: str,
              start_year: int = 2019, start_month: int = 1,
              end_year: int | None = None, end_month: int | None = None,
-             tf: str = "1m") -> int:
-    """Download missing monthly files from Binance Vision. Returns total rows stored."""
+             tf: str = "1m",
+             on_progress=None) -> int:
+    """Download missing monthly files from Binance Vision. Returns total rows stored.
+
+    on_progress(year, month, month_idx, total_months, rows_this_month, rows_total)
+    is called after each month completes (downloaded or skipped).
+    """
     import datetime
     now = datetime.datetime.utcnow()
     if end_year is None:
         end_year = now.year
     if end_month is None:
-        # Last completed month
         end_month = now.month - 1
         if end_month == 0:
             end_month = 12
@@ -93,11 +97,18 @@ def backfill(ticker: str,
     symbol = _to_binance_symbol(ticker)
     total = 0
 
+    # Pre-compute total months for progress reporting
+    total_months = (end_year - start_year) * 12 + (end_month - start_month + 1)
+    month_idx = 0
+
     session = requests.Session()
     session.headers["User-Agent"] = "pareto-backfill/1.0"
     try:
         cur_y, cur_m = start_year, start_month
         while (cur_y, cur_m) <= (end_year, end_month):
+            month_idx += 1
+            month_rows = 0
+
             if already_downloaded("crypto", ticker, cur_y, cur_m):
                 log.debug("skip %s %d-%02d", symbol, cur_y, cur_m)
             else:
@@ -107,11 +118,18 @@ def backfill(ticker: str,
                     del raw
                     if not df.empty:
                         write_month("crypto", ticker, cur_y, cur_m, df)
-                        total += len(df)
-                        log.info("stored %s %d-%02d rows=%d", symbol, cur_y, cur_m, len(df))
+                        month_rows = len(df)
+                        total += month_rows
+                        log.info("stored %s %d-%02d rows=%d", symbol, cur_y, cur_m, month_rows)
                     del df
                     gc.collect()
                 time.sleep(0.2)
+
+            if on_progress:
+                try:
+                    on_progress(cur_y, cur_m, month_idx, total_months, month_rows, total)
+                except Exception:
+                    pass
 
             cur_m += 1
             if cur_m > 12:
