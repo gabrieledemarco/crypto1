@@ -1,5 +1,5 @@
 "use client";
-import { Fragment } from "react";
+import React, { Fragment } from "react";
 import styles from "./AgentWorkflow.module.css";
 
 type Status = "idle" | "active" | "done" | "error";
@@ -20,13 +20,29 @@ const V2_NODES = [
 
 type NodeId = typeof V2_NODES[number]["id"];
 
-function deriveStates(raw: string, generating: boolean, verdict: string): Record<NodeId, Status> {
+// Phase → which agent owns it (used to pinpoint failures)
+const PHASE_OWNER: Record<string, NodeId> = {
+  orchestrating: "orchestrator", brief_chunk: "orchestrator", brief_done: "orchestrator",
+  generating: "generator", code_chunk: "generator", backtesting: "generator", iteration: "generator",
+  evaluating: "evaluator", evaluation: "evaluator",
+  decision: "decision",
+};
+
+function deriveStates(raw: string, lastGoodPhase: string, generating: boolean, verdict: string): Record<NodeId, Status> {
   if (!generating && !raw)
     return { orchestrator: "idle", generator: "idle", evaluator: "idle", decision: "idle" };
   if (raw === "done")
     return { orchestrator: "done", generator: "done", evaluator: "done", decision: verdict === "reject" ? "error" : "done" };
-  if (raw === "error")
-    return { orchestrator: "done", generator: "error", evaluator: "idle", decision: "idle" };
+  if (raw === "error") {
+    // Blame the agent that owned the last successful phase
+    const failed = PHASE_OWNER[lastGoodPhase] ?? "orchestrator";
+    const s: Record<NodeId, Status> = { orchestrator: "done", generator: "done", evaluator: "done", decision: "done" };
+    // Mark nodes before the failing one as done, the failing one as error, rest as idle
+    const order: NodeId[] = ["orchestrator", "generator", "evaluator", "decision"];
+    const idx = order.indexOf(failed);
+    order.forEach((id, i) => { s[id] = i < idx ? "done" : i === idx ? "error" : "idle"; });
+    return s;
+  }
   if (["orchestrating", "brief_chunk", "brief_done"].includes(raw))
     return { orchestrator: "active", generator: "idle", evaluator: "idle", decision: "idle" };
   if (["generating", "code_chunk", "backtesting", "iteration"].includes(raw))
@@ -75,7 +91,14 @@ interface Props {
 }
 
 export function AgentWorkflow({ useV2, generating, v2RawPhase, v2Attempt, v2Verdict, v1Status }: Props) {
-  const states = deriveStates(v2RawPhase, generating, v2Verdict);
+  // Track last non-error phase to identify which agent actually failed
+  const lastGoodPhaseRef = React.useRef("");
+  if (v2RawPhase && v2RawPhase !== "error" && v2RawPhase !== "done") {
+    lastGoodPhaseRef.current = v2RawPhase;
+  }
+  if (!generating && !v2RawPhase) lastGoodPhaseRef.current = "";
+
+  const states = deriveStates(v2RawPhase, lastGoodPhaseRef.current, generating, v2Verdict);
   const allDone = !generating && v2RawPhase === "done";
 
   return (

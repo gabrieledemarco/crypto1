@@ -45,11 +45,17 @@ MAX_ATTEMPTS = 3
 
 class VibeV2Request(BaseModel):
     ticker: str = "BTC-USD"
+    asset: str = "BTC-USD"   # frontend alias for ticker
     timeframe: str = "1h"
     period: str = "2y"
+    prompt: str = ""          # user's strategy idea (optional)
     asset_stats: dict = {}
     quant_analysis: dict = {}
     garch_forecast: dict = {}
+
+    @property
+    def resolved_ticker(self) -> str:
+        return self.ticker if self.ticker != "BTC-USD" else self.asset
 
 
 # ── System Prompts ─────────────────────────────────────────────────────────────
@@ -119,15 +125,31 @@ Step 1 -- Rationale (2-4 sentences): how your implementation maps to the brief's
 Step 2 -- JSON config in ```json block
 Step 3 -- Python code in ```python block
 
-DataFrame columns: Open, High, Low, Close, Volume, ATR14, RSI14, EMA50, EMA200, RollHigh6, RollLow6, garch_h, garch_regime (LOW/MED/HIGH), size_mult, ret, hour, dow
+## Function signature (MANDATORY)
+def agent_fn(df: pd.DataFrame, ind) -> pd.DataFrame:
+The engine passes `ind` as the second argument — a callable for on-demand indicator computation.
+Use `ind` for ALL custom indicators. Pre-computed columns on `df` are available directly.
 
-Indicator helper: ind("EMA",N), ind("RSI",N), ind("BB",20,2.0)->(upper,mid,lower), ind("MACD",12,26,9)->(line,sig,hist), ind("STOCH",14)->(K,D,hist), ind("ATR",N), ind("VWAP")
+## Pre-computed df columns
+Open, High, Low, Close, Volume, ATR14, RSI14, EMA50, EMA200, RollHigh6, RollLow6,
+garch_h, garch_regime (LOW/MED/HIGH), size_mult, ret, hour, dow
 
-Strict rules:
-- .shift(1) on ALL conditions (no lookahead bias)
+## ind() usage
+ind("EMA", N)            -> pd.Series
+ind("RSI", N)            -> pd.Series
+ind("BB", 20, 2.0)       -> (upper, mid, lower) tuple of pd.Series
+ind("MACD", 12, 26, 9)   -> (line, signal, hist) tuple
+ind("STOCH", 14)         -> (K, D) tuple
+ind("ATR", N)            -> pd.Series
+ind("VWAP")              -> pd.Series
+
+## Strict rules
+- Function MUST be named agent_fn and accept (df, ind)
+- .shift(1) on ALL signal conditions (no lookahead bias)
 - At minimum 2 independent entry conditions
-- ATR-based SL_dist and TP_dist only
-- pandas and numpy only (no other imports)
+- ATR-based SL_dist and TP_dist only (use df["ATR14"] or ind("ATR", N))
+- Use only df columns and ind() — no external imports needed
+- Return df with columns: signal (1=LONG, -1=SHORT, 0=flat), SL_dist, TP_dist
 - Implement the brief's entry_logic and entry_filters exactly
 """
 
@@ -191,8 +213,10 @@ def _build_context(body: VibeV2Request) -> str:
     garch_params = garch.get("params", {}) or {}
     lb_data = (garch.get("ljung_box", {}) or {}).get("sq_returns", {}) or {}
 
+    idea_section = f"## User Strategy Idea\n{body.prompt}\n\n" if body.prompt.strip() else ""
     return (
-        f"ASSET: {body.ticker} | TIMEFRAME: {body.timeframe} | PERIOD: {body.period}\n\n"
+        idea_section
+        + f"ASSET: {body.resolved_ticker} | TIMEFRAME: {body.timeframe} | PERIOD: {body.period}\n\n"
         f"## Market Statistics\n"
         f"CAGR: {_fmt(stats.get('cagr'), '.1f')}% | Ann Vol: {_fmt(stats.get('ann_vol'), '.1f')}%\n"
         f"Sharpe: {_fmt(stats.get('sharpe'), '.2f')} | Sortino: {_fmt(stats.get('sortino'), '.2f')}\n"
@@ -608,7 +632,7 @@ async def generate_v2(request: Request, body: VibeV2Request):
                 if not config:
                     rp = current_brief.get("risk_params", {}) or {}
                     config = {
-                        "ticker": body.ticker,
+                        "ticker": body.resolved_ticker,
                         "timeframe": body.timeframe,
                         "sl_mult": rp.get("sl_mult", 2.0),
                         "tp_mult": rp.get("tp_mult", 4.0),
@@ -617,7 +641,7 @@ async def generate_v2(request: Request, body: VibeV2Request):
                         "risk_per_trade": rp.get("risk_per_trade", 0.5),
                     }
                 else:
-                    config.setdefault("ticker", body.ticker)
+                    config.setdefault("ticker", body.resolved_ticker)
                     config.setdefault("timeframe", body.timeframe)
 
                 if not code:
@@ -637,7 +661,7 @@ async def generate_v2(request: Request, body: VibeV2Request):
                         _run_backtest_sync,
                         code,
                         config,
-                        body.ticker,
+                        body.resolved_ticker,
                         body.timeframe,
                         body.period,
                     )
@@ -699,7 +723,7 @@ async def generate_v2(request: Request, body: VibeV2Request):
                     sid = None
                     try:
                         sid = await _save_strategy(
-                            body.ticker, body.timeframe,
+                            body.resolved_ticker, body.timeframe,
                             code, config, bt_metrics, evaluation, "promote",
                         )
                     except Exception as exc:
@@ -713,7 +737,7 @@ async def generate_v2(request: Request, body: VibeV2Request):
                         "phase": "done",
                         "pct": 100,
                         "strategy_id": sid,
-                        "name": f"{body.ticker}_v2_{body.timeframe}",
+                        "name": f"{body.resolved_ticker}_v2_{body.timeframe}",
                         "sharpe": round(sharpe, 3),
                         "overall_score": evaluation.get("overall_score", 0),
                         "attempts": attempt,
