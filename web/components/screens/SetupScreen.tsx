@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useStore } from "@/store";
@@ -88,7 +88,9 @@ export function SetupScreen() {
   const [bfEnd, setBfEnd] = useState(today);
   const [bfJobId, setBfJobId] = useState<string | null>(null);
   const [bfRunning, setBfRunning] = useState(false);
-  const [bfMsg, setBfMsg] = useState<string | null>(null);
+  const [bfLog, setBfLog] = useState<{ ts: string; msg: string; phase: string }[]>([]);
+  const [bfPct, setBfPct] = useState(0);
+  const bfLogRef = useRef<HTMLDivElement>(null);
 
   const validateParams = (p: Params): string | null => {
     if (p.tp_mult <= p.sl_mult) return `TP mult (${p.tp_mult}) must be greater than SL mult (${p.sl_mult})`;
@@ -278,8 +280,10 @@ export function SetupScreen() {
     const es = new EventSource(`/api/assets/backfill/${bfJobId}/stream`);
     es.onmessage = (e) => {
       try {
-        const ev = JSON.parse(e.data) as { phase: string; msg: string };
-        setBfMsg(ev.msg);
+        const ev = JSON.parse(e.data) as { phase: string; pct?: number; msg: string };
+        const ts = new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        setBfLog(prev => [...prev, { ts, msg: ev.msg, phase: ev.phase }]);
+        if (ev.pct !== undefined) setBfPct(ev.pct);
         if (ev.phase === "done" || ev.phase === "error") {
           setBfRunning(false);
           setBfJobId(null);
@@ -288,14 +292,26 @@ export function SetupScreen() {
         }
       } catch {}
     };
-    es.onerror = () => { setBfRunning(false); setBfJobId(null); es.close(); };
+    es.onerror = () => {
+      const ts = new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      setBfLog(prev => [...prev, { ts, msg: "Connessione SSE persa", phase: "error" }]);
+      setBfRunning(false);
+      setBfJobId(null);
+      es.close();
+    };
     return () => es.close();
   }, [bfJobId, queryClient]);
+
+  // Auto-scroll log
+  useEffect(() => {
+    if (bfLogRef.current) bfLogRef.current.scrollTop = bfLogRef.current.scrollHeight;
+  }, [bfLog]);
 
   const handleBackfill = async () => {
     if (!params.ticker || bfRunning) return;
     setBfRunning(true);
-    setBfMsg(`Avviando backfill ${params.ticker}…`);
+    setBfLog([]);
+    setBfPct(0);
     try {
       const res = await fetch("/api/assets/backfill", {
         method: "POST",
@@ -304,14 +320,16 @@ export function SetupScreen() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: "errore API" }));
-        setBfMsg(`Errore: ${err.detail ?? "API non raggiungibile"}`);
+        const ts = new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        setBfLog([{ ts, msg: `Errore: ${err.detail ?? "API non raggiungibile"}`, phase: "error" }]);
         setBfRunning(false);
         return;
       }
       const { job_id } = await res.json() as { job_id: string };
       setBfJobId(job_id);
     } catch {
-      setBfMsg("Errore: API non raggiungibile");
+      const ts = new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      setBfLog([{ ts, msg: "Errore: API non raggiungibile", phase: "error" }]);
       setBfRunning(false);
     }
   };
@@ -470,13 +488,52 @@ export function SetupScreen() {
                     >
                       {bfRunning ? "SCARICANDO…" : `▶ AVVIA BACKFILL`}
                     </button>
-                    {bfMsg && (
-                      <div style={{
-                        fontSize: 9, fontFamily: "var(--font-mono)",
-                        color: bfMsg.startsWith("✓") ? "var(--green)" : bfMsg.startsWith("Errore") ? "var(--coral)" : "var(--amber)",
-                        wordBreak: "break-all",
-                      }}>
-                        {bfMsg}
+
+                    {/* Progress: spinner + bar + log */}
+                    {bfLog.length > 0 && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          {bfRunning && (
+                            <div style={{
+                              width: 10, height: 10, flexShrink: 0,
+                              border: "2px solid var(--border-l)", borderTopColor: "var(--amber)",
+                              borderRadius: "50%", animation: "bfSpin 0.7s linear infinite",
+                            }} />
+                          )}
+                          <span style={{
+                            fontSize: 9, fontFamily: "var(--font-mono)", flex: 1,
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            color: bfLog[bfLog.length - 1].phase === "done" ? "var(--green)"
+                              : bfLog[bfLog.length - 1].phase === "error" ? "var(--coral)"
+                              : "var(--amber)",
+                          }}>
+                            {bfLog[bfLog.length - 1].msg}
+                          </span>
+                          {bfRunning && <span style={{ fontSize: 9, color: "var(--faint)", flexShrink: 0, fontFamily: "var(--font-mono)" }}>{bfPct}%</span>}
+                        </div>
+                        <div style={{ height: 2, background: "var(--border-l)", borderRadius: 1, overflow: "hidden" }}>
+                          <div style={{
+                            height: "100%", borderRadius: 1, transition: "width 0.3s ease",
+                            width: `${bfPct}%`,
+                            background: !bfRunning && bfPct === 100 ? "var(--green)" : "var(--amber)",
+                          }} />
+                        </div>
+                        <div ref={bfLogRef} style={{
+                          background: "var(--panel-3)", border: "1px solid var(--border-l)",
+                          padding: "4px 6px", height: 90, overflowY: "auto",
+                          display: "flex", flexDirection: "column", gap: 1,
+                        }}>
+                          {bfLog.map((line, i) => (
+                            <div key={i} style={{
+                              fontFamily: "var(--font-mono)", fontSize: 8, lineHeight: 1.5,
+                              color: i === bfLog.length - 1 ? "var(--text)" : "var(--dim)",
+                              whiteSpace: "nowrap",
+                            }}>
+                              <span style={{ color: "var(--faint)", marginRight: 5 }}>{line.ts}</span>
+                              {line.msg}
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
