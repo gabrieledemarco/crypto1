@@ -29,12 +29,11 @@ from api.limiter import limiter
 log = logging.getLogger("vibe_v2")
 router = APIRouter()
 
-def _get_anthropic_key() -> str | None:
-    return os.getenv("ANTHROPIC_API_KEY")
+_ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 
-_MODEL_ORCHESTRATOR = "claude-opus-4-8"
-_MODEL_GENERATOR    = "claude-sonnet-4-6"
-_MODEL_EVALUATOR    = "claude-opus-4-8"
+_MODEL_ORCHESTRATOR = "claude-opus-4-7"
+_MODEL_GENERATOR    = "claude-opus-4-7"
+_MODEL_EVALUATOR    = "claude-opus-4-7"
 
 _executor = ThreadPoolExecutor(max_workers=4)
 atexit.register(_executor.shutdown, wait=False)
@@ -582,7 +581,7 @@ async def _save_strategy(
     strategy_type: str = "unknown",
 ) -> str:
     """Save promoted strategy to DB. Returns strategy_id."""
-    loop = asyncio.get_running_loop()
+    loop = asyncio.get_event_loop()
 
     def _do_save() -> str:
         conn = get_conn()
@@ -623,7 +622,6 @@ async def _save_strategy(
         )
         return sid
 
-    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(_executor, _do_save)
 
 
@@ -634,8 +632,7 @@ async def _save_strategy(
 async def generate_v2(request: Request, body: VibeV2Request):
     """SSE endpoint: orchestrated 3-agent strategy generation pipeline."""
 
-    _key = _get_anthropic_key()
-    if not _key:
+    if not _ANTHROPIC_KEY:
         async def _no_key():
             yield f"data: {json.dumps({'phase': 'error', 'msg': '[ANTHROPIC_API_KEY not set — configure it in Railway environment variables]'})}\n\n"
         return StreamingResponse(
@@ -645,8 +642,8 @@ async def generate_v2(request: Request, body: VibeV2Request):
         )
 
     async def event_stream():
-        client = _anthropic.Anthropic(api_key=_key, timeout=60.0)
-        loop = asyncio.get_running_loop()
+        client = _anthropic.Anthropic(api_key=_ANTHROPIC_KEY, timeout=60.0)
+        loop = asyncio.get_event_loop()
 
         def _sse(payload: dict) -> str:
             return f"data: {json.dumps(payload)}\n\n"
