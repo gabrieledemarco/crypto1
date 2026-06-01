@@ -53,6 +53,16 @@ export function useRunList(strategyId?: string | null) {
   });
 }
 
+// Fetch all runs unconditionally (for logic-group view)
+export function useAllRuns() {
+  return useQuery({
+    queryKey: ["run-list-all"],
+    queryFn: () => api.get<RunListItem[]>("/runs"),
+    staleTime: 15_000,
+    retry: false,
+  });
+}
+
 // Delete a single run by id
 export function useDeleteRun() {
   const queryClient = useQueryClient();

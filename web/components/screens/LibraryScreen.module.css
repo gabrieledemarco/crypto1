@@ -443,6 +443,73 @@
 .delBtn:hover:not(:disabled) { border-color: var(--coral); color: var(--coral); }
 .delBtn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* ── Logic view table ── */
+
+/* 7 columns: LOGIC NAME | RUNS | ASSETS | TFs | BEST SHARPE | BEST CAGR | WORST DD */
+.logicThead,
+.logicRow {
+  display: grid;
+  grid-template-columns: 1fr 52px 1fr 1fr 80px 72px 72px;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+
+.logicThead {
+  background: var(--panel-3);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.logicRow {
+  cursor: pointer;
+}
+
+.logicRow:hover { background: var(--panel-2); }
+
+.logicRowSelected {
+  background: var(--panel-3) !important;
+  outline: 1px solid var(--amber);
+}
+
+.logicName {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.logicCount {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--cyan);
+  text-align: right;
+}
+
+.logicDims {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.logicMetric {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: right;
+}
+
 /* Skeleton loader */
 @keyframes shimmer {
   0% { background-position: -400px 0; }
