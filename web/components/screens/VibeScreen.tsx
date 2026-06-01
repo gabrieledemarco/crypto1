@@ -4,6 +4,7 @@ import { useStore } from "@/store";
 import { useAssets } from "@/hooks/useAssets";
 import { StrategyBrief, StrategyEvaluation, VibeV2Progress } from "@/lib/api-types";
 import { EvaluationCard } from "./EvaluationCard";
+import { AgentWorkflow } from "./AgentWorkflow";
 import styles from "./VibeScreen.module.css";
 
 const FALLBACK_ASSETS = ["BTC-USD", "ETH-USD", "SOL-USD", "ARB-USD", "OP-USD", "AVAX-USD"];
@@ -87,6 +88,7 @@ export function VibeScreen() {
   // v2 Enhanced Mode state
   const [useV2, setUseV2] = useState(false);
   const [v2Phase, setV2Phase] = useState<string>('');
+  const [v2RawPhase, setV2RawPhase] = useState<string>('');
   const [v2Pct, setV2Pct] = useState(0);
   const [v2Attempt, setV2Attempt] = useState(1);
   const [v2Brief, setV2Brief] = useState<StrategyBrief | null>(null);
@@ -139,6 +141,7 @@ export function VibeScreen() {
   const handleV2Message = (data: unknown) => {
     const d = data as VibeV2Progress;
 
+    if (d.phase) setV2RawPhase(d.phase);
     if (d.pct !== undefined) setV2Pct(d.pct);
 
     if (d.phase === 'orchestrating') setV2Phase('Orchestrating...');
@@ -197,6 +200,7 @@ export function VibeScreen() {
 
     // Reset v2 state
     setV2Phase('');
+    setV2RawPhase('');
     setV2Pct(0);
     setV2Attempt(1);
     setV2Brief(null);
@@ -695,6 +699,18 @@ export function VibeScreen() {
             </>
           )}
         </div>
+      </div>
+
+      {/* Agent Workflow — full width */}
+      <div style={{ gridColumn: "span 12" }}>
+        <AgentWorkflow
+          useV2={useV2}
+          generating={generating}
+          v2RawPhase={v2RawPhase}
+          v2Attempt={v2Attempt}
+          v2Verdict={v2Verdict}
+          v1Status={status}
+        />
       </div>
     </div>
   );
