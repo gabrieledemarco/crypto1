@@ -695,7 +695,7 @@ async def generate_v2(request: Request, body: VibeV2Request):
                         body.timeframe,
                         body.period,
                     )
-                    yield _sse({"phase": "backtest_result", "metrics": bt_metrics})
+                    yield _sse({"phase": "backtest_result", "metrics": bt_metrics, "config": config})
                     # Surface safe_exec / agent_fn load errors immediately
                     if bt_metrics.get("safe_exec_error"):
                         yield _sse({
