@@ -240,59 +240,63 @@ export function VibeScreen() {
           const lines = buf.split("\n");
           buf = lines.pop() ?? "";
 
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const ev = JSON.parse(line.slice(6));
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const ev = JSON.parse(line.slice(6));
 
-            if (useV2) {
-              handleV2Message(ev);
-            } else {
-              if (ev.type === "analysis_start") {
-                setStatus(`Analyzing: ${ev.tool.replace(/_/g, " ")}…`);
-              }
-              if (ev.type === "analysis_done") {
-                setStatus(`Analysis complete: ${ev.tool.replace(/_/g, " ")}`);
-              }
-              if (ev.type === "delta") setText((t) => t + ev.text);
-              if (ev.type === "done") {
-                setStatus("");
-                setConfig(ev.config ?? null);
-                setCode(ev.code ?? null);
-                setGenerating(false);
-                if (ev.code) setOutputTab("code");
-                // Auto-save to Library
-                if (ev.config && ev.code) {
-                  const ticker = (ev.config.ticker || asset).replace(/[^a-zA-Z0-9_=-]/g, "_");
-                  const tf = ev.config.timeframe || timeframe;
-                  const ts = new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "h");
-                  const autoName = `vibe_${ticker}_${tf}_${ts}`;
-                  fetch("/api/strategies", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      name: autoName,
-                      strategy_type: "vibe",
-                      config: ev.config,
-                      code: ev.code,
-                      status: "research",
-                    }),
-                  })
-                    .then((r) => r.ok ? r.json() : null)
-                    .then((data) => {
-                      if (data?.id) {
-                        setToast(`Strategy saved to Library: ${autoName} (${data.id})`);
-                        fetchStrategies();
-                      }
+              if (useV2) {
+                handleV2Message(ev);
+              } else {
+                if (ev.type === "analysis_start") {
+                  setStatus(`Analyzing: ${ev.tool.replace(/_/g, " ")}…`);
+                }
+                if (ev.type === "analysis_done") {
+                  setStatus(`Analysis complete: ${ev.tool.replace(/_/g, " ")}`);
+                }
+                if (ev.type === "delta") setText((t) => t + ev.text);
+                if (ev.type === "done") {
+                  setStatus("");
+                  setConfig(ev.config ?? null);
+                  setCode(ev.code ?? null);
+                  setGenerating(false);
+                  if (ev.code) setOutputTab("code");
+                  if (ev.config && ev.code) {
+                    const ticker = (ev.config.ticker || asset).replace(/[^a-zA-Z0-9_=-]/g, "_");
+                    const tf = ev.config.timeframe || timeframe;
+                    const ts = new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "h");
+                    const autoName = `vibe_${ticker}_${tf}_${ts}`;
+                    fetch("/api/strategies", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        name: autoName,
+                        strategy_type: "vibe",
+                        config: ev.config,
+                        code: ev.code,
+                        status: "research",
+                      }),
                     })
-                    .catch(() => {});
+                      .then((r) => r.ok ? r.json() : null)
+                      .then((data) => {
+                        if (data?.id) {
+                          setToast(`Strategy saved to Library: ${autoName} (${data.id})`);
+                          fetchStrategies();
+                        }
+                      })
+                      .catch(() => {});
+                  }
                 }
               }
+            } catch {
+              // malformed SSE line — skip
             }
-          } catch {
-            // malformed SSE line — skip
           }
         }
+      } catch (err) {
+        console.error("Stream error:", err);
+        setText((t) => t + "\n\n[Stream error — connection may have dropped]");
+        setGenerating(false);
       }
     } catch {
       setText((t) => t + "\n\n[Connection error — is the API running?]");
