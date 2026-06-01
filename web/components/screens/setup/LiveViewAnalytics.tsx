@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { useRunList } from "@/hooks/useRun";
+import { useRunList, useAllRuns } from "@/hooks/useRun";
 import { useStrategy } from "@/hooks/useLibrary";
+import { extractLogicName } from "@/components/screens/LibraryScreen";
 import { EquityChart } from "@/components/charts/EquityChart";
 import { Histogram } from "@/components/charts/Histogram";
 import { DonutChart } from "@/components/charts/DonutChart";
@@ -29,6 +30,7 @@ interface PreviewEquityPoint {
 
 interface Props {
   activeStrategyId: string | null;
+  activeLogicName?: string | null;
   ticker: string;
   timeframe: string;
   preview: PreviewResult | null;
@@ -126,16 +128,31 @@ function fixtureRunToListItem(run: Run): ApiRunListItem {
   };
 }
 
-export function LiveViewAnalytics({ activeStrategyId, ticker, timeframe, preview, previewEquity, previewLoading, previewError, fallbackRuns = [] }: Props) {
+export function LiveViewAnalytics({ activeStrategyId, activeLogicName, ticker, timeframe, preview, previewEquity, previewLoading, previewError, fallbackRuns = [] }: Props) {
   const { data: strategy, isLoading: strategyLoading } = useStrategy(activeStrategyId);
   const { data: runList, isLoading: runsLoading, error: runsError } = useRunList(activeStrategyId);
+  const { data: allRunsData, isLoading: allRunsLoading } = useAllRuns();
+
   const fallbackRunMap = useMemo(() => new Map(fallbackRuns.map((run) => [run.id, run])), [fallbackRuns]);
   const fallbackRunList = useMemo(() => fallbackRuns.map(fixtureRunToListItem), [fallbackRuns]);
+
+  // When a logic is selected in Library, use all runs filtered by that logic name
+  const logicRuns = useMemo(() => {
+    if (!activeLogicName || !allRunsData) return null;
+    return allRunsData.filter((r) => extractLogicName(r.name) === activeLogicName);
+  }, [activeLogicName, allRunsData]);
+
   const runs = useMemo(() => {
+    if (logicRuns) return logicRuns;
     if (runList && runList.length > 0) return runList;
     return fallbackRunList;
-  }, [runList, fallbackRunList]);
-  const dataSource = runList && runList.length > 0 ? "API" : fallbackRunList.length > 0 ? "LOCAL" : "EMPTY";
+  }, [logicRuns, runList, fallbackRunList]);
+
+  const dataSource = logicRuns
+    ? `LOGIC:${activeLogicName}`
+    : runList && runList.length > 0 ? "API" : fallbackRunList.length > 0 ? "LOCAL" : "EMPTY";
+
+  const isLoading = activeLogicName ? allRunsLoading : runsLoading;
 
   const [query, setQuery] = useState("");
   const [assetFilter, setAssetFilter] = useState("ALL");
@@ -220,11 +237,15 @@ export function LiveViewAnalytics({ activeStrategyId, ticker, timeframe, preview
     setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id].slice(-8));
   };
 
-  const strategyName = String(strategy?.name ?? (activeStrategyId ? `Strategy ${activeStrategyId}` : "Setup sandbox"));
-  const strategyType = String(strategy?.strategy ?? "setup");
-  const strategyStatus = String(strategy?.status ?? "research");
-  const description = buildDescription(strategy, ticker, timeframe);
-  const loadingText = strategyLoading || (runsLoading && dataSource === "EMPTY") ? "loading…" : runsError && dataSource === "EMPTY" ? "runs API unavailable" : `${filteredRuns.length}/${runs.length} runs · ${dataSource}`;
+  const strategyName = activeLogicName
+    ? activeLogicName.replace(/_/g, " ").toUpperCase()
+    : String(strategy?.name ?? (activeStrategyId ? `Strategy ${activeStrategyId}` : "Setup sandbox"));
+  const strategyType = activeLogicName ? "logic" : String(strategy?.strategy ?? "setup");
+  const strategyStatus = activeLogicName ? "library" : String(strategy?.status ?? "research");
+  const description = activeLogicName
+    ? `Logica "${activeLogicName}" — aggregazione di tutti i run su tutti gli asset e timeframe. Confronto metriche risk-adjusted e dispersione storica dei risultati.`
+    : buildDescription(strategy, ticker, timeframe);
+  const loadingText = strategyLoading || (isLoading && dataSource === "EMPTY") ? "loading…" : runsError && dataSource === "EMPTY" ? "runs API unavailable" : `${filteredRuns.length}/${runs.length} runs · ${dataSource}`;
 
   return (
     <div className={styles.liveView}>
