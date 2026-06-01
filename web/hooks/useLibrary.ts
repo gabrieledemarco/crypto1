@@ -33,6 +33,17 @@ export function useLibrary() {
   });
 }
 
+// Fetch full strategy metadata/config by id
+export function useStrategy(id: string | null) {
+  return useQuery({
+    queryKey: ["strategy", id],
+    queryFn: () => api.get<Record<string, unknown>>(`/strategies/${id}`),
+    enabled: !!id,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
 // Toggle star on a strategy
 export function useStarStrategy() {
   const queryClient = useQueryClient();

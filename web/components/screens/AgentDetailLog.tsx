@@ -162,8 +162,8 @@ function GeneratorBody({ e }: { e: DetailEntry }) {
         <div className={styles.dataRow}>
           <span className={styles.rowLabel}>CONFIG</span>
           <span className={styles.rowValue}>
-            SL×{c.sl_mult ?? "?"} &nbsp;|&nbsp;
-            TP×{c.tp_mult ?? "?"} &nbsp;|&nbsp;
+            SL×{String(c.sl_mult ?? "?")} &nbsp;|&nbsp;
+            TP×{String(c.tp_mult ?? "?")} &nbsp;|&nbsp;
             Dir {String(c.direction ?? "ALL")} &nbsp;|&nbsp;
             Hours {Array.isArray(c.active_hours)
               ? `${(c.active_hours as number[])[0]}–${(c.active_hours as number[])[1]}`
