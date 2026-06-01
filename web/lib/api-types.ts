@@ -179,4 +179,7 @@ export interface VibeV2Progress {
   attempt?: number;
   strategy_id?: string;
   name?: string;
+  sharpe?: number;
+  overall_score?: number;
+  attempts?: number;
 }

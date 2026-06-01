@@ -5,6 +5,7 @@ import { useAssets } from "@/hooks/useAssets";
 import { StrategyBrief, StrategyEvaluation, VibeV2Progress } from "@/lib/api-types";
 import { EvaluationCard } from "./EvaluationCard";
 import { AgentWorkflow } from "./AgentWorkflow";
+import { AgentLog, LogEntry, LogAgent } from "./AgentLog";
 import styles from "./VibeScreen.module.css";
 
 const FALLBACK_ASSETS = ["BTC-USD", "ETH-USD", "SOL-USD", "ARB-USD", "OP-USD", "AVAX-USD"];
@@ -95,6 +96,15 @@ export function VibeScreen() {
   const [v2Evaluation, setV2Evaluation] = useState<StrategyEvaluation | null>(null);
   const [v2Verdict, setV2Verdict] = useState<string>('');
 
+  // Agent pipeline log
+  const [agentLog, setAgentLog] = useState<LogEntry[]>([]);
+  const logIdRef = useRef(0);
+
+  const addLog = (agent: LogAgent, text: string, type: LogEntry["type"] = "msg") => {
+    const id = ++logIdRef.current;
+    setAgentLog(prev => [...prev, { id, ts: Date.now(), agent, text, type }]);
+  };
+
   // Saved strategies for "load previous"
   const [strategies, setStrategies] = useState<SavedStrategy[]>([]);
   const [selectedStratId, setSelectedStratId] = useState("");
@@ -144,16 +154,28 @@ export function VibeScreen() {
     if (d.phase) setV2RawPhase(d.phase);
     if (d.pct !== undefined) setV2Pct(d.pct);
 
-    if (d.phase === 'orchestrating') setV2Phase('Orchestrating...');
+    if (d.phase === 'orchestrating') {
+      setV2Phase('Orchestrating...');
+      addLog('ORCHESTRATOR', `Analyzing ${asset} ${timeframe} market context…`);
+    }
     if (d.phase === 'brief_chunk') {
       setText(prev => prev + (d.text ?? ''));
     }
     if (d.phase === 'brief_done' && d.brief) {
       setV2Brief(d.brief);
+      const b = d.brief;
+      addLog('ORCHESTRATOR', `Brief: ${b.strategy_type} | confidence: ${b.confidence}`, 'data');
+      addLog('ORCHESTRATOR', `Edge: ${b.edge_hypothesis}`);
+      addLog('ORCHESTRATOR', `Entry: ${b.entry_logic}`);
+      if (b.recommended_indicators?.length) {
+        addLog('ORCHESTRATOR', `Indicators: ${b.recommended_indicators.join(', ')}`, 'data');
+      }
     }
     if (d.phase === 'generating') {
-      setV2Phase(`Generating strategy (attempt ${d.attempt ?? 1}/3)...`);
-      setV2Attempt(d.attempt ?? 1);
+      const att = d.attempt ?? 1;
+      setV2Phase(`Generating strategy (attempt ${att}/3)...`);
+      setV2Attempt(att);
+      addLog('GENERATOR', `Writing strategy code (attempt ${att}/3)…`);
     }
     if (d.phase === 'code_chunk') {
       setText(prev => prev + (d.text ?? ''));
@@ -161,31 +183,73 @@ export function VibeScreen() {
     if (d.phase === 'backtesting') {
       setV2Phase('Running backtest...');
       setText('');
+      addLog('ENGINE', 'Running in-sample + OOS backtest…');
+    }
+    if (d.phase === 'backtest_result' && d.metrics) {
+      const m = d.metrics as Record<string, Record<string, number>>;
+      const is = m.is_metrics ?? {};
+      const sharpe = is.sharpe_ratio ?? is.sharpe;
+      const dd = is.max_drawdown_pct ?? is.max_dd;
+      const n = is.n_trades;
+      const wr = is.win_rate_pct;
+      const ver = (m as Record<string, unknown>).best_version as string | undefined;
+      const fmt = (v: number | undefined, dec: number) =>
+        v !== undefined ? v.toFixed(dec) : 'N/A';
+      addLog('ENGINE',
+        `IS Sharpe: ${fmt(sharpe, 3)} | DD: ${fmt(dd, 1)}% | Trades: ${n ?? 'N/A'} | Win: ${fmt(wr, 1)}%${ver ? ` | ${ver}` : ''}`,
+        'data',
+      );
     }
     if (d.phase === 'evaluating') {
       setV2Phase('Expert evaluation...');
+      addLog('EVALUATOR', 'Scoring strategy across 6 dimensions…');
     }
     if (d.phase === 'evaluation' && d.result) {
       setV2Evaluation(d.result);
+      const ev = d.result;
+      const sc = ev.scores ?? {};
+      addLog('EVALUATOR',
+        `Score: ${ev.overall_score?.toFixed(1) ?? 'N/A'}/5 | verdict: ${ev.verdict?.toUpperCase() ?? '?'}`,
+        'data',
+      );
+      const abbr: Record<string, string> = {
+        alpha_source: 'Alpha', signal_logic: 'Signal', risk_management: 'Risk',
+        regime_sensitivity: 'Regime', statistical_robustness: 'Stats',
+        implementation_quality: 'Impl',
+      };
+      const scoreStr = Object.entries(sc)
+        .map(([k, v]) => `${abbr[k] ?? k}:${v}`)
+        .join(' · ');
+      if (scoreStr) addLog('EVALUATOR', scoreStr, 'data');
+      if (ev.verdict_rationale) addLog('EVALUATOR', ev.verdict_rationale);
+      ev.weaknesses?.slice(0, 2).forEach(w => addLog('EVALUATOR', `⚠ ${w}`));
+      ev.fatal_flaws?.slice(0, 2).forEach(f => addLog('EVALUATOR', `✗ FATAL: ${f}`, 'error'));
     }
     if (d.phase === 'decision') {
       setV2Verdict(d.verdict ?? '');
       setV2Phase(d.msg ?? '');
+      addLog('DECISION', `→ ${(d.verdict ?? 'unknown').toUpperCase()}${d.msg ? `: ${d.msg}` : ''}`);
     }
     if (d.phase === 'iteration') {
       setV2Phase(`Refining strategy (attempt ${d.attempt}/3)...`);
       setV2Brief(null);
       setV2Evaluation(null);
       setText('');
+      addLog('SYSTEM', `Refining brief for attempt ${d.attempt}…`);
     }
     if (d.phase === 'done') {
       setGenerating(false);
       setV2Phase('Complete');
+      addLog('SYSTEM',
+        `✓ PROMOTED${d.sharpe !== undefined ? ` — Sharpe: ${d.sharpe.toFixed(3)}` : ''}${d.overall_score !== undefined ? ` | Score: ${d.overall_score.toFixed(1)}/5` : ''}${d.name ? ` | ${d.name}` : ''}`,
+        'data',
+      );
     }
     if (d.phase === 'error') {
       setGenerating(false);
       setV2Phase('Error');
       setText(prev => prev + `\n\n[Error: ${d.msg ?? 'generation failed'}]`);
+      addLog('SYSTEM', `✗ ${d.msg ?? 'generation failed'}`, 'error');
     }
   };
 
@@ -206,6 +270,8 @@ export function VibeScreen() {
     setV2Brief(null);
     setV2Evaluation(null);
     setV2Verdict('');
+    setAgentLog([]);
+    logIdRef.current = 0;
 
     const enc = encodeURIComponent(asset);
     const [assetStats, quantAnalysis, garchForecast] = await Promise.all([
@@ -712,6 +778,16 @@ export function VibeScreen() {
           v1Status={status}
         />
       </div>
+
+      {/* Pipeline Log — full width, below workflow */}
+      {useV2 && (
+        <div style={{ gridColumn: "span 12" }}>
+          <AgentLog
+            entries={agentLog}
+            onClear={() => { setAgentLog([]); logIdRef.current = 0; }}
+          />
+        </div>
+      )}
     </div>
   );
 }
