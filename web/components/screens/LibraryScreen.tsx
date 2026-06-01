@@ -5,7 +5,7 @@ import { useStore } from "@/store";
 import { fixtures } from "@/lib/fixtures";
 import { api } from "@/lib/api";
 import { useLibrary, useStarStrategy } from "@/hooks/useLibrary";
-import { useRunList, useDeleteRun } from "@/hooks/useRun";
+import { useRunList, useDeleteRun, useAllRuns } from "@/hooks/useRun";
 import type { ApiRunListItem } from "@/lib/api-types";
 import styles from "./LibraryScreen.module.css";
 import type { LibraryEntry, Run, RunMetrics } from "@/lib/fixtures";
@@ -42,6 +42,14 @@ function buildRunStub(run: RunListItem): Run {
 
 const TF_ORDER = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
+// Extract the logical strategy name from a run name
+// e.g. pipe_097_1m_bb_tight_scalp → bb_tight_scalp
+export function extractLogicName(runName: string): string {
+  const m = runName.match(/^pipe_\d+_\d+[mhd]_(.+)$/i);
+  if (m) return m[1];
+  return runName;
+}
+
 function extractTF(entry: LibraryEntry): string {
   const cfg = (entry as unknown as { config?: Record<string, unknown> }).config;
   if (cfg?.timeframe) return String(cfg.timeframe).toLowerCase();
@@ -60,10 +68,8 @@ function extractAsset(entry: LibraryEntry): string {
 }
 
 function extractMethod(entry: LibraryEntry): string {
-  // Use strategy_type from DB if it's a real archetype name
   const strategy = entry.strategy;
   if (strategy && strategy.includes("_")) {
-    // It's likely an archetype name (e.g., "bb_reversion", "rsi_reversion")
     const s = strategy.toLowerCase();
     if (s.includes("order_flow")) return "OFI";
     if (s.includes("tick_direction")) return "TICK";
@@ -77,8 +83,7 @@ function extractMethod(entry: LibraryEntry): string {
     if (s.includes("momentum")) return "MOM";
     if (s.includes("adaptive_regime")) return "ADAPT";
     if (s.includes("volume_breakout")) return "VOL";
-    // Return the archetype name directly if no abbreviation match
-    if (["ema_cross_fast", "ema_cross_rsi", "ema_scalp_3_8", "rsi_reversion", "rsi_trend", 
+    if (["ema_cross_fast", "ema_cross_rsi", "ema_scalp_3_8", "rsi_reversion", "rsi_trend",
          "rsi_fast_7", "bb_reversion", "bb_squeeze", "bb_tight_scalp", "macd_cross",
          "donchian_20", "donchian_10_trend", "momentum_5bar", "vwap_reversion",
          "vwap_scalp", "adaptive_regime", "order_flow_imbalance", "tick_direction_momentum",
@@ -86,7 +91,6 @@ function extractMethod(entry: LibraryEntry): string {
       return s;
     }
   }
-  // Fallback: extract from name
   const s = strategy.toLowerCase();
   if (s.includes("order_flow") || s.includes("ofi")) return "OFI";
   if (s.includes("tick")) return "TICK";
@@ -105,6 +109,17 @@ function extractMethod(entry: LibraryEntry): string {
 
 export function LibraryScreen() {
   const { goto, setToast, setActiveStrategy, loadRunFromHistory, setPendingSetupParams, setPendingVibeParams } = useStore();
+
+  // View mode toggle: logic-based vs strategy-based
+  const [logicView, setLogicView] = useState(true);
+
+  // --- Logic view state ---
+  const [selectedLogicName, setSelectedLogicName] = useState<string | null>(null);
+  const [logicQuery, setLogicQuery] = useState("");
+  const [runTfFilter, setRunTfFilter] = useState("ALL");
+  const [runAssetFilter, setRunAssetFilter] = useState("ALL");
+
+  // --- Strategy view state ---
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [tfFilter, setTfFilter] = useState("ALL");
@@ -121,39 +136,89 @@ export function LibraryScreen() {
   const starMutation = useStarStrategy();
   const deleteMutation = useDeleteRun();
 
-  // Debounce strategy selection to prevent N+1 query bursts when user clicks quickly
+  // All runs for logic view
+  const { data: allRunsData, isLoading: allRunsLoading } = useAllRuns();
+  const allRuns: RunListItem[] = allRunsData ?? [];
+
+  // Per-strategy runs (strategy view detail panel)
   const [debouncedStrategyId, setDebouncedStrategyId] = useState<string | undefined>(selectedEntry?.id);
   useEffect(() => {
     let mounted = true;
-    const timer = setTimeout(() => {
-      if (mounted) setDebouncedStrategyId(selectedEntry?.id);
-    }, 300);
+    const timer = setTimeout(() => { if (mounted) setDebouncedStrategyId(selectedEntry?.id); }, 300);
     return () => { mounted = false; clearTimeout(timer); };
   }, [selectedEntry?.id]);
-
   const { data: runList, isLoading: runsLoading } = useRunList(debouncedStrategyId);
   const displayRuns: RunListItem[] = runList ?? [];
 
-  // Prefetch run list on hover so the panel opens instantly on click
   const prefetchRuns = useCallback(
     (strategyId: string) => {
       queryClient.prefetchQuery({
         queryKey: ["run-list", strategyId],
-        queryFn: () =>
-          api.get<ApiRunListItem[]>(
-            `/runs?strategy_id=${encodeURIComponent(strategyId)}`
-          ),
+        queryFn: () => api.get<ApiRunListItem[]>(`/runs?strategy_id=${encodeURIComponent(strategyId)}`),
         staleTime: 30_000,
       });
     },
     [queryClient]
   );
 
-  // apiLibrary has the same shape as LibraryEntry (both from useLibrary which is typed LibraryEntryApi[])
+  // ── Logic view computations ────────────────────────────────────────────────
+
+  const logicGroups = useMemo(() => {
+    const map = new Map<string, RunListItem[]>();
+    for (const run of allRuns) {
+      const logic = extractLogicName(run.name);
+      if (!map.has(logic)) map.set(logic, []);
+      map.get(logic)!.push(run);
+    }
+    return map;
+  }, [allRuns]);
+
+  const filteredLogics = useMemo(() => {
+    const q = logicQuery.toLowerCase();
+    return [...logicGroups.entries()]
+      .filter(([name]) => !q || name.toLowerCase().includes(q))
+      .sort((a, b) => {
+        const sa = Math.max(...a[1].map(r => r.sharpe ?? -Infinity));
+        const sb = Math.max(...b[1].map(r => r.sharpe ?? -Infinity));
+        return sb - sa;
+      });
+  }, [logicGroups, logicQuery]);
+
+  const logicTFs = useMemo(() => {
+    if (!selectedLogicName) return [];
+    const tfs = new Set<string>();
+    for (const run of allRuns) {
+      if (extractLogicName(run.name) === selectedLogicName && run.timeframe) tfs.add(run.timeframe);
+    }
+    return TF_ORDER.filter(t => tfs.has(t)).concat([...tfs].filter(t => !TF_ORDER.includes(t)));
+  }, [allRuns, selectedLogicName]);
+
+  const logicAssets = useMemo(() => {
+    if (!selectedLogicName) return [];
+    const assets = new Set<string>();
+    for (const run of allRuns) {
+      if (extractLogicName(run.name) === selectedLogicName && run.ticker) assets.add(run.ticker.split("-")[0]);
+    }
+    return [...assets].sort();
+  }, [allRuns, selectedLogicName]);
+
+  const logicRuns = useMemo(() => {
+    if (!selectedLogicName) return [];
+    return allRuns.filter(run => {
+      if (extractLogicName(run.name) !== selectedLogicName) return false;
+      if (runTfFilter !== "ALL" && run.timeframe !== runTfFilter) return false;
+      if (runAssetFilter !== "ALL" && run.ticker?.split("-")[0] !== runAssetFilter) return false;
+      return true;
+    });
+  }, [allRuns, selectedLogicName, runTfFilter, runAssetFilter]);
+
+  // Reset run filters when logic changes
+  useEffect(() => { setRunTfFilter("ALL"); setRunAssetFilter("ALL"); }, [selectedLogicName]);
+
+  // ── Strategy view computations ─────────────────────────────────────────────
+
   const rawEntries: LibraryEntry[] =
-    apiLibrary && apiLibrary.length > 0
-      ? (apiLibrary as LibraryEntry[])
-      : fixtures.library;
+    apiLibrary && apiLibrary.length > 0 ? (apiLibrary as LibraryEntry[]) : fixtures.library;
 
   const enriched = useMemo<EnrichedEntry[]>(
     () => rawEntries.map(e => ({ ...e, _tf: extractTF(e), _asset: extractAsset(e), _method: extractMethod(e) })),
@@ -204,7 +269,6 @@ export function LibraryScreen() {
   };
 
   type GroupRow = { type: "group"; key: string; count: number } | { type: "entry"; entry: EnrichedEntry };
-
   const rows = useMemo<GroupRow[]>(() => {
     if (groupBy === "none") return filtered.map(e => ({ type: "entry", entry: e }));
     const getKey = (e: EnrichedEntry) => groupBy === "tf" ? e._tf : groupBy === "asset" ? e._asset : e._method;
@@ -225,6 +289,8 @@ export function LibraryScreen() {
   const toggleGroup = (key: string) =>
     setCollapsedGroups(prev => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next; });
 
+  // ── Shared action handlers ─────────────────────────────────────────────────
+
   const handleStar = (e: React.MouseEvent, id: string) => { e.stopPropagation(); starMutation.mutate(id); };
   const handleLoad = (e: React.MouseEvent, entry: LibraryEntry) => {
     e.stopPropagation(); setActiveStrategy(entry.id); setToast(`"${entry.name}" loaded → Setup`); goto("setup");
@@ -241,7 +307,6 @@ export function LibraryScreen() {
   const handleLoadRun = (e: React.MouseEvent, run: RunListItem) => {
     e.stopPropagation(); loadRunFromHistory(buildRunStub(run)); setToast(`Run "${run.name}" caricato → Equity`); goto("equity");
   };
-
   const handleLoadInVibe = async (e: React.MouseEvent, run: RunListItem) => {
     e.stopPropagation();
     const asset = run.ticker?.includes("-") ? run.ticker : `${run.ticker}-USD`;
@@ -250,11 +315,7 @@ export function LibraryScreen() {
     if (run.strategy_id) {
       try {
         const res = await fetch(`/api/strategies/${run.strategy_id}`);
-        if (res.ok) {
-          const strat = await res.json();
-          code = strat.code || null;
-          config = strat.config || null;
-        }
+        if (res.ok) { const strat = await res.json(); code = strat.code || null; config = strat.config || null; }
       } catch { /* ignore */ }
     }
     if (!config) {
@@ -265,8 +326,7 @@ export function LibraryScreen() {
       const p = run.params as Record<string, unknown>;
       const sl = (p.sl_mult as number) ?? 2.0, tp = (p.tp_mult as number) ?? 5.0;
       const hours = (p.active_hours as [number, number]) ?? [6, 22];
-      code = [
-        `def agent_fn(df):`, `    """`, `    Loaded from run: ${run.name || run.ticker || "backtest"}`,
+      code = [`def agent_fn(df):`, `    """`, `    Loaded from run: ${run.name || run.ticker || "backtest"}`,
         `    Asset: ${run.ticker}  Timeframe: ${run.timeframe ?? "1h"}`, `    """`,
         `    return generate_signals_v2(`, `        df,`, `        atr_mult_sl=${sl},`,
         `        atr_mult_tp=${tp},`, `        active_hours=(${hours[0]}, ${hours[1]}),`,
@@ -276,7 +336,6 @@ export function LibraryScreen() {
     setPendingVibeParams({ asset, timeframe: run.timeframe ?? "1h", code, config });
     setToast(`${run.ticker} caricato in Vibe Trading`); goto("vibe");
   };
-
   const handleReRun = (e: React.MouseEvent, run: RunListItem) => {
     e.stopPropagation();
     const p = run.params as Record<string, unknown>;
@@ -293,136 +352,272 @@ export function LibraryScreen() {
     setPendingSetupParams(setupP); setToast(`Parametri di "${run.name}" caricati → Setup`); goto("setup");
   };
 
+  const runRowActions = { onLoad: handleLoadRun, onReRun: handleReRun, onVibe: handleLoadInVibe, onDelete: handleDeleteRun };
+  const hasRightPanel = logicView ? !!selectedLogicName : !!selectedEntry;
+
   return (
     <div className={styles.wrapper}>
-      <div className={`${styles.panel} ${selectedEntry ? styles.panelSplit : styles.panelFull}`}>
-
+      {/* ── Main panel ── */}
+      <div className={`${styles.panel} ${hasRightPanel ? styles.panelSplit : styles.panelFull}`}>
         <div className={styles.panelHeader}>
           <span className={styles.panelTitle}>STRATEGY LIBRARY</span>
-          <span className={styles.panelSub}>{rawEntries.length} strategies · {filtered.length} shown</span>
-        </div>
-
-        {/* Filter row 1: search + status + group */}
-        <div className={styles.filterBar}>
-          <input className={styles.searchInput} placeholder="search name / strategy / tag…" value={query} onChange={e => setQuery(e.target.value)} />
-          <span className={styles.sep}>|</span>
-          <span className={styles.filterLabel}>STATUS</span>
+          <span className={styles.panelSub}>
+            {logicView
+              ? `${filteredLogics.length} logiche · ${allRuns.length} run totali`
+              : `${rawEntries.length} strategies · ${filtered.length} shown`}
+          </span>
+          <span style={{ flex: 1 }} />
+          {/* View toggle */}
           <div className={styles.pillGroup}>
-            {(["ALL", "live", "research", "archived"] as StatusFilter[]).map(s => (
-              <button key={s} className={`${styles.pill} ${statusFilter === s ? styles.pillActive : ""}`} onClick={() => setStatusFilter(s)}>{s.toUpperCase()}</button>
-            ))}
-          </div>
-          <span className={styles.sep}>|</span>
-          <span className={styles.filterLabel}>GROUP</span>
-          <div className={styles.pillGroup}>
-            {(["none", "tf", "asset", "method"] as GroupBy[]).map(g => (
-              <button key={g} className={`${styles.pill} ${groupBy === g ? styles.pillAmber : ""}`} onClick={() => setGroupBy(g)}>{g.toUpperCase()}</button>
-            ))}
+            <button className={`${styles.pill} ${logicView ? styles.pillAmber : ""}`}
+              onClick={() => { setLogicView(true); setSelectedEntry(null); }}>LOGIC</button>
+            <button className={`${styles.pill} ${!logicView ? styles.pillAmber : ""}`}
+              onClick={() => { setLogicView(false); setSelectedLogicName(null); }}>STRATEGIES</button>
           </div>
         </div>
 
-        {/* Filter row 2: dimensional filters */}
-        <div className={styles.filterBar2}>
-          <span className={styles.filterLabel}>TF</span>
-          <div className={styles.pillGroup}>
-            {["ALL", ...allTFs].map(t => (
-              <button key={t} className={`${styles.pill} ${tfFilter === t ? styles.pillCyan : ""}`} onClick={() => setTfFilter(t)}>{t}</button>
-            ))}
-          </div>
-          <span className={styles.sep}>|</span>
-          <span className={styles.filterLabel}>ASSET</span>
-          <div className={styles.pillGroup}>
-            {["ALL", ...allAssets].map(a => (
-              <button key={a} className={`${styles.pill} ${assetFilter === a ? styles.pillCyan : ""}`} onClick={() => setAssetFilter(a)}>{a}</button>
-            ))}
-          </div>
-          <span className={styles.sep}>|</span>
-          <span className={styles.filterLabel}>METHOD</span>
-          <div className={styles.pillGroup}>
-            {["ALL", ...allMethods].map(m => (
-              <button key={m} className={`${styles.pill} ${methodFilter === m ? styles.pillCyan : ""}`} onClick={() => setMethodFilter(m)}>{m}</button>
-            ))}
-          </div>
-        </div>
-
-        {/* Table */}
-        <div className={styles.tableWrap}>
-          <div className={styles.thead}>
-            <span className={styles.th}>★</span>
-            {(["name","tf","asset","method","status","sharpe","cagr","maxdd","pf","trades"] as SortCol[]).map(col => (
-              <button key={col} className={`${styles.thBtn} ${sortCol === col ? styles.thBtnActive : ""}`} onClick={() => handleSort(col)}>
-                {col.toUpperCase()}
-                {sortCol === col && <span className={styles.sortInd}>{sortDir === "asc" ? "▲" : "▼"}</span>}
-              </button>
-            ))}
-            <span className={styles.th}>ACTION</span>
-          </div>
-
-          {rows.map((row) => {
-            if (row.type === "group") {
-              const collapsed = collapsedGroups.has(row.key);
-              return (
-                <div key={`g_${row.key}`} className={styles.groupHeader} onClick={() => toggleGroup(row.key)}>
-                  <span className={styles.groupChevron}>{collapsed ? "▶" : "▼"}</span>
-                  <span className={styles.groupKey}>{row.key}</span>
-                  <span className={styles.groupCount}>{row.count}</span>
-                </div>
-              );
-            }
-            const entry = row.entry;
-            return (
-              <div
-                key={entry.id}
-                className={`${styles.trow} ${entry.starred ? styles.trowStarred : ""} ${selectedEntry?.id === entry.id ? styles.trowSelected : ""}`}
-                onClick={() => handleSelectEntry(entry)}
-                onMouseEnter={() => prefetchRuns(entry.id)}
-              >
-                <button className={`${styles.starBtn} ${entry.starred ? styles.starBtnOn : ""}`} onClick={e => handleStar(e, entry.id)} title={entry.starred ? "Unstar" : "Star"}>
-                  {entry.starred ? "★" : "☆"}
-                </button>
-                <span className={styles.name}>
-                  {entry.name}
-                  {(entry as unknown as { run_count?: number }).run_count != null &&
-                    (entry as unknown as { run_count?: number }).run_count! > 0 && (
-                    <span className={styles.runCountBadge}>
-                      {(entry as unknown as { run_count?: number }).run_count} run{(entry as unknown as { run_count?: number }).run_count !== 1 ? "s" : ""}
-                    </span>
-                  )}
-                </span>
-                <span className={`${styles.tfTag} ${styles.filterCell}`} title={`Filter TF: ${entry._tf}`}
-                  onClick={e => { e.stopPropagation(); setTfFilter(f => f === entry._tf ? "ALL" : entry._tf); }}>
-                  {entry._tf}
-                </span>
-                <span className={`${styles.assetTag} ${styles.filterCell}`} title={`Filter asset: ${entry._asset}`}
-                  onClick={e => { e.stopPropagation(); setAssetFilter(f => f === entry._asset ? "ALL" : entry._asset); }}>
-                  {entry._asset}
-                </span>
-                <span className={`${styles.methodTag} ${styles.filterCell}`} title={`Filter method: ${entry._method}`}
-                  onClick={e => { e.stopPropagation(); setMethodFilter(f => f === entry._method ? "ALL" : entry._method); }}>
-                  {entry._method}
-                </span>
-                <StatusBadge status={entry.status}
-                  onClick={e => { e.stopPropagation(); setStatusFilter(f => f === entry.status ? "ALL" : entry.status as StatusFilter); }} />
-                <span className={styles.metricCell} style={{ color: entry.metrics.sharpe >= 1 ? "var(--green)" : "var(--amber)" }}>
-                  {entry.metrics.sharpe.toFixed(2)}
-                </span>
-                <span className={styles.metricCell} style={{ color: "var(--green)" }}>
-                  {entry.metrics.cagr >= 1 ? `${entry.metrics.cagr.toFixed(1)}%` : `${(entry.metrics.cagr * 100).toFixed(1)}%`}
-                </span>
-                <span className={styles.metricCell} style={{ color: "var(--coral)" }}>
-                  {entry.metrics.maxDD <= -1 ? `${entry.metrics.maxDD.toFixed(1)}%` : `${(entry.metrics.maxDD * 100).toFixed(1)}%`}
-                </span>
-                <span className={styles.metricCell} style={{ color: "var(--amber)" }}>{entry.metrics.pf.toFixed(2)}</span>
-                <span className={styles.metricCell}>{entry.metrics.trades}</span>
-                <button className={styles.loadBtn} onClick={e => handleLoad(e, entry)} title="Load in Setup">LOAD →</button>
+        {logicView ? (
+          /* ── Logic view left panel ── */
+          <>
+            <div className={styles.filterBar}>
+              <input className={styles.searchInput} placeholder="cerca logica…" value={logicQuery} onChange={e => setLogicQuery(e.target.value)} />
+              {allRunsLoading && <span className={styles.filterLabel}>loading…</span>}
+            </div>
+            <div className={styles.tableWrap}>
+              <div className={styles.logicThead}>
+                <span className={styles.th}>LOGIC NAME</span>
+                <span className={styles.th}>RUNS</span>
+                <span className={styles.th}>ASSETS</span>
+                <span className={styles.th}>TFs</span>
+                <span className={styles.th}>BEST SHARPE</span>
+                <span className={styles.th}>BEST CAGR%</span>
+                <span className={styles.th}>WORST DD%</span>
               </div>
-            );
-          })}
-        </div>
+              {filteredLogics.map(([logicName, runs]) => {
+                const bestSharpe = Math.max(...runs.map(r => r.sharpe ?? -Infinity));
+                const bestCagr   = Math.max(...runs.map(r => r.cagr ?? -Infinity));
+                const worstDD    = Math.min(...runs.map(r => r.max_dd ?? Infinity));
+                const assets     = [...new Set(runs.map(r => r.ticker?.split("-")[0] ?? "—"))].filter(Boolean);
+                const tfs        = [...new Set(runs.map(r => r.timeframe ?? "—"))].filter(Boolean);
+                const isSelected = selectedLogicName === logicName;
+                return (
+                  <div
+                    key={logicName}
+                    className={`${styles.logicRow} ${isSelected ? styles.logicRowSelected : ""}`}
+                    onClick={() => setSelectedLogicName(prev => prev === logicName ? null : logicName)}
+                  >
+                    <span className={styles.logicName}>{logicName}</span>
+                    <span className={styles.logicCount}>{runs.length}</span>
+                    <span className={styles.logicDims}>{assets.join(" · ") || "—"}</span>
+                    <span className={styles.logicDims}>{TF_ORDER.filter(t => tfs.includes(t)).concat(tfs.filter(t => !TF_ORDER.includes(t))).join(" · ") || "—"}</span>
+                    <span className={styles.logicMetric} style={{ color: bestSharpe >= 1 ? "var(--green)" : "var(--amber)" }}>
+                      {Number.isFinite(bestSharpe) ? bestSharpe.toFixed(2) : "—"}
+                    </span>
+                    <span className={styles.logicMetric} style={{ color: bestCagr >= 0 ? "var(--green)" : "var(--coral)" }}>
+                      {Number.isFinite(bestCagr) ? `${bestCagr.toFixed(1)}%` : "—"}
+                    </span>
+                    <span className={styles.logicMetric} style={{ color: "var(--coral)" }}>
+                      {Number.isFinite(worstDD) ? `${worstDD.toFixed(1)}%` : "—"}
+                    </span>
+                  </div>
+                );
+              })}
+              {!allRunsLoading && filteredLogics.length === 0 && (
+                <div className={styles.emptyMsg}>Nessun run trovato. Avvia un backtest dalla schermata Setup.</div>
+              )}
+            </div>
+          </>
+        ) : (
+          /* ── Strategy view left panel (existing) ── */
+          <>
+            <div className={styles.filterBar}>
+              <input className={styles.searchInput} placeholder="search name / strategy / tag…" value={query} onChange={e => setQuery(e.target.value)} />
+              <span className={styles.sep}>|</span>
+              <span className={styles.filterLabel}>STATUS</span>
+              <div className={styles.pillGroup}>
+                {(["ALL", "live", "research", "archived"] as StatusFilter[]).map(s => (
+                  <button key={s} className={`${styles.pill} ${statusFilter === s ? styles.pillActive : ""}`} onClick={() => setStatusFilter(s)}>{s.toUpperCase()}</button>
+                ))}
+              </div>
+              <span className={styles.sep}>|</span>
+              <span className={styles.filterLabel}>GROUP</span>
+              <div className={styles.pillGroup}>
+                {(["none", "tf", "asset", "method"] as GroupBy[]).map(g => (
+                  <button key={g} className={`${styles.pill} ${groupBy === g ? styles.pillAmber : ""}`} onClick={() => setGroupBy(g)}>{g.toUpperCase()}</button>
+                ))}
+              </div>
+            </div>
+            <div className={styles.filterBar2}>
+              <span className={styles.filterLabel}>TF</span>
+              <div className={styles.pillGroup}>
+                {["ALL", ...allTFs].map(t => (
+                  <button key={t} className={`${styles.pill} ${tfFilter === t ? styles.pillCyan : ""}`} onClick={() => setTfFilter(t)}>{t}</button>
+                ))}
+              </div>
+              <span className={styles.sep}>|</span>
+              <span className={styles.filterLabel}>ASSET</span>
+              <div className={styles.pillGroup}>
+                {["ALL", ...allAssets].map(a => (
+                  <button key={a} className={`${styles.pill} ${assetFilter === a ? styles.pillCyan : ""}`} onClick={() => setAssetFilter(a)}>{a}</button>
+                ))}
+              </div>
+              <span className={styles.sep}>|</span>
+              <span className={styles.filterLabel}>METHOD</span>
+              <div className={styles.pillGroup}>
+                {["ALL", ...allMethods].map(m => (
+                  <button key={m} className={`${styles.pill} ${methodFilter === m ? styles.pillCyan : ""}`} onClick={() => setMethodFilter(m)}>{m}</button>
+                ))}
+              </div>
+            </div>
+            <div className={styles.tableWrap}>
+              <div className={styles.thead}>
+                <span className={styles.th}>★</span>
+                {(["name","tf","asset","method","status","sharpe","cagr","maxdd","pf","trades"] as SortCol[]).map(col => (
+                  <button key={col} className={`${styles.thBtn} ${sortCol === col ? styles.thBtnActive : ""}`} onClick={() => handleSort(col)}>
+                    {col.toUpperCase()}
+                    {sortCol === col && <span className={styles.sortInd}>{sortDir === "asc" ? "▲" : "▼"}</span>}
+                  </button>
+                ))}
+                <span className={styles.th}>ACTION</span>
+              </div>
+              {rows.map((row) => {
+                if (row.type === "group") {
+                  const collapsed = collapsedGroups.has(row.key);
+                  return (
+                    <div key={`g_${row.key}`} className={styles.groupHeader} onClick={() => toggleGroup(row.key)}>
+                      <span className={styles.groupChevron}>{collapsed ? "▶" : "▼"}</span>
+                      <span className={styles.groupKey}>{row.key}</span>
+                      <span className={styles.groupCount}>{row.count}</span>
+                    </div>
+                  );
+                }
+                const entry = row.entry;
+                return (
+                  <div key={entry.id}
+                    className={`${styles.trow} ${entry.starred ? styles.trowStarred : ""} ${selectedEntry?.id === entry.id ? styles.trowSelected : ""}`}
+                    onClick={() => handleSelectEntry(entry)}
+                    onMouseEnter={() => prefetchRuns(entry.id)}
+                  >
+                    <button className={`${styles.starBtn} ${entry.starred ? styles.starBtnOn : ""}`} onClick={e => handleStar(e, entry.id)} title={entry.starred ? "Unstar" : "Star"}>
+                      {entry.starred ? "★" : "☆"}
+                    </button>
+                    <span className={styles.name}>
+                      {entry.name}
+                      {(entry as unknown as { run_count?: number }).run_count != null &&
+                        (entry as unknown as { run_count?: number }).run_count! > 0 && (
+                        <span className={styles.runCountBadge}>
+                          {(entry as unknown as { run_count?: number }).run_count} run{(entry as unknown as { run_count?: number }).run_count !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                    </span>
+                    <span className={`${styles.tfTag} ${styles.filterCell}`} title={`Filter TF: ${entry._tf}`}
+                      onClick={e => { e.stopPropagation(); setTfFilter(f => f === entry._tf ? "ALL" : entry._tf); }}>
+                      {entry._tf}
+                    </span>
+                    <span className={`${styles.assetTag} ${styles.filterCell}`} title={`Filter asset: ${entry._asset}`}
+                      onClick={e => { e.stopPropagation(); setAssetFilter(f => f === entry._asset ? "ALL" : entry._asset); }}>
+                      {entry._asset}
+                    </span>
+                    <span className={`${styles.methodTag} ${styles.filterCell}`} title={`Filter method: ${entry._method}`}
+                      onClick={e => { e.stopPropagation(); setMethodFilter(f => f === entry._method ? "ALL" : entry._method); }}>
+                      {entry._method}
+                    </span>
+                    <StatusBadge status={entry.status}
+                      onClick={e => { e.stopPropagation(); setStatusFilter(f => f === entry.status ? "ALL" : entry.status as StatusFilter); }} />
+                    <span className={styles.metricCell} style={{ color: entry.metrics.sharpe >= 1 ? "var(--green)" : "var(--amber)" }}>
+                      {entry.metrics.sharpe.toFixed(2)}
+                    </span>
+                    <span className={styles.metricCell} style={{ color: "var(--green)" }}>
+                      {entry.metrics.cagr >= 1 ? `${entry.metrics.cagr.toFixed(1)}%` : `${(entry.metrics.cagr * 100).toFixed(1)}%`}
+                    </span>
+                    <span className={styles.metricCell} style={{ color: "var(--coral)" }}>
+                      {entry.metrics.maxDD <= -1 ? `${entry.metrics.maxDD.toFixed(1)}%` : `${(entry.metrics.maxDD * 100).toFixed(1)}%`}
+                    </span>
+                    <span className={styles.metricCell} style={{ color: "var(--amber)" }}>{entry.metrics.pf.toFixed(2)}</span>
+                    <span className={styles.metricCell}>{entry.metrics.trades}</span>
+                    <button className={styles.loadBtn} onClick={e => handleLoad(e, entry)} title="Load in Setup">LOAD →</button>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Run comparison panel */}
-      {selectedEntry && (
+      {/* ── Right panel: logic runs ── */}
+      {logicView && selectedLogicName && (
+        <div className={`${styles.panel} ${styles.runPanel}`}>
+          <div className={styles.panelHeader}>
+            <span className={styles.panelTitle}>{selectedLogicName.toUpperCase()}</span>
+            <span className={styles.panelSub}>
+              {logicRuns.length} run{logicRuns.length !== 1 ? "s" : ""}
+              {runTfFilter !== "ALL" || runAssetFilter !== "ALL" ? " (filtrati)" : ""}
+              {" · "}{logicGroups.get(selectedLogicName)?.length ?? 0} totali
+            </span>
+            <span style={{ flex: 1 }} />
+            <button className={styles.closeBtn} onClick={() => setSelectedLogicName(null)}>✕</button>
+          </div>
+          {/* TF + Asset filters for run panel */}
+          <div className={styles.filterBar2}>
+            <span className={styles.filterLabel}>TF</span>
+            <div className={styles.pillGroup}>
+              {["ALL", ...logicTFs].map(t => (
+                <button key={t} className={`${styles.pill} ${runTfFilter === t ? styles.pillCyan : ""}`} onClick={() => setRunTfFilter(t)}>{t}</button>
+              ))}
+            </div>
+            <span className={styles.sep}>|</span>
+            <span className={styles.filterLabel}>ASSET</span>
+            <div className={styles.pillGroup}>
+              {["ALL", ...logicAssets].map(a => (
+                <button key={a} className={`${styles.pill} ${runAssetFilter === a ? styles.pillCyan : ""}`} onClick={() => setRunAssetFilter(a)}>{a}</button>
+              ))}
+            </div>
+          </div>
+          <div className={styles.tableWrap}>
+            {logicRuns.length === 0 ? (
+              <div className={styles.emptyMsg}>
+                Nessun run per questa combinazione di filtri.<br />
+                Carica la strategia in Setup e avvia un backtest su un asset o TF diverso.
+              </div>
+            ) : (
+              <>
+                <div className={styles.runThead}>
+                  <span className={styles.th}>NAME</span>
+                  <span className={styles.th}>ASSET</span>
+                  <span className={styles.th}>TF</span>
+                  <span className={styles.th}>START</span>
+                  <span className={styles.th}>END</span>
+                  <span className={styles.th}>SHARPE</span>
+                  <span className={styles.th}>CAGR%</span>
+                  <span className={styles.th}>MAXDD%</span>
+                  <span className={styles.th}>PF</span>
+                  <span className={styles.th}>TRADES</span>
+                  <span className={styles.th}>WIN%</span>
+                  <span className={styles.th}>PARAMS</span>
+                  <span className={styles.th}></span>
+                  <span className={styles.th}></span>
+                  <span className={styles.th}></span>
+                  <span className={styles.th}></span>
+                </div>
+                {logicRuns.map(run => (
+                  <RunRow
+                    key={run.id}
+                    run={run}
+                    onLoad={e => runRowActions.onLoad(e, run)}
+                    onReRun={e => runRowActions.onReRun(e, run)}
+                    onVibe={e => runRowActions.onVibe(e, run)}
+                    onDelete={e => runRowActions.onDelete(e, run.id)}
+                    deleting={deleteMutation.isPending && deleteMutation.variables === run.id}
+                  />
+                ))}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Right panel: strategy runs (strategy view) ── */}
+      {!logicView && selectedEntry && (
         <div className={`${styles.panel} ${styles.runPanel}`}>
           <div className={styles.panelHeader}>
             <span className={styles.panelTitle}>RUN COMPARISON</span>
@@ -445,8 +640,7 @@ export function LibraryScreen() {
             ) : displayRuns.length === 0 ? (
               <div className={styles.emptyMsg}>
                 Nessun run collegato a questa strategia.<br />
-                Clicca <strong>LOAD →</strong> per caricarla in Setup, quindi avvia un backtest.<br />
-                Ogni run può usare asset e parametri di rischio diversi — la logica di segnale rimane la stessa.
+                Clicca <strong>LOAD →</strong> per caricarla in Setup, quindi avvia un backtest.
               </div>
             ) : (
               <>
@@ -472,10 +666,10 @@ export function LibraryScreen() {
                   <RunRow
                     key={run.id}
                     run={run}
-                    onLoad={e => handleLoadRun(e, run)}
-                    onReRun={e => handleReRun(e, run)}
-                    onVibe={e => handleLoadInVibe(e, run)}
-                    onDelete={e => handleDeleteRun(e, run.id)}
+                    onLoad={e => runRowActions.onLoad(e, run)}
+                    onReRun={e => runRowActions.onReRun(e, run)}
+                    onVibe={e => runRowActions.onVibe(e, run)}
+                    onDelete={e => runRowActions.onDelete(e, run.id)}
                     deleting={deleteMutation.isPending && deleteMutation.variables === run.id}
                   />
                 ))}
