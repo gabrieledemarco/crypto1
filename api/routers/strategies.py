@@ -1,7 +1,10 @@
 """
 /strategies router — library CRUD
 """
-import json, uuid, traceback as _tb
+import hashlib
+import json
+import uuid
+import traceback as _tb
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from api.db import get_conn
@@ -15,11 +18,16 @@ def list_strategies():
     try:
         conn = get_conn()
         rows = conn.execute("""
-            SELECT id, name, strategy_type, config,
-                   CASE WHEN code IS NOT NULL AND length(code) > 10 THEN true ELSE false END AS has_code,
-                   starred, status, run_ref, created_at
-            FROM strategies
-            ORDER BY starred DESC, created_at DESC
+            SELECT s.id, s.name, s.strategy_type, s.config,
+                   CASE WHEN s.code IS NOT NULL AND length(s.code) > 10 THEN true ELSE false END AS has_code,
+                   s.starred, s.status, s.run_ref, s.created_at,
+                   COUNT(r.id) AS run_count,
+                   MAX(r.created_at) AS last_run_at
+            FROM strategies s
+            LEFT JOIN runs r ON r.strategy_id = s.id
+            GROUP BY s.id, s.name, s.strategy_type, s.config, has_code,
+                     s.starred, s.status, s.run_ref, s.created_at
+            ORDER BY s.starred DESC, s.created_at DESC
         """).fetchall()
 
         result = []
@@ -48,20 +56,25 @@ def list_strategies():
                 "trades": int(_safe_float(perf.get("n_trades", 0))),
             }
 
+            run_count   = int(r[9] or 0)
+            last_run_at = str(r[10]) if r[10] else None
+
             result.append({
-                "id":       r[0],
-                "name":     r[1],
-                "strategy": r[2] or "vibe_loop",
-                "author":   "",
-                "created":  str(r[8]),
-                "tags":     _tags(cfg),
-                "starred":  bool(r[5]),
-                "status":   r[6] or "research",
-                "metrics":  metrics,
-                "desc":     "",
-                "runRef":   r[7],
-                "config":   cfg,
-                "has_code": bool(r[4]),
+                "id":          r[0],
+                "name":        r[1],
+                "strategy":    r[2] or "vibe_loop",
+                "author":      "",
+                "created":     str(r[8]),
+                "tags":        _tags(cfg),
+                "starred":     bool(r[5]),
+                "status":      r[6] or "research",
+                "metrics":     metrics,
+                "desc":        "",
+                "runRef":      r[7],
+                "config":      cfg,
+                "has_code":    bool(r[4]),
+                "run_count":   run_count,
+                "last_run_at": last_run_at,
             })
         return result
     except Exception as exc:
@@ -353,4 +366,123 @@ def promote_robust(min_sharpe: float = 1.0):
         "promoted":  len(promoted),
         "already_ok": len(already),
         "strategies": promoted + already,
+    }
+
+
+@router.post("/migrate-runs")
+def migrate_runs(dry_run: bool = True):
+    """
+    Two-pass migration to align historical data with the new strategy/run model.
+
+    Pass 1 — Backfill code_hash for all strategies that have code but no hash.
+    Pass 2 — For every strategy that has no linked runs but carries config.ticker
+              + config.perf data, synthesise a run stub so the run panel works.
+
+    Safe to call repeatedly (idempotent).
+    Returns a summary dict; set dry_run=False to actually write.
+    """
+    conn = get_conn()
+
+    # ── Pass 1: backfill code_hash ────────────────────────────────────────────
+    no_hash = conn.execute(
+        "SELECT id, code FROM strategies WHERE code IS NOT NULL AND code_hash IS NULL"
+    ).fetchall()
+
+    hashed = 0
+    for sid, code in no_hash:
+        if not code or len(code) < 10:
+            continue
+        ch = hashlib.sha256(code.encode("utf-8")).hexdigest()[:16]
+        if not dry_run:
+            conn.execute("UPDATE strategies SET code_hash=? WHERE id=?", [ch, sid])
+        hashed += 1
+
+    # ── Pass 2: create run stubs for orphan strategies ────────────────────────
+    orphans = conn.execute("""
+        SELECT s.id, s.name, s.config
+        FROM strategies s
+        WHERE NOT EXISTS (
+            SELECT 1 FROM runs r WHERE r.strategy_id = s.id
+        )
+        AND s.config IS NOT NULL
+    """).fetchall()
+
+    created_runs = []
+    for sid, sname, config_raw in orphans:
+        try:
+            cfg = json.loads(config_raw) if config_raw else {}
+        except Exception:
+            continue
+
+        ticker    = cfg.get("ticker", "")
+        timeframe = cfg.get("timeframe", "1h")
+        perf      = cfg.get("perf") or {}
+
+        # Only migrate if we have enough data to be meaningful
+        if not ticker:
+            continue
+
+        run_id   = uuid.uuid4().hex[:12]
+        run_name = f"migrated_{sname[:24]}_{run_id[:6]}"
+        params   = {
+            "ticker":         ticker,
+            "timeframe":      timeframe,
+            "sl_mult":        float(cfg.get("sl_mult", 2.0)),
+            "tp_mult":        float(cfg.get("tp_mult", 4.0)),
+            "active_hours":   list(cfg.get("active_hours", [6, 22])),
+            "risk_per_trade": float(cfg.get("risk_per_trade", 0.01)),
+            "direction":      cfg.get("direction", "ALL"),
+            "commission":     float(cfg.get("commission", 0.0004)),
+            "slippage":       float(cfg.get("slippage", 0.0001)),
+            "_strategy_id":   sid,
+            "_migrated":      True,
+        }
+
+        def _pf(key, *aliases):
+            for k in (key, *aliases):
+                v = perf.get(k)
+                if v is not None:
+                    return v
+            return 0
+
+        metrics_payload = {
+            "V_Agent": {
+                "sharpe_ratio":     float(_pf("sharpe", "sharpe_ratio") or 0),
+                "cagr_pct":         float(_pf("cagr_pct", "cagr") or 0),
+                "max_drawdown_pct": float(_pf("max_dd", "dd", "max_drawdown_pct") or 0),
+                "profit_factor":    float(_pf("profit_factor", "pf") or 0),
+                "n_trades":         int(_pf("n_trades") or 0),
+                "win_rate_pct":     float(_pf("win_rate", "win_rate_pct") or 0),
+            }
+        }
+
+        created_runs.append({
+            "strategy_id":  sid,
+            "strategy_name": sname,
+            "run_id":        run_id,
+            "ticker":        ticker,
+            "timeframe":     timeframe,
+        })
+
+        if not dry_run:
+            conn.execute(
+                "INSERT INTO runs (id,name,ticker,timeframe,params,status,strategy_id) "
+                "VALUES (?,?,?,?,?,?,?)",
+                [run_id, run_name, ticker, timeframe,
+                 json.dumps(params), "done", sid],
+            )
+            conn.execute(
+                "INSERT INTO run_results (run_id,metrics,equity,trades,wfo,sweep,mc) "
+                "VALUES (?,?,?,?,?,?,?)",
+                [run_id, json.dumps(metrics_payload), "[]", "[]", "{}", "[]", "{}"],
+            )
+
+    if not dry_run and (hashed > 0 or created_runs):
+        conn.commit()
+
+    return {
+        "dry_run":       dry_run,
+        "hashed":        hashed,
+        "runs_created":  len(created_runs),
+        "runs":          created_runs,
     }

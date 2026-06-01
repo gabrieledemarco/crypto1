@@ -97,10 +97,11 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         "SELECT column_name FROM information_schema.columns WHERE table_name='strategies'"
     ).fetchall()}
     for _col, _def in [
-        ("code",     "TEXT"),
-        ("starred",  "BOOLEAN DEFAULT FALSE"),
-        ("status",   "TEXT DEFAULT 'research'"),
-        ("run_ref",  "TEXT"),
+        ("code",      "TEXT"),
+        ("starred",   "BOOLEAN DEFAULT FALSE"),
+        ("status",    "TEXT DEFAULT 'research'"),
+        ("run_ref",   "TEXT"),
+        ("code_hash", "TEXT"),
     ]:
         if _col not in _st_cols:
             conn.execute(f"ALTER TABLE strategies ADD COLUMN IF NOT EXISTS {_col} {_def}")

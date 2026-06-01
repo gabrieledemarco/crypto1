@@ -252,6 +252,22 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.runCountBadge {
+  font-size: 9px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--cyan);
+  background: rgba(92,193,255,0.12);
+  border: 1px solid rgba(92,193,255,0.25);
+  border-radius: 3px;
+  padding: 1px 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .tfTag {

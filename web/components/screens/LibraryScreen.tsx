@@ -380,7 +380,15 @@ export function LibraryScreen() {
                 <button className={`${styles.starBtn} ${entry.starred ? styles.starBtnOn : ""}`} onClick={e => handleStar(e, entry.id)} title={entry.starred ? "Unstar" : "Star"}>
                   {entry.starred ? "★" : "☆"}
                 </button>
-                <span className={styles.name}>{entry.name}</span>
+                <span className={styles.name}>
+                  {entry.name}
+                  {(entry as unknown as { run_count?: number }).run_count != null &&
+                    (entry as unknown as { run_count?: number }).run_count! > 0 && (
+                    <span className={styles.runCountBadge}>
+                      {(entry as unknown as { run_count?: number }).run_count} run{(entry as unknown as { run_count?: number }).run_count !== 1 ? "s" : ""}
+                    </span>
+                  )}
+                </span>
                 <span className={`${styles.tfTag} ${styles.filterCell}`} title={`Filter TF: ${entry._tf}`}
                   onClick={e => { e.stopPropagation(); setTfFilter(f => f === entry._tf ? "ALL" : entry._tf); }}>
                   {entry._tf}
@@ -413,14 +421,16 @@ export function LibraryScreen() {
         </div>
       </div>
 
-      {/* Run history panel */}
+      {/* Run comparison panel */}
       {selectedEntry && (
         <div className={`${styles.panel} ${styles.runPanel}`}>
           <div className={styles.panelHeader}>
-            <span className={styles.panelTitle}>RUN HISTORY</span>
+            <span className={styles.panelTitle}>RUN COMPARISON</span>
             <span className={styles.panelSub}>
               {selectedEntry.name}
-              {displayRuns.length > 0 && ` · ${displayRuns.length} run${displayRuns.length !== 1 ? "s" : ""}`}
+              {displayRuns.length > 0
+                ? ` · ${displayRuns.length} run${displayRuns.length !== 1 ? "s" : ""} — stessa logica, parametri/asset diversi`
+                : " · nessun run"}
             </span>
             <span style={{ flex: 1 }} />
             <button className={styles.closeBtn} onClick={() => setSelectedEntry(null)}>✕</button>
@@ -434,7 +444,9 @@ export function LibraryScreen() {
               </div>
             ) : displayRuns.length === 0 ? (
               <div className={styles.emptyMsg}>
-                Nessun run. Avvia un backtest da Setup dopo aver cliccato <strong>LOAD →</strong> su questa strategia.
+                Nessun run collegato a questa strategia.<br />
+                Clicca <strong>LOAD →</strong> per caricarla in Setup, quindi avvia un backtest.<br />
+                Ogni run può usare asset e parametri di rischio diversi — la logica di segnale rimane la stessa.
               </div>
             ) : (
               <>
