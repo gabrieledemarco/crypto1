@@ -206,20 +206,27 @@ def _sync_optimize(body: OptimizeRequest, push):
             "commission": 0.0004, "slippage": 0.0001,
         }
 
-        # Persist strategy — guard against unbounded growth
+        # Persist strategy — deduplicate by code_hash; guard against growth
+        import hashlib as _hashlib
         conn = get_conn()
-        existing_count = conn.execute(
-            "SELECT COUNT(*) FROM strategies WHERE run_ref = ?", [job_id]
-        ).fetchone()[0]
-        if existing_count >= _MAX_OPT_STRATEGIES:
-            break
-        sid  = uuid.uuid4().hex[:8]
-        conn.execute(
-            "INSERT INTO strategies (id,name,strategy_type,config,code,status) "
-            "VALUES (?,?,?,?,?,?)",
-            [sid, f"opt_{iteration:03d}_{tf}", "optimize",
-             json.dumps(config), code, "research"],
-        )
+        code_hash = _hashlib.sha256(code.encode("utf-8")).hexdigest()[:16] if code else None
+        _existing = conn.execute(
+            "SELECT id FROM strategies WHERE code_hash = ?", [code_hash]
+        ).fetchone() if code_hash else None
+        if _existing:
+            sid = _existing[0]
+        else:
+            total_opt = conn.execute(
+                "SELECT COUNT(*) FROM strategies WHERE strategy_type='optimize'"
+            ).fetchone()[0]
+            if total_opt >= _MAX_OPT_STRATEGIES:
+                break
+            sid = uuid.uuid4().hex[:8]
+            conn.execute(
+                "INSERT INTO strategies (id,name,strategy_type,code,code_hash,status) "
+                "VALUES (?,?,?,?,?,?)",
+                [sid, f"opt_{arch_name}_{sid}", "optimize", code, code_hash, "research"],
+            )
 
         try:
             df_ind = compute_indicators_v2(df, fit_garch=True)

@@ -569,6 +569,125 @@ def _run_backtest_sync(
 
 # ── DB save ────────────────────────────────────────────────────────────────────
 
+def _get_or_create_strategy_sync(
+    code: str,
+    verdict: str,
+    ticker: str,
+    timeframe: str,
+) -> str:
+    """
+    Deduplicate strategies by code_hash: if the same agent_fn was already
+    saved, reuse its id (promoting to 'live' if this verdict is 'promote').
+    Otherwise insert a new strategy row. Returns strategy_id.
+    """
+    import hashlib
+    code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()[:16] if code else None
+    conn = get_conn()
+
+    if code_hash:
+        existing = conn.execute(
+            "SELECT id FROM strategies WHERE code_hash = ?", [code_hash]
+        ).fetchone()
+        if existing:
+            sid = existing[0]
+            if verdict == "promote":
+                conn.execute("UPDATE strategies SET status='live' WHERE id=?", [sid])
+                conn.commit()
+            return sid
+
+    sid  = uuid.uuid4().hex[:8]
+    name = f"vibev2_{ticker.replace('-','_')}_{timeframe}_{sid}"
+    status = "live" if verdict == "promote" else "research"
+    conn.execute(
+        "INSERT INTO strategies (id,name,strategy_type,code,code_hash,status) "
+        "VALUES (?,?,?,?,?,?)",
+        [sid, name, "vibe_v2", code, code_hash, status],
+    )
+    conn.commit()
+    return sid
+
+
+def _create_run_sync(
+    strategy_id: str,
+    ticker: str,
+    timeframe: str,
+    config: dict,
+    metrics: dict,
+    evaluation: dict,
+) -> str:
+    """
+    Persist one run + run_results for the given strategy execution.
+    Returns run_id.
+    """
+    conn = get_conn()
+    run_id = uuid.uuid4().hex[:12]
+
+    is_m  = metrics.get("is_metrics", {})
+    oos_m = metrics.get("oos_metrics", {})
+
+    def _f(m: dict, *keys):
+        for k in keys:
+            v = m.get(k)
+            if v is not None:
+                return v
+        return 0
+
+    params = {
+        "ticker":       ticker,
+        "timeframe":    timeframe,
+        "sl_mult":      float(config.get("sl_mult", 2.0)),
+        "tp_mult":      float(config.get("tp_mult", 4.0)),
+        "active_hours": list(config.get("active_hours", [6, 22])),
+        "risk_per_trade": float(config.get("risk_per_trade", 0.005)),
+        "direction":    config.get("direction", "ALL"),
+        "commission":   float(config.get("commission", 0.0004)),
+        "slippage":     float(config.get("slippage", 0.0001)),
+        "_strategy_id": strategy_id,
+    }
+
+    run_name = f"vibe_{ticker.replace('-','_')}_{timeframe}_{run_id[:6]}"
+    conn.execute(
+        "INSERT INTO runs (id,name,ticker,timeframe,params,status,strategy_id) "
+        "VALUES (?,?,?,?,?,?,?)",
+        [run_id, run_name, ticker, timeframe, json.dumps(params), "done", strategy_id],
+    )
+
+    # metrics keyed as V_Agent so list_runs picks the right version
+    metrics_payload = {
+        "V_Agent": {
+            "sharpe_ratio":      float(_f(is_m, "sharpe_ratio", "sharpe") or 0),
+            "cagr_pct":          float(_f(is_m, "cagr_pct", "cagr") or 0),
+            "max_drawdown_pct":  float(_f(is_m, "max_drawdown_pct", "max_dd") or 0),
+            "profit_factor":     float(_f(is_m, "profit_factor", "pf") or 0),
+            "n_trades":          int(_f(is_m, "n_trades") or 0),
+            "win_rate_pct":      float(_f(is_m, "win_rate_pct", "win_rate") or 0),
+        },
+    }
+    if oos_m:
+        metrics_payload["V_Agent_OOS"] = {
+            "sharpe_ratio":     float(_f(oos_m, "sharpe_ratio", "sharpe") or 0),
+            "max_drawdown_pct": float(_f(oos_m, "max_drawdown_pct", "max_dd") or 0),
+            "n_trades":         int(_f(oos_m, "n_trades") or 0),
+        }
+    if evaluation:
+        metrics_payload["_evaluation"] = {
+            "overall_score": evaluation.get("overall_score", 0),
+            "verdict":       evaluation.get("verdict", ""),
+            "strengths":     evaluation.get("strengths", []),
+            "weaknesses":    evaluation.get("weaknesses", []),
+        }
+
+    equity_sample = metrics.get("equity_sample", [])
+    conn.execute(
+        "INSERT INTO run_results (run_id,metrics,equity,trades,wfo,sweep,mc) "
+        "VALUES (?,?,?,?,?,?,?)",
+        [run_id, json.dumps(metrics_payload),
+         json.dumps(equity_sample), "[]", "{}", "[]", "{}"],
+    )
+    conn.commit()
+    return run_id
+
+
 async def _save_strategy(
     ticker: str,
     timeframe: str,
@@ -577,51 +696,20 @@ async def _save_strategy(
     metrics: dict,
     evaluation: dict,
     verdict: str,
-    strategy_type: str = "unknown",
-) -> str:
-    """Save promoted strategy to DB. Returns strategy_id."""
+) -> tuple[str, str]:
+    """
+    Get-or-create a strategy (deduplicated by code_hash) and always
+    persist a new run linked to it.
+    Returns (strategy_id, run_id).
+    """
     loop = asyncio.get_running_loop()
 
-    def _do_save() -> str:
-        conn = get_conn()
-        sid = uuid.uuid4().hex[:8]
-        is_m = metrics.get("is_metrics", {})
-        oos_m = metrics.get("oos_metrics", {})
+    def _do() -> tuple[str, str]:
+        sid    = _get_or_create_strategy_sync(code, verdict, ticker, timeframe)
+        run_id = _create_run_sync(sid, ticker, timeframe, config, metrics, evaluation)
+        return sid, run_id
 
-        def _mval(m: dict, *keys):
-            for k in keys:
-                v = m.get(k)
-                if v is not None:
-                    return v
-            return 0
-
-        cfg_save = dict(config)
-        cfg_save["pipeline"] = "vibe_v2"
-        cfg_save["perf"] = {
-            "sharpe": float(_mval(is_m, "sharpe_ratio", "sharpe") or 0),
-            "dd": float(_mval(is_m, "max_drawdown_pct", "max_dd") or 0),
-            "n_trades": int(_mval(is_m, "n_trades") or 0),
-            "win_rate": float(_mval(is_m, "win_rate_pct") or 0),
-        }
-        if oos_m:
-            cfg_save["perf"]["oos_sharpe"] = float(
-                _mval(oos_m, "sharpe_ratio", "sharpe") or 0
-            )
-        cfg_save["evaluation"] = {
-            "overall_score": evaluation.get("overall_score"),
-            "verdict": evaluation.get("verdict"),
-            "strengths": evaluation.get("strengths", []),
-            "weaknesses": evaluation.get("weaknesses", []),
-        }
-        status = "live" if verdict == "promote" else "research"
-        name = f"vibev2_{verdict}_{ticker.replace('-', '_')}_{timeframe}_{sid}"
-        conn.execute(
-            "INSERT INTO strategies (id,name,strategy_type,config,code,status) VALUES (?,?,?,?,?,?)",
-            [sid, name, strategy_type, json.dumps(cfg_save), code, status],
-        )
-        return sid
-
-    return await loop.run_in_executor(_executor, _do_save)
+    return await loop.run_in_executor(_executor, _do)
 
 
 # ── SSE endpoint ───────────────────────────────────────────────────────────────
@@ -800,14 +888,12 @@ async def generate_v2(request: Request, body: VibeV2Request):
                 })
 
                 # ── 3e. Act on decision ────────────────────────────────────────
-                strategy_type = current_brief.get("strategy_type", "unknown")
                 if decision == "promote":
                     sid = None
                     try:
-                        sid = await _save_strategy(
+                        sid, _ = await _save_strategy(
                             body.resolved_ticker, body.timeframe,
                             code, config, bt_metrics, evaluation, "promote",
-                            strategy_type,
                         )
                     except Exception as exc:
                         log.warning("DB save failed: %s", exc)
@@ -828,10 +914,9 @@ async def generate_v2(request: Request, body: VibeV2Request):
                 elif decision == "reject":
                     sid = None
                     try:
-                        sid = await _save_strategy(
+                        sid, _ = await _save_strategy(
                             body.resolved_ticker, body.timeframe,
                             code, config, bt_metrics, evaluation, "reject",
-                            strategy_type,
                         )
                     except Exception as exc:
                         log.warning("DB save on reject failed: %s", exc)
@@ -875,10 +960,9 @@ async def generate_v2(request: Request, body: VibeV2Request):
             sid = None
             if last_code:
                 try:
-                    sid = await _save_strategy(
+                    sid, _ = await _save_strategy(
                         body.resolved_ticker, body.timeframe,
                         last_code, last_config, last_bt_metrics, last_evaluation, "iterate",
-                        current_brief.get("strategy_type", "unknown"),
                     )
                 except Exception as exc:
                     log.warning("DB save on exhaust failed: %s", exc)

@@ -85,6 +85,8 @@ export interface ApiStrategy {
   status?: string;
   run_ref?: string | null;
   created_at?: string;
+  run_count?: number;
+  last_run_at?: string | null;
 }
 
 export interface RunParams {
