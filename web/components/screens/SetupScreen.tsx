@@ -8,7 +8,7 @@ import type { Run, RunMetrics } from "@/lib/fixtures";
 import { useSSE } from "@/hooks/useSSE";
 import { usePreview } from "@/hooks/usePreview";
 import { useAssets } from "@/hooks/useAssets";
-import { EquityChart } from "@/components/charts/EquityChart";
+import { LiveViewAnalytics } from "@/components/screens/setup/LiveViewAnalytics";
 import styles from "./SetupScreen.module.css";
 
 interface Params {
@@ -715,45 +715,27 @@ export function SetupScreen() {
         </div>
       </div>
 
-      {/* Live Preview — cols 6-12 */}
+      {/* Live View analytics — cols 6-12 */}
       <div className={styles.panel} style={{ gridColumn: "span 7" }}>
         <div className={styles.panelHeader}>
-          <span className={styles.panelTitle}>LIVE PREVIEW</span>
-          <span className={styles.panelSub}>{params.ticker} · {params.timeframe} · 500 bars</span>
+          <span className={styles.panelTitle}>LIVE VIEW · ANALYTICS</span>
+          <span className={styles.panelSub}>{params.ticker} · {params.timeframe} · strategy/run intelligence</span>
           {previewLoading && <span className={styles.loading}>loading…</span>}
           {!previewLoading && previewError && (
             <span className={styles.previewError}>{previewError}</span>
           )}
         </div>
-        <div className={styles.panelBody}>
-          {previewEquity.length > 0 ? (
-            <EquityChart
-              equity={previewEquity}
-              oosStart={null}
-              height={240}
-              color="var(--cyan)"
-              showBench={false}
-            />
-          ) : (
-            <div style={{
-              height: 240, display: "flex", alignItems: "center", justifyContent: "center",
-              color: "var(--faint)", fontFamily: "var(--font-mono)", fontSize: 11,
-              flexDirection: "column", gap: 6,
-            }}>
-              <div>{previewLoading ? "CALCOLO PREVIEW…" : "PREVIEW"}</div>
-              <div style={{ fontSize: 9 }}>
-                {previewLoading ? "" : "Modifica i parametri per visualizzare"}
-              </div>
-            </div>
-          )}
-          <div className={styles.previewMetrics}>
-            <PreviewMetric label="EST SHARPE" value={preview?.sharpe?.toFixed(2)    ?? "—"} />
-            <PreviewMetric label="EST CAGR"   value={preview?.cagr != null ? `${preview.cagr.toFixed(1)}%` : "—"} />
-            <PreviewMetric label="MAX DD"     value={preview?.max_dd != null ? `${preview.max_dd.toFixed(1)}%` : "—"} color="var(--coral)" />
-            <PreviewMetric label="TRADES"     value={String(preview?.trades ?? "—")} />
-            <PreviewMetric label="WIN%"       value={preview?.win_rate != null ? `${preview.win_rate.toFixed(1)}%` : "—"} />
-          </div>
-          <div className={styles.hint}>preview ricampionato ogni 80ms al cambio parametro</div>
+        <div className={`${styles.panelBody} ${styles.liveViewBody}`}>
+          <LiveViewAnalytics
+            activeStrategyId={activeStrategyId}
+            ticker={params.ticker}
+            timeframe={params.timeframe}
+            preview={preview}
+            previewEquity={previewEquity}
+            previewLoading={previewLoading}
+            previewError={previewError}
+            fallbackRuns={runs.length > 0 ? runs : fixtures.runs}
+          />
         </div>
       </div>
     </div>
@@ -773,15 +755,6 @@ function SliderRow({ label, min, max, step, value, onChange, valueLabel }: {
       <span className={styles.sliderVal}>
         {valueLabel ?? (Number.isInteger(value) ? value : value.toFixed(1))}
       </span>
-    </div>
-  );
-}
-
-function PreviewMetric({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <div className={styles.previewMetric}>
-      <div className={styles.previewMetricLabel}>{label}</div>
-      <div className={styles.previewMetricVal} style={{ color: color ?? "var(--amber)" }}>{value}</div>
     </div>
   );
 }

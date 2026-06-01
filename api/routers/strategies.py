@@ -197,6 +197,127 @@ def prune_strategies(min_sharpe: float = 0.0):
     }
 
 
+@router.post("/migrate-types")
+def migrate_strategy_types(dry_run: bool = True):
+    """Migrate strategy_type from generic names to archetype-based names.
+    
+    Args:
+        dry_run: If True, only show what would change. If False, apply changes.
+    
+    Returns:
+        Summary of migration results.
+    """
+    conn = get_conn()
+    
+    # Archetypes mapping (from strategies.py)
+    ARCHETYPES = [
+        "ema_cross_fast", "ema_cross_rsi", "rsi_reversion", "rsi_trend",
+        "bb_reversion", "macd_cross", "donchian_20", "donchian_10_trend",
+        "momentum_5bar", "vwap_reversion", "bb_squeeze", "adaptive_regime",
+        "ema_scalp_3_8", "vwap_scalp", "order_flow_imbalance", "rsi_fast_7",
+        "bb_tight_scalp", "volume_breakout", "tick_direction_momentum", "spread_capture",
+    ]
+    
+    import re
+    VIBE_LOOP_PATTERN = re.compile(r"^vibe_(\d+)_(\w+)_(.+)$")
+    
+    # Strategy types that need migration
+    GENERIC_TYPES = ("pipeline", "vibe_v2", "vibe_loop", "unknown")
+    
+    # Get all strategies that need migration
+    rows = conn.execute(
+        "SELECT id, name, strategy_type, config, code FROM strategies "
+        "WHERE strategy_type IN (?, ?, ?, ?)",
+        list(GENERIC_TYPES)
+    ).fetchall()
+    
+    results = {
+        "total": len(rows),
+        "updated": 0,
+        "skipped": 0,
+        "failed": 0,
+        "details": [],
+    }
+    
+    for sid, name, current_type, config_json, code in rows:
+        new_type = None
+        reason = ""
+        
+        # Determine new strategy_type
+        if current_type == "vibe_loop" or name.startswith("vibe_"):
+            # For vibe_loop: extract from iteration number
+            match = VIBE_LOOP_PATTERN.match(name)
+            if match:
+                iteration = int(match.group(1))
+                arch_idx = (iteration - 1) % len(ARCHETYPES)
+                new_type = ARCHETYPES[arch_idx]
+                reason = "derived from vibe_loop iteration"
+        elif current_type == "vibe_v2" or name.startswith("vibev2_"):
+            # For vibe_v2: try to infer from config brief
+            try:
+                if config_json:
+                    cfg = json.loads(config_json)
+                    brief = cfg.get("evaluation", {}).get("brief", cfg.get("brief", {}))
+                    if isinstance(brief, dict):
+                        strategy_type = brief.get("strategy_type")
+                        if strategy_type:
+                            new_type = strategy_type
+                            reason = "from Orchestrator brief"
+            except Exception:
+                pass
+            if not new_type:
+                reason = "could not determine from config"
+        elif current_type in GENERIC_TYPES:
+            # For other generic types: try vibe_loop pattern first
+            match = VIBE_LOOP_PATTERN.match(name)
+            if match:
+                iteration = int(match.group(1))
+                arch_idx = (iteration - 1) % len(ARCHETYPES)
+                new_type = ARCHETYPES[arch_idx]
+                reason = "derived from name pattern"
+            else:
+                reason = "no pattern match"
+        
+        if new_type and new_type != current_type:
+            results["details"].append({
+                "id": sid,
+                "name": name,
+                "old": current_type,
+                "new": new_type,
+                "reason": reason,
+            })
+            
+            if not dry_run:
+                try:
+                    conn.execute(
+                        "UPDATE strategies SET strategy_type=? WHERE id=?",
+                        [new_type, sid]
+                    )
+                    results["updated"] += 1
+                except Exception as e:
+                    results["failed"] += 1
+                    results["details"][-1]["error"] = str(e)
+            else:
+                results["updated"] += 1
+        else:
+            results["skipped"] += 1
+            results["details"].append({
+                "id": sid,
+                "name": name,
+                "old": current_type,
+                "new": current_type,
+                "reason": reason or "no change needed",
+            })
+    
+    if not dry_run and results["updated"] > 0:
+        conn.commit()
+    
+    return {
+        "dry_run": dry_run,
+        **results,
+    }
+
+
 @router.post("/promote-robust")
 def promote_robust(min_sharpe: float = 1.0):
     """Star + set status='live' on every strategy with Sharpe >= min_sharpe.

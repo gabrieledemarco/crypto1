@@ -1,0 +1,66 @@
+name: Migrate Strategy Types
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run mode (dry-run or apply)'
+        required: true
+        default: 'dry-run'
+        type: choice
+        options:
+          - dry-run
+          - apply
+
+env:
+  API_URL: ${{ vars.API_URL || 'http://localhost:8099' }}
+
+jobs:
+  migrate-strategies:
+    name: Migrate Strategy Types
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Check API health
+        run: |
+          echo "API URL: $API_URL"
+          echo "Mode: ${{ inputs.mode }}"
+          
+      - name: Run migration via API
+        run: |
+          DRY_RUN_FLAG=$([[ "${{ inputs.mode }}" == "apply" ]] && echo "false" || echo "true")
+          echo "Dry run: $DRY_RUN_FLAG"
+          
+          RESPONSE=$(curl -s -X POST "${API_URL}/api/strategies/migrate-types?dry_run=${DRY_RUN_FLAG}" \
+            -H "Content-Type: application/json" \
+            -w "\nHTTP_CODE:%{http_code}")
+          
+          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | sed '/HTTP_CODE:/d')
+          
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response:"
+          echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Migration failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+          
+          UPDATED=$(echo "$BODY" | jq -r '.updated // 0')
+          SKIPPED=$(echo "$BODY" | jq -r '.skipped // 0')
+          FAILED=$(echo "$BODY" | jq -r '.failed // 0')
+          
+          echo ""
+          echo "============================================"
+          echo "  MIGRATION SUMMARY"
+          echo "============================================"
+          echo "  Updated  : $UPDATED"
+          echo "  Skipped  : $SKIPPED"
+          echo "  Failed   : $FAILED"
+          echo "============================================"
+          
+          if [ "$FAILED" -gt 0 ]; then
+            echo "ERROR: Some strategies failed to migrate"
+            exit 1
+          fi
