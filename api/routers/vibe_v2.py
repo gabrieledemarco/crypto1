@@ -33,6 +33,10 @@ router = APIRouter()
 
 _ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 
+_MODEL_ORCHESTRATOR = "claude-opus-4-8"
+_MODEL_GENERATOR    = "claude-sonnet-4-6"
+_MODEL_EVALUATOR    = "claude-opus-4-8"
+
 _executor = ThreadPoolExecutor(max_workers=2)
 
 MAX_ATTEMPTS = 3
@@ -257,7 +261,7 @@ async def _call_orchestrator_brief(
 ) -> tuple[str, dict]:
     """Call orchestrator to design strategy brief. Returns (raw_text, parsed_brief)."""
     response = await client.messages.create(
-        model="claude-opus-4-5",
+        model=_MODEL_ORCHESTRATOR,
         max_tokens=1500,
         system=ORCHESTRATOR_SYSTEM,
         messages=[{
@@ -290,7 +294,7 @@ async def _stream_generator(
 
     full_text = ""
     async with client.messages.stream(
-        model="claude-sonnet-4-6",
+        model=_MODEL_GENERATOR,
         max_tokens=3000,
         system=GENERATOR_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
@@ -340,7 +344,7 @@ async def _call_evaluator(
     )
 
     response = await client.messages.create(
-        model="claude-opus-4-5",
+        model=_MODEL_ORCHESTRATOR,
         max_tokens=1200,
         system=EVALUATOR_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
@@ -377,7 +381,7 @@ async def _call_orchestrator_synthesis(
     )
 
     response = await client.messages.create(
-        model="claude-opus-4-5",
+        model=_MODEL_ORCHESTRATOR,
         max_tokens=800,
         system=ORCHESTRATOR_SYNTHESIS_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
