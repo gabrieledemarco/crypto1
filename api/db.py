@@ -128,5 +128,9 @@ def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     ]:
         if _col not in _bc_cols:
             conn.execute(f"ALTER TABLE brain_chunks ADD COLUMN IF NOT EXISTS {_col} {_def}")
+    # Performance index for Parquet-sourced data lookups
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_assets_source ON assets(source)"
+    )
     # Commit all DDL so other threads immediately see the final schema
     conn.commit()
