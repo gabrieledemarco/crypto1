@@ -352,6 +352,16 @@ export function VibeScreen() {
 
       if (!res.body) throw new Error("No stream body");
 
+      // Non-SSE error response (e.g. 429 rate limit, 500)
+      if (!res.ok && res.headers.get("content-type")?.includes("application/json")) {
+        const err = await res.json().catch(() => ({}));
+        const msg = (err as Record<string, string>).detail ?? (err as Record<string, string>).error ?? `HTTP ${res.status}`;
+        if (useV2) setV2Phase("Error");
+        setText((t) => t + `\n\n[Error: ${msg}]`);
+        setGenerating(false);
+        return;
+      }
+
       try {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -417,6 +427,8 @@ export function VibeScreen() {
             }
           }
         }
+        // Stream ended without a done/error event — ensure generating resets
+        setGenerating(false);
       } catch (err) {
         console.error("Stream error:", err);
         setText((t) => t + "\n\n[Stream error — connection may have dropped]");

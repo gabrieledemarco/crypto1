@@ -24,7 +24,6 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from api.db import get_conn
-from api.limiter import limiter
 
 log = logging.getLogger("vibe_v2")
 router = APIRouter()
@@ -581,7 +580,7 @@ async def _save_strategy(
     strategy_type: str = "unknown",
 ) -> str:
     """Save promoted strategy to DB. Returns strategy_id."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _do_save() -> str:
         conn = get_conn()
@@ -628,7 +627,6 @@ async def _save_strategy(
 # ── SSE endpoint ───────────────────────────────────────────────────────────────
 
 @router.post("/generate-v2")
-@limiter.limit("3/minute")
 async def generate_v2(request: Request, body: VibeV2Request):
     """SSE endpoint: orchestrated 3-agent strategy generation pipeline."""
 
@@ -643,7 +641,7 @@ async def generate_v2(request: Request, body: VibeV2Request):
 
     async def event_stream():
         client = _anthropic.Anthropic(api_key=_ANTHROPIC_KEY, timeout=60.0)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _sse(payload: dict) -> str:
             return f"data: {json.dumps(payload)}\n\n"
