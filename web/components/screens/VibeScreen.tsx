@@ -216,7 +216,7 @@ export function VibeScreen() {
       });
     }
     if (d.phase === 'backtest_result' && d.metrics) {
-      const m = d.metrics as Record<string, Record<string, unknown>>;
+      const m = d.metrics as Record<string, unknown>;
       const isMetrics = (m.is_metrics ?? {}) as Record<string, unknown>;
       const oosMetrics = (m.oos_metrics ?? {}) as Record<string, unknown>;
       const id = ++detailIdRef.current;
@@ -230,10 +230,10 @@ export function VibeScreen() {
         inputSummary: "running IS + OOS backtest",
         isMetrics,
         oosMetrics,
-        bestVersion: m.best_version as string | undefined,
-        agentFnLoaded: m.agent_fn_loaded as boolean | undefined,
+        bestVersion: typeof m.best_version === "string" ? m.best_version : undefined,
+        agentFnLoaded: typeof m.agent_fn_loaded === "boolean" ? m.agent_fn_loaded : undefined,
         config: d.config,
-        note: m.safe_exec_error as string | undefined,
+        note: typeof m.safe_exec_error === "string" ? m.safe_exec_error : undefined,
       }]);
     }
     if (d.phase === 'evaluating') {
