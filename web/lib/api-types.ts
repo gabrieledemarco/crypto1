@@ -127,3 +127,56 @@ export interface VersionResult {
   metrics: RunMetrics;
   error?: string;
 }
+
+export interface EvaluationScores {
+  alpha_source: number;
+  signal_logic: number;
+  risk_management: number;
+  regime_sensitivity: number;
+  statistical_robustness: number;
+  implementation_quality: number;
+}
+
+export interface StrategyEvaluation {
+  scores: EvaluationScores;
+  overall_score: number;
+  strengths: string[];
+  weaknesses: string[];
+  specific_improvements: string[];
+  fatal_flaws: string[];
+  verdict: 'promote' | 'iterate' | 'reject';
+  verdict_rationale: string;
+}
+
+export interface StrategyBrief {
+  regime_assessment: string;
+  dominant_pattern: string;
+  strategy_type: string;
+  entry_logic: string;
+  recommended_indicators: string[];
+  entry_filters: string[];
+  risk_params: {
+    sl_mult: number;
+    tp_mult: number;
+    active_hours: [number, number];
+    direction: string;
+    risk_per_trade: number;
+  };
+  patterns_to_avoid: string[];
+  edge_hypothesis: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export interface VibeV2Progress {
+  phase: string;
+  pct?: number;
+  msg?: string;
+  text?: string;
+  brief?: StrategyBrief;
+  metrics?: Record<string, unknown>;
+  result?: StrategyEvaluation;
+  verdict?: string;
+  attempt?: number;
+  strategy_id?: string;
+  name?: string;
+}

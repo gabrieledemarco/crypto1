@@ -1,0 +1,144 @@
+.card {
+  background: var(--panel-2);
+  border: 1px solid var(--border-l);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--dim);
+  letter-spacing: 0.04em;
+  flex: 1;
+}
+
+.verdict {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.overall {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.scores {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scoreRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scoreLabel {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--dim);
+  letter-spacing: 0.03em;
+  width: 84px;
+  flex-shrink: 0;
+}
+
+.scoreBar {
+  flex: 1;
+  height: 6px;
+  background: var(--panel-3);
+  border: 1px solid var(--border);
+  position: relative;
+  overflow: hidden;
+}
+
+.scoreFill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  transition: width 0.4s ease;
+}
+
+.scoreValue {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  width: 28px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.rationale {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text);
+  line-height: 1.5;
+  margin: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sectionTitle {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.strength {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #22c55e;
+  line-height: 1.4;
+  padding-left: 8px;
+}
+
+.weakness {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #f59e0b;
+  line-height: 1.4;
+  padding-left: 8px;
+}
+
+.flaw {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #ef4444;
+  line-height: 1.4;
+  padding-left: 8px;
+}
+
+.improvement {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text);
+  line-height: 1.4;
+  padding-left: 8px;
+}

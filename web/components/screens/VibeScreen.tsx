@@ -2,6 +2,8 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useStore } from "@/store";
 import { useAssets } from "@/hooks/useAssets";
+import { StrategyBrief, StrategyEvaluation, VibeV2Progress } from "@/lib/api-types";
+import { EvaluationCard } from "./EvaluationCard";
 import styles from "./VibeScreen.module.css";
 
 const FALLBACK_ASSETS = ["BTC-USD", "ETH-USD", "SOL-USD", "ARB-USD", "OP-USD", "AVAX-USD"];
@@ -82,6 +84,15 @@ export function VibeScreen() {
   const [outputTab, setOutputTab] = useState<"explanation" | "code">("explanation");
   const streamRef = useRef<HTMLDivElement>(null);
 
+  // v2 Enhanced Mode state
+  const [useV2, setUseV2] = useState(false);
+  const [v2Phase, setV2Phase] = useState<string>('');
+  const [v2Pct, setV2Pct] = useState(0);
+  const [v2Attempt, setV2Attempt] = useState(1);
+  const [v2Brief, setV2Brief] = useState<StrategyBrief | null>(null);
+  const [v2Evaluation, setV2Evaluation] = useState<StrategyEvaluation | null>(null);
+  const [v2Verdict, setV2Verdict] = useState<string>('');
+
   // Saved strategies for "load previous"
   const [strategies, setStrategies] = useState<SavedStrategy[]>([]);
   const [selectedStratId, setSelectedStratId] = useState("");
@@ -125,6 +136,56 @@ export function VibeScreen() {
     }
   }, [text]);
 
+  const handleV2Message = (data: unknown) => {
+    const d = data as VibeV2Progress;
+
+    if (d.pct !== undefined) setV2Pct(d.pct);
+
+    if (d.phase === 'orchestrating') setV2Phase('Orchestrating...');
+    if (d.phase === 'brief_chunk') {
+      setText(prev => prev + (d.text ?? ''));
+    }
+    if (d.phase === 'brief_done' && d.brief) {
+      setV2Brief(d.brief);
+    }
+    if (d.phase === 'generating') {
+      setV2Phase(`Generating strategy (attempt ${d.attempt ?? 1}/3)...`);
+      setV2Attempt(d.attempt ?? 1);
+    }
+    if (d.phase === 'code_chunk') {
+      setText(prev => prev + (d.text ?? ''));
+    }
+    if (d.phase === 'backtesting') {
+      setV2Phase('Running backtest...');
+      setText('');
+    }
+    if (d.phase === 'evaluating') {
+      setV2Phase('Expert evaluation...');
+    }
+    if (d.phase === 'evaluation' && d.result) {
+      setV2Evaluation(d.result);
+    }
+    if (d.phase === 'decision') {
+      setV2Verdict(d.verdict ?? '');
+      setV2Phase(d.msg ?? '');
+    }
+    if (d.phase === 'iteration') {
+      setV2Phase(`Refining strategy (attempt ${d.attempt}/3)...`);
+      setV2Brief(null);
+      setV2Evaluation(null);
+      setText('');
+    }
+    if (d.phase === 'done') {
+      setGenerating(false);
+      setV2Phase('Complete');
+    }
+    if (d.phase === 'error') {
+      setGenerating(false);
+      setV2Phase('Error');
+      setText(prev => prev + '\n\n[Generation error in v2 pipeline]');
+    }
+  };
+
   const handleGenerate = async () => {
     setGenerating(true);
     setStatus("");
@@ -134,6 +195,14 @@ export function VibeScreen() {
     setShowSaveInput(false);
     setOutputTab("explanation");
 
+    // Reset v2 state
+    setV2Phase('');
+    setV2Pct(0);
+    setV2Attempt(1);
+    setV2Brief(null);
+    setV2Evaluation(null);
+    setV2Verdict('');
+
     const enc = encodeURIComponent(asset);
     const [assetStats, quantAnalysis, garchForecast] = await Promise.all([
       fetch(`/api/assets/${enc}/stats?interval=${timeframe}`).then((r) => r.ok ? r.json() : null).catch(() => null),
@@ -141,16 +210,20 @@ export function VibeScreen() {
       fetch(`/api/assets/${enc}/garch-forecast?interval=${timeframe}`).then((r) => r.ok ? r.json() : null).catch(() => null),
     ]);
 
+    const requestBody = JSON.stringify({
+      prompt: prompt.trim(), asset, timeframe, n_candidates: 1,
+      asset_stats: assetStats,
+      quant_analysis: quantAnalysis,
+      garch_forecast: garchForecast,
+    });
+
+    const endpoint = useV2 ? "/api/vibe/generate-v2" : "/api/vibe/generate";
+
     try {
-      const res = await fetch("/api/vibe/generate", {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: prompt.trim(), asset, timeframe, n_candidates: 1,
-          asset_stats: assetStats,
-          quant_analysis: quantAnalysis,
-          garch_forecast: garchForecast,
-        }),
+        body: requestBody,
       });
 
       if (!res.body) throw new Error("No stream body");
@@ -167,10 +240,14 @@ export function VibeScreen() {
           const lines = buf.split("\n");
           buf = lines.pop() ?? "";
 
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            try {
-              const ev = JSON.parse(line.slice(6));
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const ev = JSON.parse(line.slice(6));
+
+            if (useV2) {
+              handleV2Message(ev);
+            } else {
               if (ev.type === "analysis_start") {
                 setStatus(`Analyzing: ${ev.tool.replace(/_/g, " ")}…`);
               }
@@ -211,15 +288,11 @@ export function VibeScreen() {
                     .catch(() => {});
                 }
               }
-            } catch {
-              // malformed SSE line — skip
             }
+          } catch {
+            // malformed SSE line — skip
           }
         }
-      } catch (err) {
-        console.error('Stream parse error:', err);
-        setText((t) => t + "\n\n[Stream error — connection may have dropped]");
-        setGenerating(false);
       }
     } catch {
       setText((t) => t + "\n\n[Connection error — is the API running?]");
@@ -355,6 +428,20 @@ export function VibeScreen() {
             />
           </div>
 
+          {/* Enhanced Mode toggle */}
+          <div className={styles.modeToggle}>
+            <label className={styles.toggleLabel}>
+              <input
+                type="checkbox"
+                checked={useV2}
+                onChange={e => setUseV2(e.target.checked)}
+                disabled={generating}
+              />
+              <span>Enhanced Mode</span>
+              <span className={styles.modeBadge}>3-agent</span>
+            </label>
+          </div>
+
           <button
             className={styles.generateBtn}
             onClick={handleGenerate}
@@ -444,6 +531,37 @@ export function VibeScreen() {
         </div>
         <div className={styles.panelBody}>
 
+          {/* ── v2 progress bar ── */}
+          {useV2 && generating && (
+            <div className={styles.v2Progress}>
+              <div className={styles.v2Phase}>{v2Phase}</div>
+              <div className={styles.progressBar}>
+                <div className={styles.progressFill} style={{ width: `${v2Pct}%` }} />
+              </div>
+              {v2Attempt > 1 && (
+                <div className={styles.attemptBadge}>Attempt {v2Attempt}/3</div>
+              )}
+            </div>
+          )}
+
+          {/* ── v2 verdict banner (after completion) ── */}
+          {useV2 && !generating && v2Verdict && (
+            <div className={styles.v2Progress}>
+              <div className={styles.v2Phase}>{v2Phase} · verdict: {v2Verdict}</div>
+            </div>
+          )}
+
+          {/* ── architecture brief (collapsible) ── */}
+          {v2Brief && (
+            <details className={styles.briefPanel}>
+              <summary>Architecture Brief · {v2Brief.strategy_type} · confidence: {v2Brief.confidence}</summary>
+              <p><strong>Regime:</strong> {v2Brief.regime_assessment}</p>
+              <p><strong>Edge:</strong> {v2Brief.edge_hypothesis}</p>
+              <p><strong>Entry:</strong> {v2Brief.entry_logic}</p>
+              <p><strong>Indicators:</strong> {v2Brief.recommended_indicators.join(', ')}</p>
+            </details>
+          )}
+
           {/* ── EXPLANATION tab ── */}
           {outputTab === "explanation" && (
             <>
@@ -459,6 +577,11 @@ export function VibeScreen() {
                   </span>
                 )}
               </div>
+
+              {/* ── evaluation card (v2 only) ── */}
+              {v2Evaluation && (
+                <EvaluationCard evaluation={v2Evaluation} attempt={v2Attempt} />
+              )}
 
               {config && (
                 <div className={styles.configTable}>
