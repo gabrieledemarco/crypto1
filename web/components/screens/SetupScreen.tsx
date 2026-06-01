@@ -39,7 +39,7 @@ interface Params {
 }
 
 export function SetupScreen() {
-  const { activeRunId, runs, activeStrategyId, pendingSetupParams, setPendingSetupParams, setToast } = useStore();
+  const { activeRunId, runs, activeStrategyId, activeLogicName, pendingSetupParams, setPendingSetupParams, setToast } = useStore();
   const queryClient = useQueryClient();
   const run = runs.find((r) => r.id === activeRunId) ?? fixtures.runs[0];
   const p = run?.params;
@@ -460,7 +460,7 @@ export function SetupScreen() {
                 <button
                   className={styles.pill}
                   style={{ alignSelf: "flex-start", borderColor: showBf ? "var(--cyan)" : undefined, color: showBf ? "var(--cyan)" : undefined }}
-                  onClick={() => { setShowBf(!showBf); setBfMsg(null); }}
+                  onClick={() => { setShowBf(!showBf); setBfLog([]); setBfPct(0); }}
                 >
                   {showBf ? "▲ CHIUDI" : "⬇ BACKFILL"}
                 </button>
@@ -776,7 +776,7 @@ export function SetupScreen() {
       <div className={styles.panel} style={{ gridColumn: "span 7" }}>
         <div className={styles.panelHeader}>
           <span className={styles.panelTitle}>LIVE VIEW · ANALYTICS</span>
-          <span className={styles.panelSub}>{params.ticker} · {params.timeframe} · strategy/run intelligence</span>
+          <span className={styles.panelSub}>{activeLogicName ? `LOGIC: ${activeLogicName}` : `${params.ticker} · ${params.timeframe} · strategy/run intelligence`}</span>
           {previewLoading && <span className={styles.loading}>loading…</span>}
           {!previewLoading && previewError && (
             <span className={styles.previewError}>{previewError}</span>
@@ -785,6 +785,7 @@ export function SetupScreen() {
         <div className={`${styles.panelBody} ${styles.liveViewBody}`}>
           <LiveViewAnalytics
             activeStrategyId={activeStrategyId}
+            activeLogicName={activeLogicName}
             ticker={params.ticker}
             timeframe={params.timeframe}
             preview={preview}

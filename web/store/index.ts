@@ -46,6 +46,7 @@ interface Store {
   runs: Run[];
   activeRunId: string;
   activeStrategyId: string | null;
+  activeLogicName: string | null;
   pendingSetupParams: SetupParams | null;
   pendingVibeParams: PendingVibeParams | null;
   screen: ScreenId;
@@ -57,6 +58,7 @@ interface Store {
   setRuns: (runs: Run[]) => void;
   setRun: (id: string) => void;
   setActiveStrategy: (id: string | null) => void;
+  setActiveLogicName: (name: string | null) => void;
   setPendingSetupParams: (p: SetupParams | null) => void;
   setPendingVibeParams: (p: PendingVibeParams | null) => void;
   loadRunFromHistory: (run: Run) => void;
@@ -72,6 +74,7 @@ export const useStore = create<Store>((set) => ({
   runs: [],
   activeRunId: "",
   activeStrategyId: null,
+  activeLogicName: null,
   pendingSetupParams: null,
   pendingVibeParams: null,
   screen: "dashboard",
@@ -83,6 +86,7 @@ export const useStore = create<Store>((set) => ({
   setRuns: (runs) => set({ runs }),
   setRun: (id) => set({ activeRunId: id }),
   setActiveStrategy: (id) => set({ activeStrategyId: id }),
+  setActiveLogicName: (name) => set({ activeLogicName: name }),
   setPendingSetupParams: (p) => set({ pendingSetupParams: p }),
   setPendingVibeParams: (p) => set({ pendingVibeParams: p }),
   loadRunFromHistory: (run) =>

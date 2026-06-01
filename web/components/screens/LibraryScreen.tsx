@@ -108,7 +108,7 @@ function extractMethod(entry: LibraryEntry): string {
 }
 
 export function LibraryScreen() {
-  const { goto, setToast, setActiveStrategy, loadRunFromHistory, setPendingSetupParams, setPendingVibeParams } = useStore();
+  const { goto, setToast, setActiveStrategy, setActiveLogicName, loadRunFromHistory, setPendingSetupParams, setPendingVibeParams } = useStore();
 
   // View mode toggle: logic-based vs strategy-based
   const [logicView, setLogicView] = useState(true);
@@ -404,7 +404,11 @@ export function LibraryScreen() {
                   <div
                     key={logicName}
                     className={`${styles.logicRow} ${isSelected ? styles.logicRowSelected : ""}`}
-                    onClick={() => setSelectedLogicName(prev => prev === logicName ? null : logicName)}
+                    onClick={() => {
+                      const next = selectedLogicName === logicName ? null : logicName;
+                      setSelectedLogicName(next);
+                      setActiveLogicName(next);
+                    }}
                   >
                     <span className={styles.logicName}>{logicName}</span>
                     <span className={styles.logicCount}>{runs.length}</span>
@@ -555,7 +559,7 @@ export function LibraryScreen() {
               {" · "}{logicGroups.get(selectedLogicName)?.length ?? 0} totali
             </span>
             <span style={{ flex: 1 }} />
-            <button className={styles.closeBtn} onClick={() => setSelectedLogicName(null)}>✕</button>
+            <button className={styles.closeBtn} onClick={() => { setSelectedLogicName(null); setActiveLogicName(null); }}>✕</button>
           </div>
           {/* TF + Asset filters for run panel */}
           <div className={styles.filterBar2}>
