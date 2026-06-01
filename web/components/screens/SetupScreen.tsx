@@ -80,6 +80,16 @@ export function SetupScreen() {
   const [libSaved, setLibSaved] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
+  // ── Backfill state ──────────────────────────────────────────────────────────
+  const today = new Date().toISOString().slice(0, 10);
+  const fiveYearsAgo = `${new Date().getFullYear() - 5}-01-01`;
+  const [showBf, setShowBf] = useState(false);
+  const [bfStart, setBfStart] = useState(fiveYearsAgo);
+  const [bfEnd, setBfEnd] = useState(today);
+  const [bfJobId, setBfJobId] = useState<string | null>(null);
+  const [bfRunning, setBfRunning] = useState(false);
+  const [bfMsg, setBfMsg] = useState<string | null>(null);
+
   const validateParams = (p: Params): string | null => {
     if (p.tp_mult <= p.sl_mult) return `TP mult (${p.tp_mult}) must be greater than SL mult (${p.sl_mult})`;
     if (p.sl_mult < 0.5 || p.sl_mult > 20) return "SL mult must be between 0.5 and 20";
@@ -262,6 +272,50 @@ export function SetupScreen() {
     if (ev.phase === "error") { setRunning(false); setToast(`Error: ${ev.msg}`); }
   });
 
+  // ── Backfill SSE ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!bfJobId) return;
+    const es = new EventSource(`/api/assets/backfill/${bfJobId}/stream`);
+    es.onmessage = (e) => {
+      try {
+        const ev = JSON.parse(e.data) as { phase: string; msg: string };
+        setBfMsg(ev.msg);
+        if (ev.phase === "done" || ev.phase === "error") {
+          setBfRunning(false);
+          setBfJobId(null);
+          es.close();
+          if (ev.phase === "done") queryClient.invalidateQueries({ queryKey: ["assets"] });
+        }
+      } catch {}
+    };
+    es.onerror = () => { setBfRunning(false); setBfJobId(null); es.close(); };
+    return () => es.close();
+  }, [bfJobId, queryClient]);
+
+  const handleBackfill = async () => {
+    if (!params.ticker || bfRunning) return;
+    setBfRunning(true);
+    setBfMsg(`Avviando backfill ${params.ticker}…`);
+    try {
+      const res = await fetch("/api/assets/backfill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: params.ticker, start_date: bfStart, end_date: bfEnd, interval: params.timeframe }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "errore API" }));
+        setBfMsg(`Errore: ${err.detail ?? "API non raggiungibile"}`);
+        setBfRunning(false);
+        return;
+      }
+      const { job_id } = await res.json() as { job_id: string };
+      setBfJobId(job_id);
+    } catch {
+      setBfMsg("Errore: API non raggiungibile");
+      setBfRunning(false);
+    }
+  };
+
   const handleRun = async () => {
     if (running) return;  // prevent double-submit
     const err = validateParams(params);
@@ -379,6 +433,55 @@ export function SetupScreen() {
                   <option key={tf} value={tf}>{tf}</option>
                 ))}
               </select>
+            </div>
+
+            {/* Backfill panel */}
+            <div className={styles.formRow} style={{ alignItems: "flex-start" }}>
+              <span className={styles.rowLabel} style={{ paddingTop: 2 }}>DATA HISTORY</span>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+                <button
+                  className={styles.pill}
+                  style={{ alignSelf: "flex-start", borderColor: showBf ? "var(--cyan)" : undefined, color: showBf ? "var(--cyan)" : undefined }}
+                  onClick={() => { setShowBf(!showBf); setBfMsg(null); }}
+                >
+                  {showBf ? "▲ CHIUDI" : "⬇ BACKFILL"}
+                </button>
+                {showBf && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      <span style={{ fontSize: 9, color: "var(--dim)", width: 28 }}>DA</span>
+                      <input type="date" className={styles.select} value={bfStart}
+                        onChange={(e) => setBfStart(e.target.value)}
+                        style={{ flex: 1, colorScheme: "dark", fontSize: 10 }} />
+                      <span style={{ fontSize: 9, color: "var(--dim)", width: 12 }}>A</span>
+                      <input type="date" className={styles.select} value={bfEnd}
+                        onChange={(e) => setBfEnd(e.target.value)}
+                        style={{ flex: 1, colorScheme: "dark", fontSize: 10 }} />
+                    </div>
+                    <div style={{ fontSize: 9, color: "var(--faint)" }}>
+                      Asset: <span style={{ color: "var(--amber)" }}>{params.ticker}</span>
+                      {" · "}TF: <span style={{ color: "var(--amber)" }}>{params.timeframe}</span>
+                    </div>
+                    <button
+                      className={`${styles.btn} ${bfRunning ? styles.running : ""}`}
+                      style={{ alignSelf: "flex-start" }}
+                      onClick={handleBackfill}
+                      disabled={bfRunning}
+                    >
+                      {bfRunning ? "SCARICANDO…" : `▶ AVVIA BACKFILL`}
+                    </button>
+                    {bfMsg && (
+                      <div style={{
+                        fontSize: 9, fontFamily: "var(--font-mono)",
+                        color: bfMsg.startsWith("✓") ? "var(--green)" : bfMsg.startsWith("Errore") ? "var(--coral)" : "var(--amber)",
+                        wordBreak: "break-all",
+                      }}>
+                        {bfMsg}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className={styles.formRow}>

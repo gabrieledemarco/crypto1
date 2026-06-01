@@ -410,8 +410,7 @@ async def create_run(request: Request, body: RunCreate):
 def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
     """
     Return OHLCV rows for ticker+interval from DuckDB.
-    If the table is empty for this ticker, auto-fetch from ccxt/yfinance
-    and store via bulk_writer before returning — transparent to the caller.
+    Priority: DuckDB cache → Parquet deep history → live ccxt/yfinance fetch.
     """
     source_key = f"yfinance:{interval}"
     rows = conn.execute(
@@ -423,7 +422,45 @@ def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
     if rows:
         return rows
 
-    # Auto-fetch — no data in DB yet
+    # Try Parquet deep history store (populated by engine.backfill)
+    try:
+        import pandas as pd
+        from engine.backfill import classify_ticker
+        from engine.storage.parquet_store import list_available, load_and_resample
+        from engine.storage.bulk_writer import bulk_store as _bulk_store
+
+        asset_class = classify_ticker(ticker)
+        available = list_available(asset_class, ticker)
+        if available:
+            if push:
+                push("start", 2, f"loading {ticker} from Parquet store…")
+            start_y, start_mo = available[0]
+            end_y, end_mo = available[-1]
+            # End = last day of end_mo
+            nm = end_mo + 1
+            ny = end_y + (1 if nm > 12 else 0)
+            nm = nm if nm <= 12 else 1
+            end_ts = pd.Timestamp(ny, nm, 1) - pd.Timedelta(days=1)
+            df = load_and_resample(
+                asset_class, ticker,
+                pd.Timestamp(start_y, start_mo, 1),
+                end_ts,
+                interval,
+            )
+            if not df.empty:
+                parquet_src = f"parquet:{interval}"
+                _bulk_store(conn, ticker, parquet_src, df)
+                rows = conn.execute(
+                    "SELECT ts, open, high, low, close, volume FROM assets "
+                    "WHERE ticker=? AND source=? ORDER BY ts",
+                    [ticker, parquet_src]
+                ).fetchall()
+                if rows:
+                    return rows
+    except Exception as exc:
+        log.warning("Parquet store lookup failed for %s/%s: %s", ticker, interval, exc)
+
+    # Auto-fetch live data — no data in DB or Parquet yet
     if push:
         push("start", 2, f"auto-fetching {ticker} {interval}…")
 

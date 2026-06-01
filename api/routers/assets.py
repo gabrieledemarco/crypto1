@@ -1,24 +1,36 @@
 """
 /assets router
 ==============
-POST /assets/fetch           → fetch ticker via yfinance, store in DuckDB
-GET  /assets/{ticker}/bars   → OHLCV array
-GET  /assets/{ticker}/stats  → quant stats
-GET  /assets                 → list available tickers
+POST /assets/fetch               → fetch ticker via yfinance, store in DuckDB
+POST /assets/backfill            → start deep M1 backfill (SSE progress)
+GET  /assets/backfill/{job}/stream → SSE stream for backfill progress
+GET  /assets/{ticker}/bars       → OHLCV array
+GET  /assets/{ticker}/stats      → quant stats
+GET  /assets                     → list available tickers
 """
+import asyncio
+import atexit
 import json
 import sys, os
 import threading
 import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 import pandas as pd
 import numpy as np
 from api.db import get_conn
 from api.limiter import limiter
-from api.models import AssetFetch
+from api.models import AssetFetch, BackfillRequest
 from engine.config import ANN_FACTORS as _BARS_PER_YEAR
+
+# ── Backfill job state ─────────────────────────────────────────────────────────
+_backfill_queues: dict[str, asyncio.Queue] = {}
+_bf_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="backfill")
+atexit.register(_bf_executor.shutdown, wait=False)
 
 # Simple TTL cache for quant stats (expensive: Hurst, ADF, GARCH)
 _QUANT_CACHE: dict[tuple, tuple] = {}  # key → (result, computed_at)
@@ -97,6 +109,114 @@ def fetch_asset(request: Request, body: AssetFetch):
     from engine.storage.bulk_writer import bulk_store
     inserted = bulk_store(conn, body.ticker, source_key, df)
     return {"ticker": body.ticker, "bars": inserted, "source": source_key}
+
+
+@router.post("/backfill")
+async def start_backfill(body: BackfillRequest):
+    """Start a deep M1 backfill for a ticker. Returns a job_id to stream progress."""
+    from datetime import datetime
+    try:
+        start = datetime.strptime(body.start_date, "%Y-%m-%d")
+        end   = datetime.strptime(body.end_date,   "%Y-%m-%d")
+    except ValueError as exc:
+        raise HTTPException(400, f"Invalid date format: {exc}")
+    if start > end:
+        raise HTTPException(400, "start_date must be ≤ end_date")
+
+    job_id = str(uuid.uuid4())[:8]
+    queue: asyncio.Queue = asyncio.Queue()
+    _backfill_queues[job_id] = queue
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(
+        _bf_executor,
+        _run_backfill_thread,
+        job_id, body.ticker,
+        start.year, start.month, end.year, end.month,
+        body.interval, loop,
+    )
+    return {"job_id": job_id}
+
+
+def _run_backfill_thread(job_id: str, ticker: str,
+                          start_year: int, start_month: int,
+                          end_year: int, end_month: int,
+                          interval: str, loop: asyncio.AbstractEventLoop) -> None:
+    queue = _backfill_queues.get(job_id)
+
+    def push(msg: str, phase: str = "running") -> None:
+        if queue:
+            asyncio.run_coroutine_threadsafe(
+                queue.put({"phase": phase, "msg": msg}), loop
+            )
+
+    try:
+        push(f"Backfilling {ticker} {start_year}-{start_month:02d} → {end_year}-{end_month:02d}…")
+        from engine.backfill import backfill_ticker, classify_ticker
+        result = backfill_ticker(ticker, start_year, start_month, end_year, end_month)
+
+        if not result.get("ok"):
+            push(result.get("error", "Backfill failed"), "error")
+            return
+
+        rows = result.get("rows", 0)
+        push(f"Downloaded {rows:,} M1 bars — resampling to {interval}…")
+
+        try:
+            from engine.storage.parquet_store import list_available, load_and_resample
+            from engine.storage.bulk_writer import bulk_store
+
+            asset_class = classify_ticker(ticker)
+            available = list_available(asset_class, ticker)
+            if available:
+                sy, sm = available[0]
+                ey, em = available[-1]
+                nm = em + 1
+                ny = ey + (1 if nm > 12 else 0)
+                nm = nm if nm <= 12 else 1
+                end_ts = pd.Timestamp(ny, nm, 1) - pd.Timedelta(days=1)
+                df = load_and_resample(
+                    asset_class, ticker,
+                    pd.Timestamp(sy, sm, 1), end_ts, interval,
+                )
+                if not df.empty:
+                    conn = get_conn()
+                    bulk_store(conn, ticker, f"parquet:{interval}", df)
+                    push(f"✓ {rows:,} M1 bars → {len(df):,} {interval} bars", "done")
+                    return
+            push(f"✓ {rows:,} M1 bars stored (no {interval} resample output)", "done")
+        except Exception as exc:
+            push(f"✓ {rows:,} M1 bars stored; resample failed: {exc}", "done")
+
+    except Exception as exc:
+        push(f"Backfill failed: {exc}", "error")
+
+
+@router.get("/backfill/{job_id}/stream")
+async def stream_backfill(job_id: str):
+    """SSE stream for a running backfill job."""
+    queue = _backfill_queues.get(job_id)
+    if queue is None:
+        raise HTTPException(404, "Backfill job not found")
+
+    async def generator():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=3600)
+                except asyncio.TimeoutError:
+                    yield f"data: {json.dumps({'phase': 'error', 'msg': 'timeout'})}\n\n"
+                    break
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("phase") in ("done", "error"):
+                    break
+        finally:
+            _backfill_queues.pop(job_id, None)
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/{ticker}/bars")
