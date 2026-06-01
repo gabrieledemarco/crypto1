@@ -307,3 +307,8 @@
   padding: 4px 0 2px;
   margin-bottom: 4px;
 }
+
+.liveViewBody {
+  overflow: hidden;
+  min-height: 0;
+}
