@@ -482,12 +482,16 @@ def _run_backtest_sync(
     }
 
     # Execute strategy code safely
+    safe_exec_error_msg: str | None = None
     if code:
         try:
             ns = safe_exec_strategy(code, strategy_id="vibe_v2")
             if "agent_fn" in ns:
                 cfg["agent_fn"] = ns["agent_fn"]
+            else:
+                safe_exec_error_msg = "agent_fn not found in executed code"
         except Exception as exc:
+            safe_exec_error_msg = str(exc)
             log.warning("safe_exec failed: %s", exc)
 
     # IS backtest (full data)
@@ -527,6 +531,8 @@ def _run_backtest_sync(
         "oos_metrics": oos_metrics,
         "equity_sample": equity_sample,
         "best_version": best_key,
+        "agent_fn_loaded": "agent_fn" in cfg,
+        "safe_exec_error": safe_exec_error_msg,
     }
 
 
@@ -624,6 +630,11 @@ async def generate_v2(request: Request, body: VibeV2Request):
 
             # ── 3. Iteration loop ──────────────────────────────────────────────
             current_brief = brief
+            # Track best attempt so we can always save something at the end
+            last_code: str = ""
+            last_config: dict = {}
+            last_bt_metrics: dict = {"is_metrics": {}, "oos_metrics": {}, "equity_sample": []}
+            last_evaluation: dict = {}
 
             for attempt in range(1, MAX_ATTEMPTS + 1):
                 pct_gen = 30 + (attempt - 1) * 5
@@ -665,11 +676,11 @@ async def generate_v2(request: Request, body: VibeV2Request):
 
                 if not code:
                     msg = f"Generator produced no code on attempt {attempt}"
+                    log.warning(msg)
                     if attempt < MAX_ATTEMPTS:
-                        log.warning(msg)
+                        yield _sse({"phase": "warn", "msg": msg})
                         continue
-                    yield _sse({"phase": "error", "msg": msg})
-                    return
+                    break
 
                 # ── 3b. Run backtest in thread ─────────────────────────────────
                 yield _sse({"phase": "backtesting", "pct": 60, "msg": "Running backtest..."})
@@ -685,6 +696,17 @@ async def generate_v2(request: Request, body: VibeV2Request):
                         body.period,
                     )
                     yield _sse({"phase": "backtest_result", "metrics": bt_metrics})
+                    # Surface safe_exec / agent_fn load errors immediately
+                    if bt_metrics.get("safe_exec_error"):
+                        yield _sse({
+                            "phase": "warn",
+                            "msg": f"agent_fn exec error: {bt_metrics['safe_exec_error'][:120]}",
+                        })
+                    if not bt_metrics.get("agent_fn_loaded") and code:
+                        yield _sse({
+                            "phase": "warn",
+                            "msg": f"agent_fn not loaded — backtest ran {bt_metrics.get('best_version', 'fallback')} signals",
+                        })
                 except Exception as exc:
                     log.warning("Backtest failed (attempt %d): %s", attempt, exc)
                     bt_metrics = {"is_metrics": {}, "oos_metrics": {}, "equity_sample": []}
@@ -693,6 +715,12 @@ async def generate_v2(request: Request, body: VibeV2Request):
                         "metrics": bt_metrics,
                         "msg": f"Backtest error: {str(exc)[:100]}",
                     })
+
+                # Track best attempt state
+                last_code = code
+                last_config = config
+                last_bt_metrics = bt_metrics
+
 
                 # ── 3c. Evaluator ──────────────────────────────────────────────
                 yield _sse({"phase": "evaluating", "pct": 75, "msg": "Expert evaluation..."})
@@ -715,6 +743,7 @@ async def generate_v2(request: Request, body: VibeV2Request):
                     }
 
                 yield _sse({"phase": "evaluation", "result": evaluation})
+                last_evaluation = evaluation
 
                 # ── 3d. Orchestrator synthesis ─────────────────────────────────
                 try:
@@ -764,12 +793,26 @@ async def generate_v2(request: Request, body: VibeV2Request):
                     return
 
                 elif decision == "reject":
+                    # Save as research (rejected) and return done rather than error
+                    sid = None
+                    try:
+                        sid = await _save_strategy(
+                            body.resolved_ticker, body.timeframe,
+                            code, config, bt_metrics, evaluation, "reject",
+                        )
+                    except Exception as exc:
+                        log.warning("DB save on reject failed: %s", exc)
+                    is_m = bt_metrics.get("is_metrics", {})
+                    sharpe = float(is_m.get("sharpe_ratio", is_m.get("sharpe", 0)) or 0)
                     yield _sse({
-                        "phase": "error",
-                        "msg": (
-                            f"Strategy rejected after attempt {attempt}: "
-                            f"{synthesis.get('rationale', 'fatal flaws detected')}"
-                        ),
+                        "phase": "done",
+                        "pct": 100,
+                        "strategy_id": sid,
+                        "name": f"{body.resolved_ticker}_v2_{body.timeframe}_rejected",
+                        "sharpe": round(sharpe, 3),
+                        "overall_score": evaluation.get("overall_score", 0),
+                        "attempts": attempt,
+                        "note": f"Rejected: {synthesis.get('rationale', 'fatal flaws')[:120]}",
                     })
                     return
 
@@ -797,10 +840,27 @@ async def generate_v2(request: Request, body: VibeV2Request):
                             ),
                         })
 
-            # All attempts exhausted without a promote decision
+            # All attempts exhausted — save best result as research grade
+            sid = None
+            if last_code:
+                try:
+                    sid = await _save_strategy(
+                        body.resolved_ticker, body.timeframe,
+                        last_code, last_config, last_bt_metrics, last_evaluation, "iterate",
+                    )
+                except Exception as exc:
+                    log.warning("DB save on exhaust failed: %s", exc)
+            is_m = last_bt_metrics.get("is_metrics", {})
+            sharpe = float(is_m.get("sharpe_ratio", is_m.get("sharpe", 0)) or 0)
             yield _sse({
-                "phase": "error",
-                "msg": f"All {MAX_ATTEMPTS} attempts exhausted without promotion.",
+                "phase": "done",
+                "pct": 100,
+                "strategy_id": sid,
+                "name": f"{body.resolved_ticker}_v2_{body.timeframe}_research",
+                "sharpe": round(sharpe, 3),
+                "overall_score": last_evaluation.get("overall_score", 0),
+                "attempts": MAX_ATTEMPTS,
+                "note": f"Research grade — best of {MAX_ATTEMPTS} attempts (promote threshold not met)",
             })
 
         except Exception as exc:

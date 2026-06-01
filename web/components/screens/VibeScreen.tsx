@@ -239,11 +239,14 @@ export function VibeScreen() {
     }
     if (d.phase === 'done') {
       setGenerating(false);
-      setV2Phase('Complete');
+      setV2Phase(d.note ? 'Done (research)' : 'Complete');
       addLog('SYSTEM',
-        `✓ PROMOTED${d.sharpe !== undefined ? ` — Sharpe: ${d.sharpe.toFixed(3)}` : ''}${d.overall_score !== undefined ? ` | Score: ${d.overall_score.toFixed(1)}/5` : ''}${d.name ? ` | ${d.name}` : ''}`,
+        `${d.note ? '◎ SAVED' : '✓ PROMOTED'}${d.sharpe !== undefined ? ` — Sharpe: ${d.sharpe.toFixed(3)}` : ''}${d.overall_score !== undefined ? ` | Score: ${d.overall_score.toFixed(1)}/5` : ''}${d.name ? ` | ${d.name}` : ''}${d.note ? `\n  ${d.note}` : ''}`,
         'data',
       );
+    }
+    if (d.phase === 'warn') {
+      addLog('SYSTEM', `⚠ ${d.msg ?? 'warning'}`, 'error');
     }
     if (d.phase === 'error') {
       setGenerating(false);
@@ -779,15 +782,13 @@ export function VibeScreen() {
         />
       </div>
 
-      {/* Pipeline Log — full width, below workflow */}
-      {useV2 && (
-        <div style={{ gridColumn: "span 12" }}>
-          <AgentLog
-            entries={agentLog}
-            onClear={() => { setAgentLog([]); logIdRef.current = 0; }}
-          />
-        </div>
-      )}
+      {/* Pipeline Log — always shown, populated only in Enhanced Mode */}
+      <div style={{ gridColumn: "span 12" }}>
+        <AgentLog
+          entries={agentLog}
+          onClear={() => { setAgentLog([]); logIdRef.current = 0; }}
+        />
+      </div>
     </div>
   );
 }
