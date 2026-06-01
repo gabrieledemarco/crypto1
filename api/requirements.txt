@@ -4,12 +4,12 @@ pydantic>=2.7.2,<3.0.0
 python-dotenv==1.0.1
 duckdb==0.10.3
 yfinance>=0.2.40,<1.0.0
-numpy>=1.24,<3.0
+numpy==1.26.4
 pandas>=2.0,<3.0
 pyarrow>=14.0
 scipy>=1.10,<2.0
 anthropic>=0.49.0,<2.0.0
-arch>=6.3.0,<7.0.0
+arch==6.3.0
 statsmodels>=0.14.0,<1.0.0
 hurst>=0.0.5
 slowapi==0.1.9
