@@ -13,7 +13,7 @@ on:
           - apply
 
 env:
-  DUCKDB_PATH: /tmp/pareto.db
+  API_URL: ${{ vars.API_URL || 'http://localhost:8099' }}
 
 jobs:
   migrate-strategies:
@@ -21,29 +21,46 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
+      - name: Check API health
         run: |
-          pip install duckdb pandas numpy
-
-      - name: Run migration script
+          echo "API URL: $API_URL"
+          echo "Mode: ${{ inputs.mode }}"
+          
+      - name: Run migration via API
         run: |
-          if [ "${{ inputs.mode }}" = "apply" ]; then
-            python scripts/migrate_strategy_types.py --apply
-          else
-            python scripts/migrate_strategy_types.py
+          DRY_RUN_FLAG=$([[ "${{ inputs.mode }}" == "apply" ]] && echo "false" || echo "true")
+          echo "Dry run: $DRY_RUN_FLAG"
+          
+          RESPONSE=$(curl -s -X POST "${API_URL}/api/strategies/migrate-types?dry_run=${DRY_RUN_FLAG}" \
+            -H "Content-Type: application/json" \
+            -w "\nHTTP_CODE:%{http_code}")
+          
+          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | sed '/HTTP_CODE:/d')
+          
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response:"
+          echo "$BODY" | jq '.' 2>/dev/null || echo "$BODY"
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Migration failed with HTTP $HTTP_CODE"
+            exit 1
           fi
-
-      - name: Show summary
-        if: always()
-        run: |
-          echo "Migration completed with exit code: $EXIT_CODE"
-          echo "Check the output above for details"
+          
+          UPDATED=$(echo "$BODY" | jq -r '.updated // 0')
+          SKIPPED=$(echo "$BODY" | jq -r '.skipped // 0')
+          FAILED=$(echo "$BODY" | jq -r '.failed // 0')
+          
+          echo ""
+          echo "============================================"
+          echo "  MIGRATION SUMMARY"
+          echo "============================================"
+          echo "  Updated  : $UPDATED"
+          echo "  Skipped  : $SKIPPED"
+          echo "  Failed   : $FAILED"
+          echo "============================================"
+          
+          if [ "$FAILED" -gt 0 ]; then
+            echo "ERROR: Some strategies failed to migrate"
+            exit 1
+          fi
