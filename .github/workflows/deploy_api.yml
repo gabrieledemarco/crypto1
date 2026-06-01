@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  deployments: write
 
 jobs:
   deploy:
@@ -24,6 +25,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check Railway token
+        id: check_token
+        run: |
+          if [ -z "${{ secrets.RAILWAY_TOKEN }}" ]; then
+            echo "::error::RAILWAY_TOKEN secret is not set!"
+            echo "Please set it in: GitHub repo -> Settings -> Secrets and variables -> Actions -> New repository secret"
+            echo "Name: RAILWAY_TOKEN"
+            echo "Value: Your Railway token from https://railway.app/account"
+            exit 1
+          fi
+          echo "✓ RAILWAY_TOKEN is configured"
+
       - name: Resolve IDs and trigger Railway redeploy via GQL
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
@@ -32,12 +45,8 @@ jobs:
           import urllib.request, json, os, sys
 
           token = os.environ.get("RAILWAY_TOKEN", "")
-          if not token:
-              print("ERROR: RAILWAY_TOKEN secret is not set.")
-              print("Set it in: GitHub repo -> Settings -> Secrets and variables -> Actions -> New secret")
-              sys.exit(1)
-
           gql_url = "https://backboard.railway.app/graphql/v2"
+          
           def gql(query, variables=None):
               body = json.dumps({"query": query, "variables": variables or {}}).encode()
               req = urllib.request.Request(gql_url, data=body, method="POST", headers={
@@ -51,8 +60,9 @@ jobs:
                   print(f"GQL error: {e}")
                   return {}
 
-          # Discover project / service / environment
+          print("Discovering Railway project and service...")
           resp = gql("{ me { projects { edges { node { id name environments { edges { node { id name } } } services { edges { node { id name } } } } } } } }")
+          
           project_id = service_id = env_id = None
           for p in resp.get("data", {}).get("me", {}).get("projects", {}).get("edges", []):
               node = p["node"]
@@ -65,7 +75,7 @@ jobs:
                           (e["node"]["id"] for e in envs if "prod" in e["node"]["name"].lower()),
                           envs[0]["node"]["id"] if envs else None
                       )
-                      print(f"Found: project={project_id} service={service_id} env={env_id}")
+                      print(f"✓ Found: project={project_id} service={service_id} env={env_id}")
                       break
               if project_id:
                   break
@@ -82,7 +92,8 @@ jobs:
                   f.write(f"RAILWAY_ENVIRONMENT_ID={env_id}\n")
                   f.write(f"RAILWAY_SERVICE_ID={service_id}\n")
 
-          # Trigger redeploy via GQL mutation (no CLI needed)
+          # Trigger redeploy via GQL mutation
+          print("Triggering Railway redeploy...")
           mutation = """
           mutation redeploy($envId: String!, $svcId: String!) {
             serviceInstanceRedeploy(environmentId: $envId, serviceId: $svcId)
@@ -95,13 +106,12 @@ jobs:
               print("Falling back to railway CLI...")
               sys.exit(2)  # handled below
           else:
-              print("Railway redeploy triggered via GQL. Build will take 3-8 min.")
+              print("✓ Railway redeploy triggered via GQL. Build will take 3-8 min.")
           PYEOF
           EXIT=$?
           if [ $EXIT -eq 2 ]; then
             echo "GQL redeploy failed, trying railway CLI fallback..."
-            bash <(curl -fsSL https://railway.com/install.sh) -y 2>/dev/null || \
-              npm install -g @railway/cli --silent 2>&1 | tail -2
+            npm install -g @railway/cli --silent 2>&1 | tail -2
             RAILWAY_TOKEN=${{ secrets.RAILWAY_TOKEN }} \
               railway up \
                 --project "$RAILWAY_PROJECT_ID" \
