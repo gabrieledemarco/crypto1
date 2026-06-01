@@ -7,6 +7,7 @@ import { Histogram } from "@/components/charts/Histogram";
 import { DonutChart } from "@/components/charts/DonutChart";
 import { MultiEquityChart } from "@/components/charts/MultiEquityChart";
 import type { ApiRunListItem } from "@/lib/api-types";
+import type { Run } from "@/lib/fixtures";
 import styles from "./LiveViewAnalytics.module.css";
 
 interface PreviewResult {
@@ -34,6 +35,7 @@ interface Props {
   previewEquity: PreviewEquityPoint[];
   previewLoading: boolean;
   previewError: string | null;
+  fallbackRuns?: Run[];
 }
 
 type SortKey = "created_at" | "ticker" | "timeframe" | "status" | "sharpe" | "cagr" | "max_dd" | "pf" | "n_trades" | "win_rate";
@@ -102,10 +104,38 @@ function buildDescription(strategy: Record<string, unknown> | undefined, ticker:
   return `Strategia ${type} configurata per ${ticker} su timeframe ${timeframe}. La vista aggrega i run associati, confronta metriche risk-adjusted e visualizza la dispersione dei risultati storici.`;
 }
 
-export function LiveViewAnalytics({ activeStrategyId, ticker, timeframe, preview, previewEquity, previewLoading, previewError }: Props) {
+
+function fixtureRunToListItem(run: Run): ApiRunListItem {
+  return {
+    id: run.id,
+    name: run.name,
+    ticker: run.params.universe?.[0] ? `${run.params.universe[0]}-USD`.replace(/-USD-USD$/, "-USD") : run.strategy,
+    timeframe: run.params.timeframe,
+    status: "fixture",
+    strategy_id: null,
+    params: run.params as unknown as Record<string, unknown>,
+    created_at: run.dates.oosEnd || run.dates.isEnd || new Date().toISOString(),
+    start_date: run.dates.isStart || null,
+    end_date: run.dates.oosEnd || run.dates.isEnd || null,
+    sharpe: run.metricsOOS.sharpe,
+    cagr: run.metricsOOS.cagr * 100,
+    max_dd: run.metricsOOS.maxDD * 100,
+    pf: run.profitFactor,
+    n_trades: run.tradesCount,
+    win_rate: run.winRate,
+  };
+}
+
+export function LiveViewAnalytics({ activeStrategyId, ticker, timeframe, preview, previewEquity, previewLoading, previewError, fallbackRuns = [] }: Props) {
   const { data: strategy, isLoading: strategyLoading } = useStrategy(activeStrategyId);
   const { data: runList, isLoading: runsLoading, error: runsError } = useRunList(activeStrategyId);
-  const runs = useMemo(() => runList ?? [], [runList]);
+  const fallbackRunMap = useMemo(() => new Map(fallbackRuns.map((run) => [run.id, run])), [fallbackRuns]);
+  const fallbackRunList = useMemo(() => fallbackRuns.map(fixtureRunToListItem), [fallbackRuns]);
+  const runs = useMemo(() => {
+    if (runList && runList.length > 0) return runList;
+    return fallbackRunList;
+  }, [runList, fallbackRunList]);
+  const dataSource = runList && runList.length > 0 ? "API" : fallbackRunList.length > 0 ? "LOCAL" : "EMPTY";
 
   const [query, setQuery] = useState("");
   const [assetFilter, setAssetFilter] = useState("ALL");
@@ -136,9 +166,18 @@ export function LiveViewAnalytics({ activeStrategyId, ticker, timeframe, preview
   }, [runs, query, assetFilter, tfFilter, outcomeFilter, sortKey, sortDir]);
 
   useEffect(() => {
-    if (selectedIds.length > 0 || filteredRuns.length === 0) return;
-    setSelectedIds(filteredRuns.slice(0, 4).map((r) => r.id));
-  }, [filteredRuns, selectedIds.length]);
+    if (filteredRuns.length === 0) {
+      if (selectedIds.length > 0) setSelectedIds([]);
+      return;
+    }
+    const visibleIds = new Set(filteredRuns.map((r) => r.id));
+    const stillVisible = selectedIds.filter((id) => visibleIds.has(id));
+    if (stillVisible.length !== selectedIds.length) {
+      setSelectedIds(stillVisible);
+      return;
+    }
+    if (selectedIds.length === 0) setSelectedIds(filteredRuns.slice(0, 4).map((r) => r.id));
+  }, [filteredRuns, selectedIds]);
 
   const selectedRuns = useMemo(() => {
     const set = new Set(selectedIds);
@@ -185,7 +224,7 @@ export function LiveViewAnalytics({ activeStrategyId, ticker, timeframe, preview
   const strategyType = String(strategy?.strategy ?? "setup");
   const strategyStatus = String(strategy?.status ?? "research");
   const description = buildDescription(strategy, ticker, timeframe);
-  const loadingText = strategyLoading || runsLoading ? "loading…" : runsError ? "runs API unavailable" : `${filteredRuns.length}/${runs.length} runs`;
+  const loadingText = strategyLoading || (runsLoading && dataSource === "EMPTY") ? "loading…" : runsError && dataSource === "EMPTY" ? "runs API unavailable" : `${filteredRuns.length}/${runs.length} runs · ${dataSource}`;
 
   return (
     <div className={styles.liveView}>
@@ -200,6 +239,7 @@ export function LiveViewAnalytics({ activeStrategyId, ticker, timeframe, preview
             <span className={styles.badge}>{strategyType}</span>
             <span className={styles.badge}>{strategyStatus}</span>
             <span className={styles.badge}>{ticker} · {timeframe}</span>
+            <span className={styles.badge}>ANALYTICS ON</span>
           </div>
         </div>
         <div className={styles.desc}>{description}</div>
@@ -295,7 +335,12 @@ export function LiveViewAnalytics({ activeStrategyId, ticker, timeframe, preview
             <span className={styles.sectionTitle}>Equity multistrato</span>
             <span className={styles.sectionSub}>{selectedRuns.length} selected · max 8</span>
           </div>
-          <MultiEquityChart runs={selectedRuns.map((r, idx) => ({ id: r.id, name: `${r.ticker} ${r.timeframe}`, color: colors[idx % colors.length] }))} height={220} />
+          <MultiEquityChart runs={selectedRuns.map((r, idx) => ({
+            id: r.id,
+            name: `${r.ticker} ${r.timeframe}`,
+            color: colors[idx % colors.length],
+            localEquity: fallbackRunMap.get(r.id)?.equity.map((p) => ({ i: p.i, v: p.v, dd: p.dd })),
+          }))} height={220} />
         </div>
       </div>
 

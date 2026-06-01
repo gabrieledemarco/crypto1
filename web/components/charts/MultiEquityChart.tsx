@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef } from "react";
 import { useQueries } from "@tanstack/react-query";
-import { createChart, IChartApi, LineStyle, Time } from "lightweight-charts";
+import { createChart, LineStyle, Time } from "lightweight-charts";
 import { api } from "@/lib/api";
 import type { ApiEquityPoint } from "@/lib/api-types";
 
@@ -9,6 +9,7 @@ interface SeriesInput {
   id: string;
   name: string;
   color: string;
+  localEquity?: ApiEquityPoint[];
 }
 
 interface Props {
@@ -33,22 +34,20 @@ function normalizeEquity(points: ApiEquityPoint[]) {
 
 export function MultiEquityChart({ runs, height = 260 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-
   const queries = useQueries({
     queries: runs.map((run) => ({
       queryKey: ["run-equity", run.id],
       queryFn: () => api.get<ApiEquityPoint[]>(`/runs/${run.id}/equity`),
       staleTime: Infinity,
       retry: false,
-      enabled: !!run.id,
+      enabled: !!run.id && !run.localEquity,
     })),
   });
 
   const series = useMemo(() => runs.map((run, idx) => ({
     ...run,
     color: run.color || palette[idx % palette.length],
-    data: normalizeEquity((queries[idx]?.data as ApiEquityPoint[] | undefined) ?? []),
+    data: normalizeEquity(run.localEquity ?? (queries[idx]?.data as ApiEquityPoint[] | undefined) ?? []),
     loading: queries[idx]?.isLoading,
     error: queries[idx]?.isError,
   })), [runs, queries]);
@@ -110,7 +109,6 @@ export function MultiEquityChart({ runs, height = 260 }: Props) {
     }
 
     chart.timeScale().fitContent();
-    chartRef.current = chart;
     return () => chart.remove();
   }, [series, average, height]);
 
