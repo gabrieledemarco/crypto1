@@ -1,0 +1,49 @@
+name: Migrate Strategy Types
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run mode (dry-run or apply)'
+        required: true
+        default: 'dry-run'
+        type: choice
+        options:
+          - dry-run
+          - apply
+
+env:
+  DUCKDB_PATH: /tmp/pareto.db
+
+jobs:
+  migrate-strategies:
+    name: Migrate Strategy Types
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install duckdb pandas numpy
+
+      - name: Run migration script
+        run: |
+          if [ "${{ inputs.mode }}" = "apply" ]; then
+            python scripts/migrate_strategy_types.py --apply
+          else
+            python scripts/migrate_strategy_types.py
+          fi
+
+      - name: Show summary
+        if: always()
+        run: |
+          echo "Migration completed with exit code: $EXIT_CODE"
+          echo "Check the output above for details"
