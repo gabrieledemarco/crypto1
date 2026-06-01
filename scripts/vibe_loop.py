@@ -285,11 +285,11 @@ def generate_strategy(
 # 4. Backtest / persist / evaluate
 # ─────────────────────────────────────────────────────────────────────────────
 
-def save_strategy(name: str, config: dict, code: str) -> str:
+def save_strategy(name: str, config: dict, code: str, strategy_type: str = "vibe_loop") -> str:
     sid = str(uuid.uuid4())[:8]
     get_conn().execute(
         "INSERT INTO strategies (id,name,strategy_type,config,code,status) VALUES (?,?,?,?,?,?)",
-        [sid, name, "vibe_loop", json.dumps(config), code, "research"],
+        [sid, name, strategy_type, json.dumps(config), code, "research"],
     )
     return sid
 
@@ -493,7 +493,7 @@ def main() -> dict:
         config["active_hours"] = _active_hours(tf)  # enforce correct hours per tf
         config.update(risk_cfg)   # merge risk management params into saved config
 
-        sid = save_strategy(f"vibe_{iteration:03d}_{tf}_{ticker.replace('-','_')}", config, code)
+        sid = save_strategy(f"vibe_{iteration:03d}_{tf}_{ticker.replace('-','_')}", config, code, strategy_type=name)
         print(f"  sid={sid}")
 
         try:

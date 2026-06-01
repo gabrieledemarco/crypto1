@@ -59,7 +59,34 @@ function extractAsset(entry: LibraryEntry): string {
   return entry.tags.find(t => known.includes(t.toUpperCase()))?.toUpperCase() ?? "—";
 }
 
-function extractMethod(strategy: string): string {
+function extractMethod(entry: LibraryEntry): string {
+  // Use strategy_type from DB if it's a real archetype name
+  const strategy = entry.strategy;
+  if (strategy && strategy.includes("_")) {
+    // It's likely an archetype name (e.g., "bb_reversion", "rsi_reversion")
+    const s = strategy.toLowerCase();
+    if (s.includes("order_flow")) return "OFI";
+    if (s.includes("tick_direction")) return "TICK";
+    if (s.includes("spread_capture")) return "SPREAD";
+    if (s.includes("vwap")) return "VWAP";
+    if (s.includes("ema")) return "EMA";
+    if (s.includes("rsi")) return "RSI";
+    if (s.includes("macd")) return "MACD";
+    if (s.includes("bb") || s.includes("bollinger")) return "BB";
+    if (s.includes("donchian")) return "DCHAN";
+    if (s.includes("momentum")) return "MOM";
+    if (s.includes("adaptive_regime")) return "ADAPT";
+    if (s.includes("volume_breakout")) return "VOL";
+    // Return the archetype name directly if no abbreviation match
+    if (["ema_cross_fast", "ema_cross_rsi", "ema_scalp_3_8", "rsi_reversion", "rsi_trend", 
+         "rsi_fast_7", "bb_reversion", "bb_squeeze", "bb_tight_scalp", "macd_cross",
+         "donchian_20", "donchian_10_trend", "momentum_5bar", "vwap_reversion",
+         "vwap_scalp", "adaptive_regime", "order_flow_imbalance", "tick_direction_momentum",
+         "spread_capture", "volume_breakout"].includes(s)) {
+      return s;
+    }
+  }
+  // Fallback: extract from name
   const s = strategy.toLowerCase();
   if (s.includes("order_flow") || s.includes("ofi")) return "OFI";
   if (s.includes("tick")) return "TICK";
@@ -129,7 +156,7 @@ export function LibraryScreen() {
       : fixtures.library;
 
   const enriched = useMemo<EnrichedEntry[]>(
-    () => rawEntries.map(e => ({ ...e, _tf: extractTF(e), _asset: extractAsset(e), _method: extractMethod(e.strategy) })),
+    () => rawEntries.map(e => ({ ...e, _tf: extractTF(e), _asset: extractAsset(e), _method: extractMethod(e) })),
     [rawEntries],
   );
 
