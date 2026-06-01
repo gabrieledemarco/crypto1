@@ -18,6 +18,8 @@ from asyncio import AbstractEventLoop
 from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncIterator
 
+import os
+
 from anthropic import AsyncAnthropic
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -28,6 +30,8 @@ from api.limiter import limiter
 
 log = logging.getLogger("vibe_v2")
 router = APIRouter()
+
+_ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 _executor = ThreadPoolExecutor(max_workers=2)
 
@@ -543,7 +547,10 @@ async def generate_v2(request: Request, body: VibeV2Request):
     """SSE endpoint: orchestrated 3-agent strategy generation pipeline."""
 
     async def event_stream():
-        client = AsyncAnthropic()
+        if not _ANTHROPIC_KEY:
+            yield f"data: {json.dumps({'phase': 'error', 'msg': '[ANTHROPIC_API_KEY not set — configure it in Railway environment variables]'})}\n\n"
+            return
+        client = AsyncAnthropic(api_key=_ANTHROPIC_KEY)
         loop: AbstractEventLoop = asyncio.get_event_loop()
 
         def _sse(payload: dict) -> str:
