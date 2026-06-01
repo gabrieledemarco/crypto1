@@ -200,6 +200,21 @@ export function AssetsScreen() {
   const [bfJobId, setBfJobId] = useState<string | null>(null);
   const [bfRunning, setBfRunning] = useState(false);
   const [bfMsg, setBfMsg] = useState<string | null>(null);
+  const [repairing, setRepairing] = useState(false);
+  const [repairMsg, setRepairMsg] = useState<string | null>(null);
+
+  const handleRepairDb = async () => {
+    setRepairing(true);
+    setRepairMsg(null);
+    try {
+      const data = await api.post<{ ok: boolean; deleted: number; message: string }>("/assets/repair", {});
+      setRepairMsg(`✓ ${data.message}`);
+    } catch (err) {
+      setRepairMsg(`Errore: ${err instanceof Error ? err.message : "API non raggiungibile"}`);
+    } finally {
+      setRepairing(false);
+    }
+  };
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -568,6 +583,27 @@ export function AssetsScreen() {
                     <button className={styles.btnCancel} onClick={() => { setShowBackfill(false); setBfMsg(null); setFetchTicker(""); setSearchVal(""); }}>
                       CANCEL
                     </button>
+                  </div>
+
+                  {/* Repair section */}
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
+                    <div className={styles.label} style={{ marginBottom: 4 }}>REPAIR DATABASE</div>
+                    <div style={{ fontSize: 10, color: "var(--faint)", fontFamily: "var(--font-mono)", marginBottom: 6 }}>
+                      Rimuove i dati parquet corrotti dalla tabella assets. Usa se i backtest falliscono dopo un backfill interrotto.
+                    </div>
+                    <button
+                      className={styles.btnCancel}
+                      style={{ borderColor: repairing ? "var(--border)" : "var(--coral)", color: repairing ? "var(--faint)" : "var(--coral)" }}
+                      onClick={handleRepairDb}
+                      disabled={repairing}
+                    >
+                      {repairing ? "RIPARANDO…" : "⚠ REPAIR DB"}
+                    </button>
+                    {repairMsg && (
+                      <div className={styles.fetchMsg} style={{ color: repairMsg.startsWith("✓") ? "var(--green)" : "var(--coral)", marginTop: 4 }}>
+                        {repairMsg}
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : (

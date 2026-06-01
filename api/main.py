@@ -65,10 +65,32 @@ def _seed_library_if_empty(conn) -> None:
         logging.warning(f"Library seed skipped: {e}")
 
 
+def _repair_assets_table(conn) -> None:
+    """Remove parquet-cached rows from the assets table on startup.
+
+    Old versions of _load_or_fetch wrote Parquet data into DuckDB as a cache.
+    If the process was killed mid-write the table ends up with partial rows.
+    We now serve Parquet data directly from files, so these rows are stale.
+    """
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM assets WHERE source LIKE 'parquet:%'"
+        ).fetchone()[0]
+        if n > 0:
+            conn.execute("DELETE FROM assets WHERE source LIKE 'parquet:%'")
+            conn.commit()
+            import logging
+            logging.info(f"startup repair: removed {n} stale parquet-cached rows from assets table")
+    except Exception as e:
+        import logging
+        logging.warning(f"startup repair skipped: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
         conn = get_conn()
+        _repair_assets_table(conn)
         _seed_library_if_empty(conn)
     except Exception as e:
         import logging

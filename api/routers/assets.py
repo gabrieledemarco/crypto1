@@ -40,6 +40,38 @@ _QUANT_TTL = 300  # seconds
 router = APIRouter()
 
 
+@router.post("/repair")
+def repair_assets(conn=None):
+    """
+    Remove all 'parquet:*' rows from the assets table.
+
+    These rows were written by old versions of _load_or_fetch which incorrectly
+    cached Parquet data into DuckDB. Interrupting that write left the table with
+    partial/corrupted rows. After this repair, historical data is served directly
+    from the Parquet files (the authoritative store).
+
+    Safe to call multiple times — idempotent.
+    """
+    if conn is None:
+        conn = get_conn()
+    try:
+        before = conn.execute(
+            "SELECT COUNT(*) FROM assets WHERE source LIKE 'parquet:%'"
+        ).fetchone()[0]
+        conn.execute("DELETE FROM assets WHERE source LIKE 'parquet:%'")
+        conn.commit()
+        return {
+            "ok": True,
+            "deleted": before,
+            "message": (
+                f"Removed {before} cached rows (parquet:* source). "
+                "Historical data is now served directly from Parquet files."
+            ),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Repair failed: {exc}")
+
+
 @router.get("")
 def list_assets():
     conn = get_conn()
