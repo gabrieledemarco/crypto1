@@ -110,9 +110,9 @@ Decide and respond in JSON in a ```json block:
 }
 
 Decision rules:
-- "promote": Sharpe >= 1.2 AND DD <= 10% AND evaluator overall_score >= 6.5 AND no fatal_flaws
-- "iterate": Sharpe > 0 AND evaluator has specific_improvements AND attempt < max_attempts
-- "reject": Sharpe < 0 OR evaluator fatal_flaws exist AND not fixable
+- "promote": Sharpe >= 0.8 AND DD <= 25% AND evaluator overall_score >= 3.0 AND no fatal_flaws
+- "iterate": Sharpe >= 0 AND evaluator has specific_improvements AND attempt < max_attempts
+- "reject": Sharpe < 0 OR evaluator fatal_flaws present AND not fixable in one iteration
 
 For "iterate", refined_brief_changes must address EVERY weakness from evaluator.specific_improvements with a concrete change.
 """
@@ -125,10 +125,16 @@ Step 1 -- Rationale (2-4 sentences): how your implementation maps to the brief's
 Step 2 -- JSON config in ```json block
 Step 3 -- Python code in ```python block
 
-## Function signature (MANDATORY)
-def agent_fn(df: pd.DataFrame, ind) -> pd.DataFrame:
-The engine passes `ind` as the second argument — a callable for on-demand indicator computation.
-Use `ind` for ALL custom indicators. Pre-computed columns on `df` are available directly.
+## Execution environment — READ CAREFULLY
+`pd` (pandas) and `np` (numpy) are pre-injected into the namespace.
+DO NOT write any import statements — `import pandas as pd` will crash the executor.
+DO NOT use type annotations on the function signature — `pd.DataFrame` in annotations also crashes.
+
+## Function signature (MANDATORY — no annotations)
+def agent_fn(df, ind):
+
+`df` is a pandas DataFrame. `ind` is a callable passed as the second argument by the engine.
+Use `ind` for ALL custom indicators. Pre-computed df columns are available directly.
 
 ## Pre-computed df columns
 Open, High, Low, Close, Volume, ATR14, RSI14, EMA50, EMA200, RollHigh6, RollLow6,
@@ -144,13 +150,25 @@ ind("ATR", N)            -> pd.Series
 ind("VWAP")              -> pd.Series
 
 ## Strict rules
-- Function MUST be named agent_fn and accept (df, ind)
+- Function MUST be named agent_fn and accept exactly (df, ind) — no type annotations
 - .shift(1) on ALL signal conditions (no lookahead bias)
 - At minimum 2 independent entry conditions
 - ATR-based SL_dist and TP_dist only (use df["ATR14"] or ind("ATR", N))
-- Use only df columns and ind() — no external imports needed
+- NO import statements of any kind
 - Return df with columns: signal (1=LONG, -1=SHORT, 0=flat), SL_dist, TP_dist
 - Implement the brief's entry_logic and entry_filters exactly
+
+## Minimal correct example
+```python
+def agent_fn(df, ind):
+    ema_fast = ind("EMA", 20)
+    ema_slow = ind("EMA", 50)
+    rsi = ind("RSI", 14)
+    long_cond = (ema_fast.shift(1) > ema_slow.shift(1)) & (rsi.shift(1) < 60)
+    short_cond = (ema_fast.shift(1) < ema_slow.shift(1)) & (rsi.shift(1) > 40)
+    signal = long_cond.astype(int) - short_cond.astype(int)
+    return df.assign(signal=signal, SL_dist=df["ATR14"] * 2.0, TP_dist=df["ATR14"] * 4.0)
+```
 """
 
 EVALUATOR_SYSTEM = """\
@@ -171,6 +189,7 @@ You are a Senior Quantitative Researcher and Portfolio Manager with 20 years of 
 6. **Implementation Quality** (1-5): Lookahead bias audit (any condition that could peek at future bars?). Code clarity. Edge dilution from slippage?
 
 ## Required output -- respond ONLY with this JSON in a ```json block:
+Set overall_score = average of the 6 dimension scores (so it is also on the 1.0-5.0 scale).
 {
   "scores": {
     "alpha_source": 3,
@@ -180,7 +199,7 @@ You are a Senior Quantitative Researcher and Portfolio Manager with 20 years of 
     "statistical_robustness": 3,
     "implementation_quality": 3
   },
-  "overall_score": 5.0,
+  "overall_score": 3.0,
   "strengths": ["<specific strength>", "<specific strength>"],
   "weaknesses": ["<specific weakness with reference to code/metrics>"],
   "specific_improvements": ["<concrete change to make>"],
@@ -368,7 +387,7 @@ async def _call_evaluator(
     )
 
     response = await client.messages.create(
-        model=_MODEL_ORCHESTRATOR,
+        model=_MODEL_EVALUATOR,
         max_tokens=1200,
         system=EVALUATOR_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
