@@ -546,6 +546,7 @@ async def _save_strategy(
     metrics: dict,
     evaluation: dict,
     verdict: str,
+    strategy_type: str = "unknown",
 ) -> str:
     """Save promoted strategy to DB. Returns strategy_id."""
     loop = asyncio.get_event_loop()
@@ -585,7 +586,7 @@ async def _save_strategy(
         name = f"vibev2_{verdict}_{ticker.replace('-', '_')}_{timeframe}_{sid}"
         conn.execute(
             "INSERT INTO strategies (id,name,strategy_type,config,code,status) VALUES (?,?,?,?,?,?)",
-            [sid, name, "vibe_v2", json.dumps(cfg_save), code, status],
+            [sid, name, strategy_type, json.dumps(cfg_save), code, status],
         )
         return sid
 
@@ -767,12 +768,14 @@ async def generate_v2(request: Request, body: VibeV2Request):
                 })
 
                 # ── 3e. Act on decision ────────────────────────────────────────
+                strategy_type = current_brief.get("strategy_type", "unknown")
                 if decision == "promote":
                     sid = None
                     try:
                         sid = await _save_strategy(
                             body.resolved_ticker, body.timeframe,
                             code, config, bt_metrics, evaluation, "promote",
+                            strategy_type,
                         )
                     except Exception as exc:
                         log.warning("DB save failed: %s", exc)
@@ -799,6 +802,7 @@ async def generate_v2(request: Request, body: VibeV2Request):
                         sid = await _save_strategy(
                             body.resolved_ticker, body.timeframe,
                             code, config, bt_metrics, evaluation, "reject",
+                            strategy_type,
                         )
                     except Exception as exc:
                         log.warning("DB save on reject failed: %s", exc)
@@ -847,6 +851,7 @@ async def generate_v2(request: Request, body: VibeV2Request):
                     sid = await _save_strategy(
                         body.resolved_ticker, body.timeframe,
                         last_code, last_config, last_bt_metrics, last_evaluation, "iterate",
+                        current_brief.get("strategy_type", "unknown"),
                     )
                 except Exception as exc:
                     log.warning("DB save on exhaust failed: %s", exc)
