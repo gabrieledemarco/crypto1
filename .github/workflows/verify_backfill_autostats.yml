@@ -19,12 +19,12 @@ jobs:
 
       - name: Install Playwright
         run: |
-          npm install -g playwright
-          playwright install --with-deps chromium
+          npm install playwright
+          npx playwright install --with-deps chromium
 
       - name: Write verification script
         run: |
-          cat > /tmp/verify_railway.js << 'EOF'
+          cat > verify_railway.js << 'EOF'
           const { chromium } = require('playwright');
 
           (async () => {
@@ -94,7 +94,7 @@ jobs:
             console.log('[1] Loading Railway dashboard...');
             const resp = await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded', timeout: 30000 });
             console.log(`    Status: ${resp.status()} URL: ${page.url()}`);
-            await page.screenshot({ path: '/tmp/01_dashboard.png' });
+            await page.screenshot({ path: '01_dashboard.png' });
 
             const title = await page.title();
             console.log(`    Title: ${title}`);
@@ -111,7 +111,7 @@ jobs:
               await assetsBtn.click();
               await page.waitForTimeout(1500);
             }
-            await page.screenshot({ path: '/tmp/02_assets.png' });
+            await page.screenshot({ path: '02_assets.png' });
 
             console.log('[3] Triggering simulated backfill...');
             const backfillBtn = page.locator('button').filter({ hasText: /BACKFILL|Backfill/i }).first();
@@ -119,7 +119,7 @@ jobs:
               await backfillBtn.click();
               await page.waitForTimeout(3000);
             }
-            await page.screenshot({ path: '/tmp/03_post_backfill.png' });
+            await page.screenshot({ path: '03_post_backfill.png' });
 
             console.log('[4] Checking for auto-stats...');
             const statsTerms = ['Sharpe', 'Hurst', 'VaR', 'GARCH', 'Drawdown'];
@@ -133,7 +133,7 @@ jobs:
             console.log(`    Stats found: [${found.join(', ')}]`);
             if (errors.length) console.log(`    Console errors: ${errors.slice(0,3).join('; ')}`);
 
-            await page.screenshot({ path: '/tmp/04_final.png' });
+            await page.screenshot({ path: '04_final.png' });
             await browser.close();
 
             const pass = tickerVisible && found.length > 0;
@@ -143,7 +143,7 @@ jobs:
           EOF
 
       - name: Run verification against live Railway app
-        run: node /tmp/verify_railway.js
+        run: node verify_railway.js
         continue-on-error: true
         id: verify
 
@@ -152,9 +152,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: railway-verification-screenshots
-          path: /tmp/*.png
+          path: "*.png"
 
       - name: Report result
         run: |
           echo "Verification exit code: ${{ steps.verify.outcome }}"
-          ls -la /tmp/*.png 2>/dev/null || true
+          ls -la *.png 2>/dev/null || true
