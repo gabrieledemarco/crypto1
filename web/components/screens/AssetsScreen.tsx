@@ -226,9 +226,8 @@ export function AssetsScreen() {
     setDeletingHistory(true);
     setDeleteHistoryMsg(null);
     try {
-      const url = ticker ? `/api/assets/history?ticker=${encodeURIComponent(ticker)}` : "/api/assets/history";
-      const res = await fetch(url, { method: "DELETE" });
-      const data = await res.json() as { ok: boolean; removed_files: number; freed_mb: number; message: string };
+      const path = ticker ? `/assets/history?ticker=${encodeURIComponent(ticker)}` : "/assets/history";
+      const data = await api.delete<{ ok: boolean; removed_files: number; freed_mb: number; message: string }>(path);
       setDeleteHistoryMsg(`✓ ${data.message}`);
       qc.invalidateQueries({ queryKey: ["assets"] });
     } catch (err) {
@@ -381,7 +380,13 @@ export function AssetsScreen() {
           setBfRunning(false);
           setBfJobId(null);
           es.close();
-          if (ev.phase === "done") qc.invalidateQueries({ queryKey: ["assets"] });
+          if (ev.phase === "done") {
+            qc.invalidateQueries({ queryKey: ["assets"] });
+            if (fetchTicker) {
+              setSelectedTicker(fetchTicker);
+              setViewInterval(bfInterval || "1h");
+            }
+          }
         }
       } catch {}
     };
