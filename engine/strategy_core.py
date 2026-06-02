@@ -392,7 +392,10 @@ def _backtest_v2_original(df: pd.DataFrame,
 
 # ── Public dispatch — uses vectorbt when available ────────────────────────────
 
+import os as _os
 try:
+    if _os.getenv("DISABLE_VBT", "").lower() in ("1", "true", "yes"):
+        raise ImportError("DISABLE_VBT set")
     from engine.backtest_vbt import backtest_vbt_single as _backtest_fast
     _VBT_AVAILABLE = True
 except Exception:
