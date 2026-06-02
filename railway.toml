@@ -13,6 +13,7 @@
     DUCKDB_PATH = "/data/pareto.db"
     PREWARM_TICKERS = "BTC-USD,ETH-USD,SOL-USD"
     PREWARM_INTERVALS = "1h,4h"
+    DISABLE_VBT = "1"
 
 [[services]]
   name = "web"
