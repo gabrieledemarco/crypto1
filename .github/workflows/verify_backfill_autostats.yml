@@ -19,8 +19,8 @@ jobs:
 
       - name: Install Playwright
         run: |
-          npm install playwright
-          npx playwright install --with-deps chromium
+          npm install -g playwright
+          playwright install --with-deps chromium
 
       - name: Write verification script
         run: |
