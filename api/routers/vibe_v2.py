@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from api.db import get_conn
+from api.utils import extract_json_block, extract_config, extract_code
 
 log = logging.getLogger("vibe_v2")
 router = APIRouter()
@@ -256,45 +257,6 @@ def _build_context(body: VibeV2Request) -> str:
     )
 
 
-# ── JSON / code extractors ─────────────────────────────────────────────────────
-
-def _extract_json_block(text: str) -> dict:
-    """Extract first JSON object from a ```json block in text."""
-    for m in re.finditer(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL):
-        try:
-            return json.loads(m.group(1))
-        except json.JSONDecodeError:
-            continue
-    # Fallback: find largest {...} block
-    best: dict = {}
-    for m in re.finditer(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}", text, re.DOTALL):
-        try:
-            obj = json.loads(m.group(0))
-            if len(obj) > len(best):
-                best = obj
-        except json.JSONDecodeError:
-            continue
-    return best
-
-
-def _extract_code(text: str) -> str:
-    """Extract Python code from ```python block."""
-    m = re.search(r"```python\s*(.*?)\s*```", text, re.DOTALL)
-    return m.group(1).strip() if m else ""
-
-
-def _extract_config(text: str) -> dict:
-    """Extract the JSON config block (must contain sl_mult or ticker) from generator output."""
-    for m in re.finditer(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL):
-        try:
-            obj = json.loads(m.group(1))
-            if any(k in obj for k in ("sl_mult", "ticker", "timeframe")):
-                return obj
-        except json.JSONDecodeError:
-            continue
-    return {}
-
-
 # ── Agent callers ──────────────────────────────────────────────────────────────
 
 async def _call_orchestrator_brief(
@@ -316,7 +278,7 @@ async def _call_orchestrator_brief(
         ),
     )
     raw = response.content[0].text
-    brief = _extract_json_block(raw)
+    brief = extract_json_block(raw)
     return raw, brief
 
 
@@ -420,7 +382,7 @@ async def _call_evaluator(
         ),
     )
     raw = response.content[0].text
-    return _extract_json_block(raw)
+    return extract_json_block(raw)
 
 
 async def _call_orchestrator_synthesis(
@@ -461,7 +423,7 @@ async def _call_orchestrator_synthesis(
         ),
     )
     raw = response.content[0].text
-    return _extract_json_block(raw)
+    return extract_json_block(raw)
 
 
 # ── Backtest (sync, runs in thread) ───────────────────────────────────────────
@@ -779,8 +741,8 @@ async def generate_v2(request: Request, body: VibeV2Request):
                     else:
                         full_generator_text = value
 
-                code = _extract_code(full_generator_text)
-                config = _extract_config(full_generator_text)
+                code = extract_code(full_generator_text)
+                config = extract_config(full_generator_text)
 
                 # Apply risk params from brief if config is sparse
                 if not config:

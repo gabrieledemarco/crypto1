@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 
 from api.models import VibeGenerateRequest
 from api.routers.brain import get_brain_context, sync_brain
+from api.utils import extract_config, extract_code
 
 router = APIRouter()
 _executor = ThreadPoolExecutor(max_workers=2)
@@ -143,30 +144,6 @@ def agent_fn(df: pd.DataFrame) -> pd.DataFrame:
 """
 
 
-def _extract_config(text: str) -> dict:
-    """Extract JSON config from Claude response text."""
-    m = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(1))
-        except json.JSONDecodeError:
-            pass
-    m = re.search(r"\{[^{}]*\"ticker\"[^{}]*\}", text, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(0))
-        except json.JSONDecodeError:
-            pass
-    return {}
-
-
-def _extract_code(text: str) -> str:
-    """Extract Python agent_fn from Claude response text."""
-    m = re.search(r"```python\s*(.*?)\s*```", text, re.DOTALL)
-    if m:
-        return m.group(1).strip()
-    return ""
-
 
 async def _mock_stream(body: VibeGenerateRequest):
     """Fallback stream when ANTHROPIC_API_KEY is not set."""
@@ -208,8 +185,8 @@ async def _mock_stream(body: VibeGenerateRequest):
         yield f"data: {json.dumps({'type': 'delta', 'text': chunk})}\n\n"
         await asyncio.sleep(0.04)
 
-    config = _extract_config(mock_text)
-    code = _extract_code(mock_text)
+    config = extract_config(mock_text)
+    code = extract_code(mock_text)
     yield f"data: {json.dumps({'type': 'done', 'config': config, 'code': code})}\n\n"
 
 
@@ -448,8 +425,8 @@ async def _claude_stream(body: VibeGenerateRequest):
             yield f"data: {json.dumps({'type': 'done', 'config': {}, 'code': '', 'tools_used': tools_used})}\n\n"
             break
         else:
-            config = _extract_config(full_text)
-            code   = _extract_code(full_text)
+            config = extract_config(full_text)
+            code   = extract_code(full_text)
             yield f"data: {json.dumps({'type': 'done', 'config': config, 'code': code, 'tools_used': tools_used})}\n\n"
             break
 
@@ -472,8 +449,3 @@ async def vibe_generate(body: VibeGenerateRequest):
             yield f"data: {json.dumps({'type': 'done', 'config': {}, 'code': ''})}\n\n"
 
     return StreamingResponse(generator(), media_type="text/event-stream")
-
-
-@router.post("/improve")
-async def vibe_improve(body: dict):
-    return {"status": "stub"}
