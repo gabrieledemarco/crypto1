@@ -226,7 +226,7 @@ export function AssetsScreen() {
     setDeletingHistory(true);
     setDeleteHistoryMsg(null);
     try {
-      const url = ticker ? `/assets/history?ticker=${encodeURIComponent(ticker)}` : "/assets/history";
+      const url = ticker ? `/api/assets/history?ticker=${encodeURIComponent(ticker)}` : "/api/assets/history";
       const res = await fetch(url, { method: "DELETE" });
       const data = await res.json() as { ok: boolean; removed_files: number; freed_mb: number; message: string };
       setDeleteHistoryMsg(`✓ ${data.message}`);
