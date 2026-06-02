@@ -27,6 +27,41 @@ from api.limiter import limiter
 from api.models import AssetFetch, BackfillRequest
 from engine.config import ANN_FACTORS as _BARS_PER_YEAR
 
+
+def _load_series_df(ticker: str, interval: str, conn) -> pd.DataFrame:
+    """Load OHLCV from DuckDB; fall back to Parquet if empty."""
+    source_key = f"yfinance:{interval}"
+    rows = conn.execute(
+        "SELECT ts, open, high, low, close, volume FROM assets "
+        "WHERE ticker=? AND (source=? OR source LIKE ?) ORDER BY ts",
+        [ticker, source_key, f"%:{interval}"]
+    ).fetchall()
+    if interval == "1d" and not rows:
+        rows = conn.execute(
+            "SELECT ts, open, high, low, close, volume FROM assets "
+            "WHERE ticker=? AND source=? ORDER BY ts",
+            [ticker, "yfinance"]
+        ).fetchall()
+    if rows:
+        df = pd.DataFrame(rows, columns=["ts", "Open", "High", "Low", "Close", "Volume"])
+        df["ts"] = pd.to_datetime(df["ts"])
+        return df
+    # Parquet fallback
+    try:
+        from engine.backfill import classify_ticker
+        from engine.storage.parquet_store import load_and_resample
+        asset_class = classify_ticker(ticker)
+        end = pd.Timestamp.now()
+        start = end - pd.DateOffset(years=5)
+        df = load_and_resample(asset_class, ticker, start, end, interval)
+        if df.empty:
+            return pd.DataFrame()
+        df = df.reset_index()
+        df.columns = ["ts", "Open", "High", "Low", "Close", "Volume"]
+        return df
+    except Exception:
+        return pd.DataFrame()
+
 # ── Backfill job state ─────────────────────────────────────────────────────────
 _backfill_queues: dict[str, asyncio.Queue] = {}
 _bf_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="backfill")
@@ -117,20 +152,47 @@ def delete_history(ticker: str | None = None):
 
 @router.get("")
 def list_assets():
-    """List all available tickers with their source, interval, date range and bar count."""
+    """List available tickers — DuckDB rows + Parquet-only tickers from _meta.json."""
     conn = get_conn()
     rows = conn.execute(
         "SELECT ticker, source, MIN(ts) as start, MAX(ts) as end, COUNT(*) as bars "
         "FROM assets GROUP BY ticker, source ORDER BY ticker"
     ).fetchall()
     result = []
+    seen: set[tuple] = set()
     for r in rows:
         source = r[1]
         interval = source.split(":")[-1] if ":" in source else "1d"
         result.append({
-            "ticker": r[0], "source": r[1], "interval": interval,
+            "ticker": r[0], "source": source, "interval": interval,
             "start": str(r[2]), "end": str(r[3]), "bars": r[4]
         })
+        seen.add((r[0], interval))
+
+    # Also expose tickers backfilled to Parquet (not in DuckDB assets table)
+    try:
+        from engine.storage.parquet_store import DATA_DIR, list_available
+        if DATA_DIR.exists():
+            for meta_file in DATA_DIR.rglob("_meta.json"):
+                try:
+                    meta = json.loads(meta_file.read_text())
+                    ticker = meta["ticker"]
+                    asset_class = meta["asset_class"]
+                    if (ticker, "1h") not in seen:
+                        months = list_available(asset_class, ticker)
+                        if months:
+                            fy, fm = months[0]
+                            ly, lm = months[-1]
+                            result.append({
+                                "ticker": ticker, "source": "m1:1m", "interval": "1h",
+                                "start": f"{fy}-{fm:02d}-01", "end": f"{ly}-{lm:02d}-01",
+                                "bars": len(months) * 43200,
+                            })
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
     return result
 
 
@@ -267,6 +329,15 @@ def _run_backfill_thread(job_id: str, ticker: str,
         except Exception:
             n_months = total_months
 
+        # Write _meta.json so list_assets() can discover this ticker
+        try:
+            from engine.storage.parquet_store import DATA_DIR, _normalise_symbol
+            ac = classify_ticker(ticker)
+            meta_path = DATA_DIR / ac / _normalise_symbol(ticker) / "_meta.json"
+            meta_path.write_text(json.dumps({"ticker": ticker, "asset_class": ac}))
+        except Exception:
+            pass
+
         push(
             f"✓ {m1_rows:,} righe M1 · {n_months} mesi Parquet · pronto per backtest",
             "done",
@@ -311,28 +382,15 @@ def get_bars(ticker: str, limit: int = 1000, interval: str = "1d"):
     VALID_INTERVALS = {"1m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
     if interval not in VALID_INTERVALS:
         raise HTTPException(400, f"Invalid interval '{interval}'")
-    source_key = f"yfinance:{interval}"
     conn = get_conn()
-    # backward compat: 1d also matches legacy source="yfinance"
-    if interval == "1d":
-        rows = conn.execute(
-            "SELECT ts, open, high, low, close, volume FROM assets "
-            "WHERE ticker=? AND (source=? OR source=?) ORDER BY ts DESC LIMIT ?",
-            [ticker, source_key, "yfinance", limit]
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT ts, open, high, low, close, volume FROM assets "
-            "WHERE ticker=? AND source=? ORDER BY ts DESC LIMIT ?",
-            [ticker, source_key, limit]
-        ).fetchall()
-    if not rows:
+    df = _load_series_df(ticker, interval, conn)
+    if df.empty:
         raise HTTPException(404, f"No bars for {ticker} @ {interval}")
-    result = list(reversed([
-        {"ts": str(r[0]), "o": r[1], "h": r[2], "l": r[3], "c": r[4], "v": r[5]}
-        for r in rows
-    ]))
-    return result
+    df = df.tail(limit)
+    return [
+        {"ts": str(r.ts), "o": r.Open, "h": r.High, "l": r.Low, "c": r.Close, "v": r.Volume}
+        for r in df.itertuples()
+    ]
 
 
 @router.get("/{ticker}/stats")
@@ -341,21 +399,11 @@ def get_stats(ticker: str, interval: str = "1d"):
     if interval not in VALID_INTERVALS:
         raise HTTPException(400, f"Invalid interval '{interval}'")
     ann_factor = _BARS_PER_YEAR.get(interval, 365)
-    source_key = f"yfinance:{interval}"
     conn = get_conn()
-    # backward compat: 1d also matches legacy source="yfinance"
-    if interval == "1d":
-        rows = conn.execute(
-            "SELECT ts, close FROM assets WHERE ticker=? AND (source=? OR source=?) ORDER BY ts",
-            [ticker, source_key, "yfinance"]
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT ts, close FROM assets WHERE ticker=? AND source=? ORDER BY ts",
-            [ticker, source_key]
-        ).fetchall()
-    if not rows:
+    df = _load_series_df(ticker, interval, conn)
+    if df.empty:
         raise HTTPException(404, f"No data for {ticker}")
+    rows = list(zip(df["ts"].astype(str), df["Close"]))
 
     closes = np.array([r[1] for r in rows])
     rets   = np.diff(np.log(closes))
@@ -434,17 +482,10 @@ def get_quant_stats(ticker: str, interval: str = Query("1h")):
 
     from engine.quant_stats import compute_hurst, test_stationarity, compute_var_cvar, rolling_metrics
     conn = get_conn()
-    try:
-        source_key = f"yfinance:{interval}"
-        rows = conn.execute(
-            "SELECT close FROM assets WHERE ticker = ? AND source = ? ORDER BY ts ASC",
-            [ticker, source_key]
-        ).fetchall()
-    except Exception:
-        rows = []
-    if not rows or len(rows) < 50:
+    df_q = _load_series_df(ticker, interval, conn)
+    if df_q.empty or len(df_q) < 50:
         raise HTTPException(status_code=404, detail=f"No data for {ticker}/{interval} (need ≥50 bars)")
-    prices = np.array([r[0] for r in rows], dtype=float)
+    prices = df_q["Close"].to_numpy(dtype=float)
     rets = np.diff(np.log(prices[prices > 0]))
     result = {
         "ticker": ticker,
@@ -468,22 +509,12 @@ def get_garch_forecast(ticker: str, interval: str = Query("1h")):
     from statsmodels.stats.diagnostic import acorr_ljungbox
 
     ann_factor = _BARS_PER_YEAR.get(interval, 365)
-    source_key = f"yfinance:{interval}"
     conn = get_conn()
-    # Query all stored sources for this ticker/interval so ccxt-fetched data is also found
-    rows = conn.execute(
-        "SELECT close FROM assets WHERE ticker=? AND source LIKE ? ORDER BY ts",
-        [ticker, f"%:{interval}"]
-    ).fetchall()
-    if interval == "1d" and not rows:
-        rows = conn.execute(
-            "SELECT close FROM assets WHERE ticker=? AND source IN (?, ?) ORDER BY ts",
-            [ticker, source_key, "yfinance"]
-        ).fetchall()
-    if not rows or len(rows) < 100:
+    df_g = _load_series_df(ticker, interval, conn)
+    if df_g.empty or len(df_g) < 100:
         raise HTTPException(404, f"Not enough data for {ticker}/{interval} (need ≥100 bars)")
 
-    prices = np.array([r[0] for r in rows], dtype=float)
+    prices = df_g["Close"].to_numpy(dtype=float)
     prices = prices[np.isfinite(prices) & (prices > 0)]
     if len(prices) < 100:
         raise HTTPException(404, f"Insufficient valid prices for {ticker}/{interval}")
