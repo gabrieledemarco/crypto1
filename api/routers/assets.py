@@ -72,8 +72,50 @@ def repair_assets(conn=None):
         raise HTTPException(status_code=500, detail=f"Repair failed: {exc}")
 
 
-@router.get("")
-def list_assets():
+@router.delete("/history")
+def delete_history(ticker: str | None = None):
+    """
+    Delete Parquet history files to free Railway disk space.
+    Runs and strategies in DuckDB are NOT affected.
+
+    - DELETE /assets/history          → deletes ALL symbols
+    - DELETE /assets/history?ticker=BTC-USD → deletes one symbol only
+
+    Returns a summary of what was removed.
+    """
+    import shutil
+    from engine.storage.parquet_store import DATA_DIR
+
+    removed_files = 0
+    removed_bytes = 0
+
+    if ticker:
+        from engine.storage.parquet_store import _normalise_symbol
+        symbol_dir = DATA_DIR / "crypto" / _normalise_symbol(ticker)
+        if symbol_dir.exists():
+            for f in symbol_dir.glob("*.parquet"):
+                removed_bytes += f.stat().st_size
+                removed_files += 1
+            shutil.rmtree(symbol_dir)
+        target = str(symbol_dir)
+    else:
+        if DATA_DIR.exists():
+            for f in DATA_DIR.rglob("*.parquet"):
+                removed_bytes += f.stat().st_size
+                removed_files += 1
+            shutil.rmtree(DATA_DIR)
+        target = str(DATA_DIR)
+
+    return {
+        "ok": True,
+        "target": target,
+        "removed_files": removed_files,
+        "freed_mb": round(removed_bytes / 1_048_576, 1),
+        "message": f"Deleted {removed_files} Parquet file(s), freed {round(removed_bytes/1_048_576,1)} MB. DuckDB runs/strategies intact.",
+    }
+
+
+
     conn = get_conn()
     rows = conn.execute(
         "SELECT ticker, source, MIN(ts) as start, MAX(ts) as end, COUNT(*) as bars "
