@@ -77,6 +77,23 @@ _sse_queues: dict[str, asyncio.Queue] = {}
 
 @router.get("/{run_id}/stream")
 async def stream_run(run_id: str):
+    # Fast-path: if the backtest already finished before the SSE client connected,
+    # synthesise the final event immediately rather than hanging on an empty queue.
+    conn_check = get_conn()
+    row = conn_check.execute("SELECT status FROM runs WHERE id=?", [run_id]).fetchone()
+    if row and row[0] in ("done", "error"):
+        existing_q = _sse_queues.get(run_id)
+        if existing_q is None or existing_q.empty():
+            phase = "done" if row[0] == "done" else "error"
+            msg   = "complete" if phase == "done" else "backtest failed — check logs or backfill data first"
+            pct   = 100 if phase == "done" else 0
+            _sse_queues.pop(run_id, None)
+            async def _instant():
+                yield f"data: {json.dumps({'phase': phase, 'pct': pct, 'msg': msg})}\n\n"
+            return StreamingResponse(_instant(), media_type="text/event-stream",
+                                      headers={"Cache-Control": "no-cache",
+                                               "X-Accel-Buffering": "no"})
+
     queue = _sse_queues.setdefault(run_id, asyncio.Queue())
     async def generator():
         try:
@@ -609,7 +626,8 @@ async def _run_backtest(run_id: str, params: dict):
     except Exception as exc:
         conn.execute("UPDATE runs SET status='error' WHERE id=?", [run_id])
         log.exception("Backtest pipeline error for run_id=%s", run_id)
-        push("error", 0, "An internal error occurred. Please try again.")
+        err_msg = str(exc).strip()[:200] if str(exc).strip() else "An internal error occurred. Please try again."
+        push("error", 0, err_msg)
     finally:
         # Ensure queue is removed even when no SSE client ever connected
         _sse_queues.pop(run_id, None)
