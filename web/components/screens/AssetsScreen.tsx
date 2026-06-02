@@ -30,20 +30,6 @@ function getKind(ticker: string): string {
   return "stock";
 }
 
-// Max period yfinance can return per interval
-const YF_MAX_PERIOD: Record<string, string> = {
-  "1m":  "7d",
-  "5m":  "60d",
-  "15m": "60d",
-  "30m": "60d",
-  "1h":  "2y",
-  "4h":  "2y",
-  "1d":  "max",
-  "1wk": "max",
-  "1mo": "max",
-};
-
-const FETCH_TIMEFRAMES = ["5m", "15m", "1h", "1d", "1wk"] as const;
 const VIEW_TIMEFRAMES  = ["5m", "15m", "1h", "4h", "1d", "1wk"] as const;
 
 const INTERVAL_ORDER = ["1m","5m","15m","30m","1h","4h","1d","1wk","1mo"];
@@ -180,13 +166,9 @@ export function AssetsScreen() {
   );
   const [viewInterval, setViewInterval] = useState<string>("1d");
 
-  const [showFetch, setShowFetch] = useState(false);
   const [fetchTicker, setFetchTicker] = useState<string>("");
   const [searchVal, setSearchVal] = useState("");
   const [dropOpen, setDropOpen] = useState(false);
-  const [fetchInterval, setFetchInterval] = useState<string>("1d");
-  const [fetching, setFetching] = useState(false);
-  const [fetchMsg, setFetchMsg] = useState<string | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -334,37 +316,6 @@ export function AssetsScreen() {
       : hurst > 0.55
       ? { text: "TRENDING", color: "var(--green)" }
       : { text: "RANDOM WALK", color: "var(--amber)" };
-
-  // ─── Fetch handler ──────────────────────────────────────────────────────
-
-  // Period is always the max available for the chosen interval
-  const autoPeriod = YF_MAX_PERIOD[fetchInterval] ?? "max";
-
-  const handleFetch = async () => {
-    if (!fetchTicker) return;
-    setFetching(true);
-    setFetchMsg(null);
-    try {
-      const data = await api.post<{ bars: number }>("/assets/fetch", {
-        ticker: fetchTicker,
-        source: "yfinance",
-        period: autoPeriod,
-        interval: fetchInterval,
-      });
-      setFetchMsg(`✓ ${fetchTicker} (${fetchInterval}, ${autoPeriod}) — ${data.bars} bar`);
-      // Refresh asset list and select the new series
-      qc.invalidateQueries({ queryKey: ["assets"] });
-      setSelectedTicker(fetchTicker);
-      setViewInterval(fetchInterval);
-      setShowFetch(false);
-      setFetchTicker("");
-      setSearchVal("");
-    } catch (err) {
-      setFetchMsg(`Error: ${err instanceof Error ? err.message : "API unreachable"}`);
-    } finally {
-      setFetching(false);
-    }
-  };
 
   // ── Backfill SSE ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -560,9 +511,8 @@ export function AssetsScreen() {
 
             {/* Fetch / Backfill section */}
             <div className={styles.fetchSection}>
-              {!showFetch && !showBackfill ? (
+              {!showBackfill ? (
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                  <button className={styles.btnFetch} onClick={() => { setShowFetch(true); setTimeout(() => inputRef.current?.focus(), 50); }}>+ FETCH</button>
                   <button className={styles.btnFetch} style={{ background: "rgba(92,193,255,0.08)", borderColor: "var(--cyan)" }}
                     onClick={() => { setShowBackfill(true); setTimeout(() => inputRef.current?.focus(), 50); }}>
                     ⬇ BACKFILL
@@ -581,7 +531,7 @@ export function AssetsScreen() {
                     </div>
                   )}
                 </div>
-              ) : showBackfill ? (
+              ) : (
                 <div className={styles.fetchForm}>
                   <div className={styles.label}>BACKFILL STORICO M1</div>
                   <div className={styles.label} style={{ color: "var(--faint)", marginTop: -4 }}>
@@ -706,103 +656,6 @@ export function AssetsScreen() {
                       </div>
                     )}
                   </div>
-                </div>
-              ) : (
-                <div className={styles.fetchForm}>
-                  <div className={styles.label}>CERCA TICKER</div>
-
-                  {/* Autocomplete */}
-                  <div className={styles.searchWrap} ref={searchRef}>
-                    <input
-                      ref={inputRef}
-                      className={styles.searchInput}
-                      placeholder="es. BTC-USD, AAPL, EURUSD=X…"
-                      value={searchVal}
-                      autoComplete="off"
-                      spellCheck={false}
-                      aria-label="Search assets"
-                      onChange={(e) => {
-                        const v = e.target.value.toUpperCase();
-                        setSearchVal(v);
-                        setFetchTicker("");
-                        setDropOpen(true);
-                      }}
-                      onFocus={() => setDropOpen(true)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") setDropOpen(false);
-                        if (e.key === "Enter" && suggestions.length > 0) {
-                          selectTicker(suggestions[0]);
-                        }
-                      }}
-                    />
-                    {dropOpen && suggestions.length > 0 && (
-                      <div className={styles.dropdown} role="listbox">
-                        {suggestions.map((t) => (
-                          <button
-                            key={t}
-                            className={`${styles.dropItem} ${fetchTicker === t ? styles.dropItemActive : ""}`}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              selectTicker(t);
-                            }}
-                          >
-                            {t}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Timeframe pills */}
-                  <div className={styles.label}>TIMEFRAME</div>
-                  <div className={styles.periodPills}>
-                    {FETCH_TIMEFRAMES.map((tf) => (
-                      <button
-                        key={tf}
-                        className={`${styles.pill} ${fetchInterval === tf ? styles.pillActive : ""}`}
-                        onClick={() => setFetchInterval(tf)}
-                      >
-                        {tf}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Auto-period info */}
-                  <div className={styles.label} style={{ marginTop: 2 }}>
-                    PERIODO AUTO:{" "}
-                    <span style={{ color: "var(--amber)", fontWeight: 700 }}>
-                      {autoPeriod}
-                    </span>
-                    <span style={{ marginLeft: 6, opacity: 0.6 }}>
-                      (max disponibile per {fetchInterval})
-                    </span>
-                  </div>
-
-                  <div className={styles.fetchActions}>
-                    <button
-                      className={styles.btnFetch}
-                      onClick={handleFetch}
-                      disabled={fetching || !fetchTicker}
-                    >
-                      {fetching
-                        ? "SCARICANDO…"
-                        : `FETCH${fetchTicker ? ` ${fetchTicker}` : ""}`}
-                    </button>
-                    <button
-                      className={styles.btnCancel}
-                      onClick={() => {
-                        setShowFetch(false);
-                        setFetchMsg(null);
-                        setFetchTicker("");
-                        setSearchVal("");
-                      }}
-                    >
-                      CANCEL
-                    </button>
-                  </div>
-                  {fetchMsg && (
-                    <div className={styles.fetchMsg}>{fetchMsg}</div>
-                  )}
                 </div>
               )}
             </div>
