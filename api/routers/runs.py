@@ -503,9 +503,10 @@ async def _run_backtest(run_id: str, params: dict):
     """Async backtest pipeline with SSE progress events."""
     import numpy as np
     queue = _sse_queues.setdefault(run_id, asyncio.Queue())
+    loop = asyncio.get_running_loop()
 
     def push(phase: str, pct: int, msg: str = ""):
-        queue.put_nowait({"phase": phase, "pct": pct, "msg": msg})
+        loop.call_soon_threadsafe(queue.put_nowait, {"phase": phase, "pct": pct, "msg": msg})
 
     conn = get_conn()
 
