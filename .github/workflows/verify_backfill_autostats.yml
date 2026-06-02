@@ -1,6 +1,9 @@
 name: Verify backfill → auto-stats on live Railway app
 
 on:
+  push:
+    branches:
+      - verify/backfill-autostats-railway
   workflow_dispatch:
 
 jobs:
