@@ -10,7 +10,6 @@ POST /runs/pipeline/vibe
 GET  /runs/pipeline/vibe/{job_id}/stream  — SSE (same event format as /runs/pipeline)
 """
 import asyncio, concurrent.futures, json, os, re, uuid
-from typing import Optional
 
 import numpy as np, pandas as pd
 from fastapi import APIRouter
@@ -18,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from api.db import get_conn
+from api.utils import extract_config, extract_code
 
 router = APIRouter()
 _queues: dict[str, asyncio.Queue] = {}
@@ -325,8 +325,8 @@ def _call_claude(ticker, tf, stats, brain_ctx, attempt, prev_feedback, key):
         system=system, messages=[{"role": "user", "content": "\n".join(lines)}]
     )
     text = resp.content[0].text
-    config = _extract_config(text)
-    code = _extract_code(text)
+    config = extract_config(text)
+    code = extract_code(text)
     if not config:
         config = {"ticker": ticker, "timeframe": tf, "sl_mult": 2.0, "tp_mult": 4.0,
                   "active_hours": _ACT_HOURS.get(tf, [6, 22]),
@@ -457,18 +457,6 @@ def _run_attempt(ticker, tf, df, config, code, attempt):
     )
     return sid, sharpe, dd, n_tr, wr, mc_result, drift, verdict
 
-
-def _extract_config(text: str) -> dict:
-    m = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if m:
-        try: return json.loads(m.group(1))
-        except: pass
-    return {}
-
-
-def _extract_code(text: str) -> str:
-    m = re.search(r"```python\s*(.*?)\s*```", text, re.DOTALL)
-    return m.group(1).strip() if m else ""
 
 
 def _fetch(ticker, tf, period):

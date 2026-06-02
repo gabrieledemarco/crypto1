@@ -44,8 +44,7 @@ _TF_RESAMPLE: dict[str, str | None] = {
 _OHLCV_AGG = {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}
 
 
-def _normalise(symbol: str) -> str:
-    return symbol.upper().replace("/", "").replace("-", "").replace("=", "")
+from engine.storage.parquet_store import _normalise_symbol as _normalise
 
 
 def _parquet_glob(asset_class: str, symbol: str) -> str:
