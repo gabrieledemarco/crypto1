@@ -419,7 +419,8 @@ def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
     try:
         import pandas as pd
         from engine.backfill import classify_ticker
-        from engine.storage.parquet_store import list_available, load_and_resample
+        from engine.storage.parquet_store import list_available
+        from engine.storage.fast_loader import load_fast
 
         asset_class = classify_ticker(ticker)
         available = list_available(asset_class, ticker)
@@ -432,7 +433,7 @@ def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
             ny = end_y + (1 if nm > 12 else 0)
             nm = nm if nm <= 12 else 1
             end_ts = pd.Timestamp(ny, nm, 1) - pd.Timedelta(days=1)
-            df = load_and_resample(
+            df = load_fast(
                 asset_class, ticker,
                 pd.Timestamp(start_y, start_mo, 1),
                 end_ts,
@@ -440,9 +441,6 @@ def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
             )
             if not df.empty:
                 # Convert directly to tuples — never write Parquet data into DuckDB.
-                # Parquet files are the authoritative store; writing them into DuckDB
-                # would double the storage and can corrupt the assets table if
-                # interrupted mid-insert.
                 rows = list(zip(
                     df.index,
                     df["Open"], df["High"], df["Low"], df["Close"], df["Volume"],

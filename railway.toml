@@ -9,6 +9,10 @@
     startCommand = "uvicorn api.main:app --host 0.0.0.0 --port $PORT"
   [services.variables]
     PORT = "8000"
+    M1_DATA_DIR = "/data/m1_history"
+    DUCKDB_PATH = "/data/pareto.db"
+    PREWARM_TICKERS = "BTC-USD,ETH-USD,SOL-USD"
+    PREWARM_INTERVALS = "1h,4h"
 
 [[services]]
   name = "web"

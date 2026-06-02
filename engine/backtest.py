@@ -281,14 +281,17 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
 
 def run_optimization(df_ind: pd.DataFrame, cfg: dict,
                       progress_cb=None) -> pd.DataFrame:
-    """Grid-search SL/TP/hours. Returns sorted DataFrame."""
+    """
+    Grid-search SL × TP × hours. Uses vectorbt sweep when available (~20-50x faster).
+    Falls back to the sequential loop if vectorbt is not installed.
+    Returns sorted DataFrame.
+    """
     comm = cfg.get("commission_pips", 1.0)
     slip = cfg.get("slippage_pips",   0.5)
     risk = cfg.get("risk_per_trade", 0.01)
     lvg  = cfg.get("leverage", 1.0)
     cap  = float(cfg.get("initial_capital", INITIAL_CAPITAL))
 
-    rows = []
     combos = [
         (sl, tp, h)
         for sl in SWEEP_SL_RANGE
@@ -301,6 +304,32 @@ def run_optimization(df_ind: pd.DataFrame, cfg: dict,
             f"Sweep grid too large ({len(combos)} combinations). "
             "Reduce SWEEP_SL_RANGE, SWEEP_TP_RANGE, or SWEEP_HOUR_WINDOWS in engine/config.py."
         )
+
+    # ── Try vectorbt fast path ────────────────────────────────────────────────
+    try:
+        from engine.backtest_vbt import backtest_vbt_sweep
+        if progress_cb:
+            progress_cb("sweep", 5)
+        result = backtest_vbt_sweep(
+            df_ind,
+            sl_mults=SWEEP_SL_RANGE,
+            tp_mults=SWEEP_TP_RANGE,
+            hour_windows=SWEEP_HOUR_WINDOWS,
+            initial_capital=cap,
+            risk_per_trade=risk,
+            commission_pips=comm,
+            slippage_pips=slip,
+            leverage=lvg,
+        )
+        if progress_cb:
+            progress_cb("sweep", 100)
+        return result
+    except Exception as exc:
+        import logging as _log
+        _log.getLogger("backtest").warning("vbt sweep failed, using loop fallback: %s", exc)
+
+    # ── Sequential loop fallback ──────────────────────────────────────────────
+    rows = []
     for idx, (sl, tp, h) in enumerate(combos):
         if progress_cb and idx % 5 == 0:
             progress_cb("sweep", int(idx / len(combos) * 100))
