@@ -561,12 +561,25 @@ export function AssetsScreen() {
             {/* Fetch / Backfill section */}
             <div className={styles.fetchSection}>
               {!showFetch && !showBackfill ? (
-                <div style={{ display: "flex", gap: 4 }}>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                   <button className={styles.btnFetch} onClick={() => { setShowFetch(true); setTimeout(() => inputRef.current?.focus(), 50); }}>+ FETCH</button>
                   <button className={styles.btnFetch} style={{ background: "rgba(92,193,255,0.08)", borderColor: "var(--cyan)" }}
                     onClick={() => { setShowBackfill(true); setTimeout(() => inputRef.current?.focus(), 50); }}>
                     ⬇ BACKFILL
                   </button>
+                  <button
+                    className={styles.btnCancel}
+                    style={{ borderColor: deletingHistory ? "var(--border)" : "var(--coral)", color: deletingHistory ? "var(--faint)" : "var(--coral)" }}
+                    onClick={() => handleDeleteHistory()}
+                    disabled={deletingHistory}
+                  >
+                    {deletingHistory ? "CANCELLANDO…" : "🗑 DELETE HISTORY"}
+                  </button>
+                  {deleteHistoryMsg && (
+                    <div className={styles.fetchMsg} style={{ color: deleteHistoryMsg.startsWith("✓") ? "var(--green)" : "var(--coral)", marginTop: 4, width: "100%" }}>
+                      {deleteHistoryMsg}
+                    </div>
+                  )}
                 </div>
               ) : showBackfill ? (
                 <div className={styles.fetchForm}>
