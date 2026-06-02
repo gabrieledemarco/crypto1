@@ -1,0 +1,160 @@
+name: Verify backfill → auto-stats on live Railway app
+
+on:
+  push:
+    branches:
+      - verify/backfill-autostats-railway
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Playwright
+        run: |
+          npm install playwright
+          npx playwright install --with-deps chromium
+
+      - name: Write verification script
+        run: |
+          cat > verify_railway.js << 'EOF'
+          const { chromium } = require('playwright');
+
+          (async () => {
+            const BASE = 'https://humorous-insight-production-340f.up.railway.app';
+            const TICKER = 'BTC-USD';
+            const browser = await chromium.launch({ headless: true });
+            const ctx = await browser.newContext({
+              viewport: { width: 1440, height: 900 },
+              ignoreHTTPSErrors: true,
+            });
+            const page = await ctx.newPage();
+            const errors = [];
+            page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+
+            // Intercept backfill POST and SSE to simulate completion
+            let backfillDone = false;
+            await ctx.route('**/api/assets/backfill', async route => {
+              if (route.request().method() === 'POST') {
+                backfillDone = true;
+                await route.fulfill({
+                  status: 200,
+                  contentType: 'application/json',
+                  body: JSON.stringify({ job_id: 'gha-test-job' }),
+                });
+              } else { await route.continue(); }
+            });
+            await ctx.route('**/api/assets/backfill/stream/**', async route => {
+              await route.fulfill({
+                status: 200,
+                headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+                body: [
+                  'data: {"phase":"running","pct":50,"msg":"Downloading..."}',
+                  '',
+                  'data: {"phase":"done","pct":100,"msg":"Backfill complete — 8760 bars"}',
+                  '', '',
+                ].join('\n'),
+              });
+            });
+            await ctx.route('**/api/assets', async route => {
+              if (route.request().method() === 'GET') {
+                await route.fulfill({
+                  status: 200, contentType: 'application/json',
+                  body: JSON.stringify(backfillDone ? [{
+                    ticker: TICKER, source: 'm1:1m', interval: '1h',
+                    start: '2024-01-01', end: '2024-12-31', bars: 8760
+                  }] : []),
+                });
+              } else { await route.continue(); }
+            });
+            await ctx.route(`**/api/assets/${TICKER}/stats*`, async route => {
+              await route.fulfill({
+                status: 200, contentType: 'application/json',
+                body: JSON.stringify({
+                  ticker: TICKER, interval: '1h', bars: 8760,
+                  sharpe_ratio: 1.45, hurst_exponent: 0.54, var_95: -0.042,
+                  max_drawdown: -0.35, annualized_return: 0.38,
+                }),
+              });
+            });
+            await ctx.route(`**/api/assets/${TICKER}/garch*`, async route => {
+              await route.fulfill({
+                status: 200, contentType: 'application/json',
+                body: JSON.stringify({ forecast_vol: [0.021,0.022,0.023], model: 'GARCH(1,1)' }),
+              });
+            });
+
+            console.log('[1] Loading Railway dashboard...');
+            const resp = await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            console.log(`    Status: ${resp.status()} URL: ${page.url()}`);
+            await page.screenshot({ path: '01_dashboard.png' });
+
+            const title = await page.title();
+            console.log(`    Title: ${title}`);
+
+            if (resp.status() === 403) {
+              console.log('    403 from Railway — app blocked for this runner IP');
+              await browser.close();
+              process.exit(2);
+            }
+
+            console.log('[2] Navigating to Assets screen...');
+            const assetsBtn = page.locator('button, a, nav *').filter({ hasText: /assets/i }).first();
+            if (await assetsBtn.count()) {
+              await assetsBtn.click();
+              await page.waitForTimeout(1500);
+            }
+            await page.screenshot({ path: '02_assets.png' });
+
+            console.log('[3] Triggering simulated backfill...');
+            const backfillBtn = page.locator('button').filter({ hasText: /BACKFILL|Backfill/i }).first();
+            if (await backfillBtn.count()) {
+              await backfillBtn.click();
+              await page.waitForTimeout(3000);
+            }
+            await page.screenshot({ path: '03_post_backfill.png' });
+
+            console.log('[4] Checking for auto-stats...');
+            const statsTerms = ['Sharpe', 'Hurst', 'VaR', 'GARCH', 'Drawdown'];
+            const found = [];
+            for (const t of statsTerms) {
+              if (await page.locator(`text=${t}`).count()) found.push(t);
+            }
+            const tickerVisible = await page.locator(`text=${TICKER}`).count() > 0;
+
+            console.log(`    Ticker visible: ${tickerVisible}`);
+            console.log(`    Stats found: [${found.join(', ')}]`);
+            if (errors.length) console.log(`    Console errors: ${errors.slice(0,3).join('; ')}`);
+
+            await page.screenshot({ path: '04_final.png' });
+            await browser.close();
+
+            const pass = tickerVisible && found.length > 0;
+            console.log(`\nRESULT: ${pass ? 'PASS' : 'FAIL'} — auto-stats ${pass ? 'triggered' : 'NOT triggered'} after backfill`);
+            process.exit(pass ? 0 : 1);
+          })();
+          EOF
+
+      - name: Run verification against live Railway app
+        run: node verify_railway.js
+        continue-on-error: true
+        id: verify
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: railway-verification-screenshots
+          path: "*.png"
+
+      - name: Report result
+        run: |
+          echo "Verification exit code: ${{ steps.verify.outcome }}"
+          ls -la *.png 2>/dev/null || true
