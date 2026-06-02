@@ -18,5 +18,6 @@ quantstats>=0.0.62,<1.0.0
 ccxt>=4.0.0,<5.0.0
 alpaca-py>=0.8.0,<1.0.0
 requests>=2.31.0
+vectorbt>=0.26.2
 pytest>=7.4
 pytest-asyncio>=0.23

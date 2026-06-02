@@ -227,7 +227,7 @@ def generate_signals_v2(df: pd.DataFrame,
 
 # ── Backtest v2: con costi di transazione ─────────────────────────────────────
 
-def backtest_v2(df: pd.DataFrame,
+def _backtest_v2_original(df: pd.DataFrame,
                 initial_capital: float = 10_000,
                 risk_per_trade: float = 0.01,
                 commission_pips: float = 1.0,   # commission in pips (absolute price units)
@@ -388,6 +388,51 @@ def backtest_v2(df: pd.DataFrame,
         "equity": equity_s,
         "final_capital": capital,
     }
+
+
+# ── Public dispatch — uses vectorbt when available ────────────────────────────
+
+try:
+    from engine.backtest_vbt import backtest_vbt_single as _backtest_fast
+    _VBT_AVAILABLE = True
+except Exception:
+    _VBT_AVAILABLE = False
+
+
+def backtest_v2(df: pd.DataFrame,
+                initial_capital: float = 10_000,
+                risk_per_trade: float = 0.01,
+                commission_pips: float = 1.0,
+                slippage_pips: float = 0.5,
+                max_positions: int = 1,
+                cooldown_bars: int = 0,
+                leverage: float = 1.0,
+                trailing_stop: bool = False,
+                trailing_stop_method: str = "atr",
+                trailing_stop_value: float = 1.5,
+                position_size_method: str = "risk_pct",
+                ) -> dict:
+    """
+    Public backtest entry point. Routes to vectorbt (fast) when available
+    and trailing_stop=False; otherwise falls back to the original Python loop.
+    """
+    if _VBT_AVAILABLE and not trailing_stop:
+        return _backtest_fast(
+            df, initial_capital=initial_capital, risk_per_trade=risk_per_trade,
+            commission_pips=commission_pips, slippage_pips=slippage_pips,
+            max_positions=max_positions, cooldown_bars=cooldown_bars,
+            leverage=leverage, trailing_stop=False,
+            position_size_method=position_size_method,
+        )
+    return _backtest_v2_original(
+        df, initial_capital=initial_capital, risk_per_trade=risk_per_trade,
+        commission_pips=commission_pips, slippage_pips=slippage_pips,
+        max_positions=max_positions, cooldown_bars=cooldown_bars,
+        leverage=leverage, trailing_stop=trailing_stop,
+        trailing_stop_method=trailing_stop_method,
+        trailing_stop_value=trailing_stop_value,
+        position_size_method=position_size_method,
+    )
 
 
 # ── Metrics ───────────────────────────────────────────────────────────────────

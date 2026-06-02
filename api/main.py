@@ -86,12 +86,30 @@ def _repair_assets_table(conn) -> None:
         logging.warning(f"startup repair skipped: {e}")
 
 
+def _prewarm_data_cache() -> None:
+    """Preload recent OHLCV data into fast_loader warm cache (daemon threads)."""
+    import threading
+    try:
+        from engine.storage.fast_loader import warm_preload
+        tickers = [t.strip() for t in os.getenv("PREWARM_TICKERS", "BTC-USD,ETH-USD,SOL-USD").split(",") if t.strip()]
+        intervals = [i.strip() for i in os.getenv("PREWARM_INTERVALS", "1h,4h").split(",") if i.strip()]
+        for ticker in tickers:
+            asset_class = "crypto" if ticker.endswith("-USD") or ticker.endswith("-USDT") else "stock"
+            for iv in intervals:
+                threading.Thread(
+                    target=warm_preload, args=(asset_class, ticker, iv), daemon=True
+                ).start()
+    except Exception as exc:
+        logging.warning(f"prewarm skipped: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
         conn = get_conn()
         _repair_assets_table(conn)
         _seed_library_if_empty(conn)
+        _prewarm_data_cache()
     except Exception as e:
         import logging
         logging.error(f"DB init failed: {e}")
