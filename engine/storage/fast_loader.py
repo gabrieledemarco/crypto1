@@ -14,15 +14,11 @@ import logging
 import threading
 import time
 
-import duckdb
 import pandas as pd
 
 from engine.storage.parquet_store import DATA_DIR, load_and_resample
 
 log = logging.getLogger("fast_loader")
-
-_duck = duckdb.connect(":memory:")
-_duck_lock = threading.Lock()
 
 _WARM: dict[str, tuple[pd.DataFrame, float]] = {}
 _WARM_LOCK = threading.Lock()
@@ -71,28 +67,12 @@ def load_fast(
         if entry and now - entry[1] < _WARM_TTL:
             return entry[0].copy()
 
-    # 2. DuckDB parallel scan
-    glob = _parquet_glob(asset_class, ticker)
+    # 2. Load via parquet_store (parallel month files, pandas concat)
     try:
-        sql = f"""
-            SELECT index AS ts, Open, High, Low, Close, Volume
-            FROM read_parquet('{glob}', hive_partitioning=false)
-            WHERE index >= '{start}' AND index <= '{end}'
-            ORDER BY index
-        """
-        with _duck_lock:
-            df = _duck.execute(sql).df()
+        df = load_and_resample(asset_class, ticker, start, end, interval)
 
         if df.empty:
             return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
-
-        df["ts"] = pd.to_datetime(df["ts"])
-        df = df.set_index("ts")
-        df.index.name = None
-
-        rule = _TF_RESAMPLE.get(interval)
-        if rule:
-            df = df.resample(rule).agg(_OHLCV_AGG).dropna(how="all")
 
         # 3. Store in warm cache
         with _WARM_LOCK:
