@@ -115,7 +115,9 @@ def delete_history(ticker: str | None = None):
     }
 
 
-
+@router.get("")
+def list_assets():
+    """List all available tickers with their source, interval, date range and bar count."""
     conn = get_conn()
     rows = conn.execute(
         "SELECT ticker, source, MIN(ts) as start, MAX(ts) as end, COUNT(*) as bars "
