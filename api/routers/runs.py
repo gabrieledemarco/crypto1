@@ -435,9 +435,9 @@ def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
             end_ts = pd.Timestamp(ny, nm, 1) - pd.Timedelta(days=1)
             df = load_fast(
                 asset_class, ticker,
+                interval,
                 pd.Timestamp(start_y, start_mo, 1),
                 end_ts,
-                interval,
             )
             if not df.empty:
                 # Convert directly to tuples — never write Parquet data into DuckDB.

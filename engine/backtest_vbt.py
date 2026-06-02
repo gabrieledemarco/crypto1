@@ -141,8 +141,6 @@ def backtest_vbt_single(
             close=close,
             entries=entries,
             exits=exits,
-            short_entries=df["signal"].values == -1,
-            short_exits=df["signal"].values == 1,
             sl_stop=sl_frac,
             tp_stop=tp_frac,
             size=size,
@@ -150,7 +148,6 @@ def backtest_vbt_single(
             init_cash=initial_capital,
             fees=fees,
             freq="1min",
-            max_size=leverage,
         )
 
         equity_vals = pf.value().values
