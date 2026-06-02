@@ -230,7 +230,7 @@ export function AssetsScreen() {
       const res = await fetch(url, { method: "DELETE" });
       const data = await res.json() as { ok: boolean; removed_files: number; freed_mb: number; message: string };
       setDeleteHistoryMsg(`✓ ${data.message}`);
-      queryClient.invalidateQueries({ queryKey: ["assets"] });
+      qc.invalidateQueries({ queryKey: ["assets"] });
     } catch (err) {
       setDeleteHistoryMsg(`Errore: ${err instanceof Error ? err.message : "API non raggiungibile"}`);
     } finally {
