@@ -503,9 +503,10 @@ async def _run_backtest(run_id: str, params: dict):
     """Async backtest pipeline with SSE progress events."""
     import numpy as np
     queue = _sse_queues.setdefault(run_id, asyncio.Queue())
+    loop = asyncio.get_running_loop()
 
     def push(phase: str, pct: int, msg: str = ""):
-        queue.put_nowait({"phase": phase, "pct": pct, "msg": msg})
+        loop.call_soon_threadsafe(queue.put_nowait, {"phase": phase, "pct": pct, "msg": msg})
 
     conn = get_conn()
 
@@ -690,26 +691,28 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
     versions = run_versions(df_ind, cfg, direction=direction, progress_cb=push)
 
     # ── NautilusTrader engine (optional, gated by USE_NAUTILUS_ENGINE=1) ──────
+    # Completely isolated: any failure here must never affect the main pipeline.
     try:
-        from engine.nautilus_engine import is_enabled as _nt_enabled, run_nautilus_backtest
-        if _nt_enabled():
-            push("versions", 68, "running NautilusTrader engine")
-            _nt_cfg = {
-                **cfg,
-                "ticker":    params.get("ticker", "BTC-USD"),
-                "timeframe": params.get("timeframe", "1h"),
-                "use_garch_filter": True,
-            }
-            _nt_result  = run_nautilus_backtest(df_ind, _nt_cfg)
-            _nt_metrics = compute_metrics(_nt_result, float(cfg.get("initial_capital", 10_000)))
-            versions["V_Nautilus"] = {"result": _nt_result, "metrics": _nt_metrics}
-            log.info("NautilusTrader engine ok — sharpe=%.3f n_trades=%s",
-                     _nt_metrics.get("sharpe_ratio", 0), _nt_metrics.get("n_trades", 0))
-    except Exception as _nt_exc:
+        import os as _os
+        if _os.getenv("USE_NAUTILUS_ENGINE", "").lower() in ("1", "true", "yes"):
+            from engine.nautilus_engine import is_enabled as _nt_enabled, run_nautilus_backtest
+            if _nt_enabled():
+                push("versions", 68, "running NautilusTrader engine")
+                _nt_cfg = {
+                    **cfg,
+                    "ticker":    params.get("ticker", "BTC-USD"),
+                    "timeframe": params.get("timeframe", "1h"),
+                    "use_garch_filter": True,
+                }
+                _nt_result  = run_nautilus_backtest(df_ind, _nt_cfg)
+                _nt_metrics = compute_metrics(_nt_result, float(cfg.get("initial_capital", 10_000)))
+                versions["V_Nautilus"] = {"result": _nt_result, "metrics": _nt_metrics}
+                log.info("NautilusTrader engine ok — sharpe=%.3f n_trades=%s",
+                         _nt_metrics.get("sharpe_ratio", 0), _nt_metrics.get("n_trades", 0))
+    except BaseException as _nt_exc:
         log.warning("NautilusTrader engine skipped: %s", _nt_exc)
 
     # Pick best version for equity/trades export
-    # V_Nautilus takes priority when enabled and successful
     _nautilus_ok = (
         "V_Nautilus" in versions
         and "result" in versions.get("V_Nautilus", {})
