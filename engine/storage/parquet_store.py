@@ -84,10 +84,13 @@ def load_range(asset_class: str, symbol: str,
     del parts
     gc.collect()
 
-    df.index = pd.to_datetime(df.index)
+    df.index = pd.to_datetime(df.index, utc=True).tz_localize(None)
     df.sort_index(inplace=True)
     df = df[~df.index.duplicated(keep="last")]
-    return df[(df.index >= start) & (df.index <= end)]
+    # Normalise start/end to tz-naive for comparison
+    s = start.tz_localize(None) if start.tzinfo is not None else start
+    e = end.tz_localize(None)   if end.tzinfo   is not None else end
+    return df[(df.index >= s) & (df.index <= e)]
 
 
 def load_and_resample(asset_class: str, symbol: str,
