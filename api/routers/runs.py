@@ -689,12 +689,39 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
 
     versions = run_versions(df_ind, cfg, direction=direction, progress_cb=push)
 
+    # ── NautilusTrader engine (optional, gated by USE_NAUTILUS_ENGINE=1) ──────
+    try:
+        from engine.nautilus_engine import is_enabled as _nt_enabled, run_nautilus_backtest
+        if _nt_enabled():
+            push("versions", 68, "running NautilusTrader engine")
+            _nt_cfg = {
+                **cfg,
+                "ticker":    params.get("ticker", "BTC-USD"),
+                "timeframe": params.get("timeframe", "1h"),
+                "use_garch_filter": True,
+            }
+            _nt_result  = run_nautilus_backtest(df_ind, _nt_cfg)
+            _nt_metrics = compute_metrics(_nt_result, float(cfg.get("initial_capital", 10_000)))
+            versions["V_Nautilus"] = {"result": _nt_result, "metrics": _nt_metrics}
+            log.info("NautilusTrader engine ok — sharpe=%.3f n_trades=%s",
+                     _nt_metrics.get("sharpe_ratio", 0), _nt_metrics.get("n_trades", 0))
+    except Exception as _nt_exc:
+        log.warning("NautilusTrader engine skipped: %s", _nt_exc)
+
     # Pick best version for equity/trades export
-    best_key = next(
-        (v.value for v in StrategyVersion.preference_order()
-         if v.value in versions and "result" in versions.get(v.value, {})),
-        None
+    # V_Nautilus takes priority when enabled and successful
+    _nautilus_ok = (
+        "V_Nautilus" in versions
+        and "result" in versions.get("V_Nautilus", {})
     )
+    if _nautilus_ok:
+        best_key = "V_Nautilus"
+    else:
+        best_key = next(
+            (v.value for v in StrategyVersion.preference_order()
+             if v.value in versions and "result" in versions.get(v.value, {})),
+            None
+        )
     if best_key is None:
         best_key = next(iter(versions))
     best = versions.get(best_key, list(versions.values())[0])
@@ -721,7 +748,7 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
             exit_time=trades_df["exit_time"].astype(str),
         ).to_dict("records")
 
-    # All version metrics
+    # All version metrics (includes V_Nautilus when present)
     metrics_out = {}
     for v_name, v_data in versions.items():
         if "metrics" in v_data:
