@@ -26,8 +26,8 @@ NAUTILUS_AVAILABLE = False
 try:
     import nautilus_trader as _nt_pkg  # noqa: F401
     NAUTILUS_AVAILABLE = True
-except ImportError:
-    log.debug("nautilus_trader not installed — NautilusEngine disabled")
+except Exception:
+    log.debug("nautilus_trader not available — NautilusEngine disabled")
 
 
 def is_enabled() -> bool:

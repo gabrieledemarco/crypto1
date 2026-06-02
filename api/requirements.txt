@@ -19,8 +19,10 @@ ccxt>=4.0.0,<5.0.0
 alpaca-py>=0.8.0,<1.0.0
 requests>=2.31.0
 vectorbt>=0.26.2
-# nautilus_trader is an optional dependency — install manually when needed:
-#   pip install "nautilus_trader>=1.200.0"
-# Do NOT add it here: it pins numpy>=2 which conflicts with numpy==1.26.4 above.
+# NautilusTrader — optional high-fidelity backtest engine.
+# Requires numpy>=1.26.4 (compatible with the pin above) and upgrades
+# pyarrow 14→24 (safe: only pd.to_parquet/read_parquet used in this project).
+# Feature is off by default; activate with: USE_NAUTILUS_ENGINE=1
+nautilus_trader==1.221.0
 pytest>=7.4
 pytest-asyncio>=0.23
