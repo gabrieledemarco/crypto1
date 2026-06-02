@@ -218,6 +218,26 @@ export function AssetsScreen() {
     }
   };
 
+  const [deletingHistory, setDeletingHistory] = useState(false);
+  const [deleteHistoryMsg, setDeleteHistoryMsg] = useState<string | null>(null);
+
+  const handleDeleteHistory = async (ticker?: string) => {
+    if (!confirm(ticker ? `Cancellare tutta la storia Parquet di ${ticker}?` : "Cancellare TUTTE le serie storiche Parquet? I run e le strategie rimarranno intatti.")) return;
+    setDeletingHistory(true);
+    setDeleteHistoryMsg(null);
+    try {
+      const url = ticker ? `/assets/history?ticker=${encodeURIComponent(ticker)}` : "/assets/history";
+      const res = await fetch(url, { method: "DELETE" });
+      const data = await res.json() as { ok: boolean; removed_files: number; freed_mb: number; message: string };
+      setDeleteHistoryMsg(`✓ ${data.message}`);
+      queryClient.invalidateQueries({ queryKey: ["assets"] });
+    } catch (err) {
+      setDeleteHistoryMsg(`Errore: ${err instanceof Error ? err.message : "API non raggiungibile"}`);
+    } finally {
+      setDeletingHistory(false);
+    }
+  };
+
   // Close dropdown on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -634,21 +654,37 @@ export function AssetsScreen() {
 
                   {/* Repair section */}
                   <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
-                    <div className={styles.label} style={{ marginBottom: 4 }}>REPAIR DATABASE</div>
+                    <div className={styles.label} style={{ marginBottom: 4 }}>MANUTENZIONE STORAGE</div>
                     <div style={{ fontSize: 10, color: "var(--faint)", fontFamily: "var(--font-mono)", marginBottom: 6 }}>
-                      Rimuove i dati parquet corrotti dalla tabella assets. Usa se i backtest falliscono dopo un backfill interrotto.
+                      Repair DB: rimuove righe parquet corrotte dalla tabella assets.<br />
+                      Free Space: cancella i file Parquet storici (run e strategie intatti).
                     </div>
-                    <button
-                      className={styles.btnCancel}
-                      style={{ borderColor: repairing ? "var(--border)" : "var(--coral)", color: repairing ? "var(--faint)" : "var(--coral)" }}
-                      onClick={handleRepairDb}
-                      disabled={repairing}
-                    >
-                      {repairing ? "RIPARANDO…" : "⚠ REPAIR DB"}
-                    </button>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      <button
+                        className={styles.btnCancel}
+                        style={{ borderColor: repairing ? "var(--border)" : "var(--coral)", color: repairing ? "var(--faint)" : "var(--coral)" }}
+                        onClick={handleRepairDb}
+                        disabled={repairing}
+                      >
+                        {repairing ? "RIPARANDO…" : "⚠ REPAIR DB"}
+                      </button>
+                      <button
+                        className={styles.btnCancel}
+                        style={{ borderColor: deletingHistory ? "var(--border)" : "var(--coral)", color: deletingHistory ? "var(--faint)" : "var(--coral)" }}
+                        onClick={() => handleDeleteHistory()}
+                        disabled={deletingHistory}
+                      >
+                        {deletingHistory ? "CANCELLANDO…" : "🗑 FREE SPACE (ALL)"}
+                      </button>
+                    </div>
                     {repairMsg && (
                       <div className={styles.fetchMsg} style={{ color: repairMsg.startsWith("✓") ? "var(--green)" : "var(--coral)", marginTop: 4 }}>
                         {repairMsg}
+                      </div>
+                    )}
+                    {deleteHistoryMsg && (
+                      <div className={styles.fetchMsg} style={{ color: deleteHistoryMsg.startsWith("✓") ? "var(--green)" : "var(--coral)", marginTop: 4 }}>
+                        {deleteHistoryMsg}
                       </div>
                     )}
                   </div>
