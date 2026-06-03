@@ -75,6 +75,8 @@ export function SetupScreen() {
   const [runId, setRunId] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ phase: string; pct: number } | null>(null);
   const [running, setRunning] = useState(false);
+  const [runLog, setRunLog] = useState<{ ts: string; phase: string; pct: number; msg: string }[]>([]);
+  const runLogRef = useRef<HTMLDivElement>(null);
   const [savedFlash, setSavedFlash] = useState(false);
   const [runMetrics, setRunMetrics] = useState<Record<string, number> | null>(null);
   const [libSaved, setLibSaved] = useState(false);
@@ -181,10 +183,17 @@ export function SetupScreen() {
   // Live preview (debounced 80ms)
   const { result: preview, loading: previewLoading, error: previewError } = usePreview(params as unknown as Record<string, unknown>);
 
+  // Auto-scroll pipeline log
+  useEffect(() => {
+    if (runLogRef.current) runLogRef.current.scrollTop = runLogRef.current.scrollHeight;
+  }, [runLog]);
+
   // SSE progress
   useSSE(runId ? `/api/runs/${runId}/stream` : null, (data) => {
     const ev = data as { phase: string; pct: number; msg?: string };
     setProgress(ev);
+    const ts = new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    setRunLog((prev) => [...prev, { ts, phase: ev.phase, pct: ev.pct, msg: ev.msg ?? ev.phase }]);
     if (ev.phase === "done") {
       setRunning(false);
       setToast("Run complete");
@@ -340,6 +349,7 @@ export function SetupScreen() {
     if (err) { setValidationError(err); return; }
     setValidationError(null);
     setRunning(true);
+    setRunLog([]);
     setProgress({ phase: "start", pct: 0 });
     try {
       const data = await api.post<{ id: string }>("/runs", {
@@ -766,6 +776,56 @@ export function SetupScreen() {
               <div className={styles.progressWrap}>
                 <div className={styles.progressBar} style={{ width: `${progress.pct}%` }} />
                 <span className={styles.progressLabel}>{progress.phase} · {progress.pct}%</span>
+              </div>
+            )}
+
+            {/* Pipeline log box */}
+            {runLog.length > 0 && (
+              <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
+                <span style={{ fontSize: 8, color: "var(--dim)", letterSpacing: "0.08em", fontFamily: "var(--font-mono)" }}>
+                  PIPELINE LOG
+                </span>
+                <div
+                  ref={runLogRef}
+                  style={{
+                    background: "var(--panel-3)",
+                    border: "1px solid var(--border-l)",
+                    padding: "4px 6px",
+                    height: 110,
+                    overflowY: "auto",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 1,
+                  }}
+                >
+                  {runLog.map((line, i) => {
+                    const isLast = i === runLog.length - 1;
+                    const color =
+                      line.phase === "done"     ? "var(--green)"  :
+                      line.phase === "error"    ? "var(--coral)"  :
+                      line.phase === "pipeline" ? "var(--green)"  :
+                      isLast && running         ? "var(--amber)"  :
+                                                  "var(--dim)";
+                    return (
+                      <div key={i} style={{
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 8,
+                        lineHeight: 1.6,
+                        color,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}>
+                        <span style={{ color: "var(--faint)", marginRight: 5 }}>{line.ts}</span>
+                        <span style={{ color: "var(--faint)", marginRight: 5 }}>{line.pct}%</span>
+                        <span style={{ marginRight: 4 }}>{line.phase}</span>
+                        {line.msg !== line.phase && (
+                          <span style={{ color: isLast && running ? "var(--text)" : "inherit" }}>— {line.msg}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
