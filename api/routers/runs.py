@@ -15,6 +15,7 @@ POST /runs/preview      → lightweight preview backtest (~100ms)
 import asyncio
 import json
 import logging
+import time
 import uuid
 import sys
 import os
@@ -619,8 +620,12 @@ def _load_strategy_agent_fn(strategy_id: str, push) -> object | None:
     return None
 
 
+_NAUTILUS_TIMEOUT = int(os.getenv("NAUTILUS_TIMEOUT", "60"))  # seconds; override via env
+
+
 def _sync_backtest_pipeline(df, params: dict, push) -> dict:
     """CPU-bound portion — runs in thread pool."""
+    import concurrent.futures as _cf
     import numpy as np
     import sys, os
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -628,16 +633,32 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
     from engine.backtest import run_versions, run_wfo, run_optimization, INITIAL_CAPITAL
     from engine.montecarlo import run_bootstrap, run_stress
 
+    ticker  = params.get("ticker", "?")
+    tf      = params.get("timeframe", "?")
+    n_bars  = len(df)
+    _t0     = time.monotonic()
+
+    def _phase(name: str, pct: int, msg: str = "") -> float:
+        """Push progress and log phase transition with elapsed time."""
+        elapsed = time.monotonic() - _t0
+        log.info("PIPELINE phase=%-12s pct=%3d elapsed=%.1fs ticker=%s tf=%s bars=%d msg=%s",
+                 name, pct, elapsed, ticker, tf, n_bars, msg or name)
+        push(name, pct, msg)
+        return elapsed
+
     # Validate data quality before any computation
+    _phase("validate", 12, f"validating {n_bars} bars")
     _validate_bars(df)
 
-    push("indicators", 15, "computing GARCH indicators")
+    _phase("indicators", 15, "computing GARCH + HMM indicators")
+    _t_ind = time.monotonic()
     df_ind = compute_indicators_v2(df, fit_garch=True)
     garch_status = df_ind.attrs.get("garch_status", "unknown")
+    log.info("PIPELINE indicators done elapsed=%.1fs garch=%s", time.monotonic() - _t_ind, garch_status)
     if garch_status != "ok":
-        push("indicators", 16, f"GARCH fallback: {garch_status}")
+        _phase("indicators", 16, f"GARCH fallback: {garch_status}")
 
-    push("versions", 25, "running strategy versions")
+    _phase("versions", 25, "running strategy versions V1/V2/V4")
     cfg = {
         "sl_mult":              params.get("sl_mult", 2.0),
         "tp_mult":              params.get("tp_mult", 5.0),
@@ -661,29 +682,43 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
             cfg["agent_fn"] = agent_fn
     direction = params.get("direction", "ALL")
 
+    _t_ver = time.monotonic()
     versions = run_versions(df_ind, cfg, direction=direction, progress_cb=push)
+    log.info("PIPELINE versions done elapsed=%.1fs versions=%s",
+             time.monotonic() - _t_ver, list(versions.keys()))
 
     # ── NautilusTrader engine (optional, gated by USE_NAUTILUS_ENGINE=1) ──────
-    # Completely isolated: any failure here must never affect the main pipeline.
+    # Hard timeout of NAUTILUS_TIMEOUT seconds (default 60s) prevents blocking.
+    # Any failure here must never affect the main pipeline.
     try:
         import os as _os
         if _os.getenv("USE_NAUTILUS_ENGINE", "").lower() in ("1", "true", "yes"):
             from engine.nautilus_engine import is_enabled as _nt_enabled, run_nautilus_backtest
             if _nt_enabled():
-                push("versions", 68, "running NautilusTrader engine")
+                _phase("versions", 68, f"NautilusTrader engine (timeout={_NAUTILUS_TIMEOUT}s)")
                 _nt_cfg = {
                     **cfg,
                     "ticker":    params.get("ticker", "BTC-USD"),
                     "timeframe": params.get("timeframe", "1h"),
                     "use_garch_filter": True,
                 }
-                _nt_result  = run_nautilus_backtest(df_ind, _nt_cfg)
-                _nt_metrics = compute_metrics(_nt_result, float(cfg.get("initial_capital", 10_000)))
-                versions["V_Nautilus"] = {"result": _nt_result, "metrics": _nt_metrics}
-                log.info("NautilusTrader engine ok — sharpe=%.3f n_trades=%s",
-                         _nt_metrics.get("sharpe_ratio", 0), _nt_metrics.get("n_trades", 0))
+                _t_nt = time.monotonic()
+                try:
+                    with _cf.ThreadPoolExecutor(max_workers=1) as _nt_pool:
+                        _nt_fut = _nt_pool.submit(run_nautilus_backtest, df_ind, _nt_cfg)
+                        _nt_result = _nt_fut.result(timeout=_NAUTILUS_TIMEOUT)
+                    _nt_metrics = compute_metrics(_nt_result, float(cfg.get("initial_capital", 10_000)))
+                    versions["V_Nautilus"] = {"result": _nt_result, "metrics": _nt_metrics}
+                    log.info("PIPELINE nautilus ok elapsed=%.1fs sharpe=%.3f n_trades=%s",
+                             time.monotonic() - _t_nt,
+                             _nt_metrics.get("sharpe_ratio", 0),
+                             _nt_metrics.get("n_trades", 0))
+                except _cf.TimeoutError:
+                    log.warning("PIPELINE nautilus TIMEOUT after %ds ticker=%s tf=%s — skipping",
+                                _NAUTILUS_TIMEOUT, ticker, tf)
+                    push("versions", 69, f"NautilusTrader timed out ({_NAUTILUS_TIMEOUT}s) — skipped")
     except BaseException as _nt_exc:
-        log.warning("NautilusTrader engine skipped: %s", _nt_exc)
+        log.warning("PIPELINE nautilus skipped: %s: %s", type(_nt_exc).__name__, _nt_exc)
 
     # Pick best version for equity/trades export
     _nautilus_ok = (
@@ -739,19 +774,23 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
 
     # WFO
     if params.get("run_wfo", True):
-        push("wfo", 70, "walk-forward optimization")
+        _phase("wfo", 70, "walk-forward optimization")
+        _t_wfo = time.monotonic()
         wfo_df = run_wfo(df_ind, cfg, direction=direction, progress_cb=push)
+        log.info("PIPELINE wfo done elapsed=%.1fs folds=%d", time.monotonic() - _t_wfo, len(wfo_df))
         result["wfo"] = wfo_df.to_dict("records") if not wfo_df.empty else []
 
     # Sweep
     if params.get("run_sweep", True):
-        push("sweep", 80, "parameter sweep")
+        _phase("sweep", 80, "parameter sweep")
+        _t_sw = time.monotonic()
         sweep_df = run_optimization(df_ind, cfg, progress_cb=push)
+        log.info("PIPELINE sweep done elapsed=%.1fs combos=%d", time.monotonic() - _t_sw, len(sweep_df))
         result["sweep"] = sweep_df.to_dict("records") if not sweep_df.empty else []
 
     # MC
     if params.get("run_mc", True) and trades_list:
-        push("mc", 90, "monte carlo")
+        _phase("mc", 90, "monte carlo")
         pnl_arr = np.array([t.get("pnl", 0) for t in trades_list])
         dir_arr = np.array([
             1 if str(t.get("direction", "")).upper() == "LONG" else -1
@@ -792,6 +831,7 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
             "p75": [round(float(np.percentile(eq_mat[:, t], 75)), 4) for t in range(steps)],
             "p95": [round(float(np.percentile(eq_mat[:, t], 95)), 4) for t in range(steps)],
         }
+        _t_mc = time.monotonic()
         result["mc"] = {
             "percentiles": percentiles,
             "finals":    [round(float(x), 4) for x in bs["final_capital"].tolist()[:200]],
@@ -815,7 +855,11 @@ def _sync_backtest_pipeline(df, params: dict, push) -> dict:
             "p_daily_dd_5":  round(float(bs["p_daily_dd_5"]), 2),
             "p_daily_dd_10": round(float(bs["p_daily_dd_10"]), 2),
         }
+        log.info("PIPELINE mc done elapsed=%.1fs n_sims=%d n_trades=%d",
+                 time.monotonic() - _t_mc, n_sims, n_total)
 
+    log.info("PIPELINE complete total_elapsed=%.1fs ticker=%s tf=%s",
+             time.monotonic() - _t0, ticker, tf)
     return result
 
 
