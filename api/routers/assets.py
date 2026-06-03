@@ -24,7 +24,7 @@ import pandas as pd
 import numpy as np
 from api.db import get_conn
 from api.limiter import limiter
-from api.models import AssetFetch, BackfillRequest
+from api.models import BackfillRequest
 from engine.config import ANN_FACTORS as _BARS_PER_YEAR
 
 
@@ -110,17 +110,16 @@ def repair_assets(conn=None):
 @router.delete("/history")
 def delete_history(ticker: str | None = None):
     """
-    Delete Parquet history files to free Railway disk space.
-    Runs and strategies in DuckDB are NOT affected.
+    Delete ALL stored asset data — Parquet files AND DuckDB rows.
+    Runs and strategies are NOT affected.
 
-    - DELETE /assets/history          → deletes ALL symbols
-    - DELETE /assets/history?ticker=BTC-USD → deletes one symbol only
-
-    Returns a summary of what was removed.
+    - DELETE /assets/history                  → deletes ALL symbols
+    - DELETE /assets/history?ticker=BTC-USD   → deletes one symbol only
     """
     import shutil
     from engine.storage.parquet_store import DATA_DIR
 
+    conn = get_conn()
     removed_files = 0
     removed_bytes = 0
 
@@ -132,21 +131,33 @@ def delete_history(ticker: str | None = None):
                 removed_bytes += f.stat().st_size
                 removed_files += 1
             shutil.rmtree(symbol_dir)
-        target = str(symbol_dir)
+        deleted_rows = conn.execute(
+            "SELECT COUNT(*) FROM assets WHERE ticker=?", [ticker]
+        ).fetchone()[0]
+        conn.execute("DELETE FROM assets WHERE ticker=?", [ticker])
+        conn.commit()
+        target = ticker
     else:
         if DATA_DIR.exists():
             for f in DATA_DIR.rglob("*.parquet"):
                 removed_bytes += f.stat().st_size
                 removed_files += 1
             shutil.rmtree(DATA_DIR)
-        target = str(DATA_DIR)
+        deleted_rows = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+        conn.execute("DELETE FROM assets")
+        conn.commit()
+        target = "ALL"
 
     return {
         "ok": True,
         "target": target,
         "removed_files": removed_files,
         "freed_mb": round(removed_bytes / 1_048_576, 1),
-        "message": f"Deleted {removed_files} Parquet file(s), freed {round(removed_bytes/1_048_576,1)} MB. DuckDB runs/strategies intact.",
+        "deleted_rows": deleted_rows,
+        "message": (
+            f"Deleted {removed_files} Parquet file(s) + {deleted_rows} DuckDB row(s), "
+            f"freed {round(removed_bytes / 1_048_576, 1)} MB. Runs/strategies intact."
+        ),
     }
 
 
@@ -215,38 +226,6 @@ def list_ticker_series(ticker: str):
         })
     return result
 
-
-@router.post("/fetch")
-@limiter.limit("10/minute")
-def fetch_asset(request: Request, body: AssetFetch):
-    VALID_INTERVALS = {"1m", "5m", "15m", "30m", "1h", "4h", "1d", "1wk", "1mo"}
-    if body.interval not in VALID_INTERVALS:
-        raise HTTPException(400, f"Invalid interval '{body.interval}'. Must be one of: {sorted(VALID_INTERVALS)}")
-
-    try:
-        from engine.providers.ccxt_client import is_crypto_ticker, fetch as ccxt_fetch
-        from engine.providers.yfinance_client import fetch as yf_fetch
-        if is_crypto_ticker(body.ticker):
-            try:
-                df = ccxt_fetch(body.ticker, period=body.period, interval=body.interval)
-            except Exception as ccxt_exc:
-                # fallback to yfinance if ccxt fails
-                try:
-                    df = yf_fetch(body.ticker, period=body.period, interval=body.interval)
-                except Exception as yf_exc:
-                    raise HTTPException(400, f"Fetch failed (ccxt: {ccxt_exc}; yfinance: {yf_exc})")
-        else:
-            df = yf_fetch(body.ticker, period=body.period, interval=body.interval)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(400, f"Fetch failed: {exc}")
-
-    conn = get_conn()
-    source_key = f"{body.source}:{body.interval}"
-    from engine.storage.bulk_writer import bulk_store
-    inserted = bulk_store(conn, body.ticker, source_key, df)
-    return {"ticker": body.ticker, "bars": inserted, "source": source_key}
 
 
 @router.post("/backfill")

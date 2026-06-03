@@ -77,6 +77,23 @@ _sse_queues: dict[str, asyncio.Queue] = {}
 
 @router.get("/{run_id}/stream")
 async def stream_run(run_id: str):
+    # Fast-path: if the backtest already finished before the SSE client connected,
+    # synthesise the final event immediately rather than hanging on an empty queue.
+    conn_check = get_conn()
+    row = conn_check.execute("SELECT status FROM runs WHERE id=?", [run_id]).fetchone()
+    if row and row[0] in ("done", "error"):
+        existing_q = _sse_queues.get(run_id)
+        if existing_q is None or existing_q.empty():
+            phase = "done" if row[0] == "done" else "error"
+            msg   = "complete" if phase == "done" else "backtest failed — check logs or backfill data first"
+            pct   = 100 if phase == "done" else 0
+            _sse_queues.pop(run_id, None)
+            async def _instant():
+                yield f"data: {json.dumps({'phase': phase, 'pct': pct, 'msg': msg})}\n\n"
+            return StreamingResponse(_instant(), media_type="text/event-stream",
+                                      headers={"Cache-Control": "no-cache",
+                                               "X-Accel-Buffering": "no"})
+
     queue = _sse_queues.setdefault(run_id, asyncio.Queue())
     async def generator():
         try:
@@ -409,19 +426,18 @@ async def create_run(request: Request, body: RunCreate):
 
 def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
     """
-    Return OHLCV rows for ticker+interval.
-    Priority: Parquet deep history (files) → DuckDB live cache → live ccxt/yfinance fetch.
+    Return OHLCV rows for ticker+interval from the Parquet store.
 
-    Parquet data is never written to DuckDB — it's read directly from files.
-    This prevents partial-write corruption when a backfill is interrupted.
+    Downloads are only possible via backfill (Assets → BACKFILL).
+    If no Parquet data exists for this ticker/interval, raises ValueError
+    with a message that tells the user to backfill first.
     """
-    # ── 1. Parquet deep history (source of truth for large historical data) ────
-    try:
-        import pandas as pd
-        from engine.backfill import classify_ticker
-        from engine.storage.parquet_store import list_available
-        from engine.storage.fast_loader import load_fast
+    import pandas as pd
+    from engine.backfill import classify_ticker
+    from engine.storage.parquet_store import list_available
+    from engine.storage.fast_loader import load_fast
 
+    try:
         asset_class = classify_ticker(ticker)
         available = list_available(asset_class, ticker)
         if available:
@@ -440,7 +456,6 @@ def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
                 end_ts,
             )
             if not df.empty:
-                # Convert directly to tuples — never write Parquet data into DuckDB.
                 rows = list(zip(
                     df.index,
                     df["Open"], df["High"], df["Low"], df["Close"], df["Volume"],
@@ -450,53 +465,10 @@ def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
     except Exception as exc:
         log.warning("Parquet store lookup failed for %s/%s: %s", ticker, interval, exc)
 
-    # ── 2. DuckDB live cache (short-term data from ccxt/yfinance) ─────────────
-    # Explicitly exclude parquet-sourced rows — they may be partial from old writes.
-    source_key = f"yfinance:{interval}"
-    rows = conn.execute(
-        "SELECT ts, open, high, low, close, volume FROM assets "
-        "WHERE ticker=? AND source NOT LIKE 'parquet:%' "
-        "AND (source=? OR source=? OR source LIKE ?) ORDER BY ts",
-        [ticker, source_key, "yfinance", f"%:{interval}"]
-    ).fetchall()
-
-    if rows:
-        return rows
-
-    # Auto-fetch live data — no data in DB or Parquet yet
-    if push:
-        push("start", 2, f"auto-fetching {ticker} {interval}…")
-
-    try:
-        import pandas as pd
-        from engine.providers.ccxt_client import is_crypto_ticker, fetch as ccxt_fetch
-        from engine.providers.yfinance_client import fetch as yf_fetch
-        from engine.storage.bulk_writer import bulk_store
-
-        period = "2y"
-        if is_crypto_ticker(ticker):
-            try:
-                df = ccxt_fetch(ticker, period=period, interval=interval)
-            except Exception as _ccxt_exc:
-                log.warning("ccxt fetch failed for %s/%s, falling back to yfinance: %s",
-                                ticker, interval, _ccxt_exc)
-                df = yf_fetch(ticker, period=period, interval=interval)
-        else:
-            df = yf_fetch(ticker, period=period, interval=interval)
-
-        bulk_store(conn, ticker, source_key, df)
-    except Exception as exc:
-        raise ValueError(f"No data for {ticker}/{interval} and auto-fetch failed: {exc}")
-
-    rows = conn.execute(
-        "SELECT ts, open, high, low, close, volume FROM assets "
-        "WHERE ticker=? AND (source=? OR source=? OR source LIKE ?) ORDER BY ts",
-        [ticker, source_key, "yfinance", f"%:{interval}"]
-    ).fetchall()
-
-    if not rows:
-        raise ValueError(f"Auto-fetch returned no data for {ticker}/{interval}.")
-    return rows
+    raise ValueError(
+        f"Nessun dato disponibile per {ticker} ({interval}). "
+        f"Vai su Assets → BACKFILL per scaricare la serie storica prima di eseguire un backtest."
+    )
 
 
 async def _run_backtest(run_id: str, params: dict):
@@ -609,7 +581,8 @@ async def _run_backtest(run_id: str, params: dict):
     except Exception as exc:
         conn.execute("UPDATE runs SET status='error' WHERE id=?", [run_id])
         log.exception("Backtest pipeline error for run_id=%s", run_id)
-        push("error", 0, "An internal error occurred. Please try again.")
+        err_msg = str(exc).strip()[:200] if str(exc).strip() else "An internal error occurred. Please try again."
+        push("error", 0, err_msg)
     finally:
         # Ensure queue is removed even when no SSE client ever connected
         _sse_queues.pop(run_id, None)
