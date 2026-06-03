@@ -22,6 +22,12 @@ import pandas as pd
 from arch import arch_model
 import warnings
 
+try:
+    from hmmlearn import hmm as _hmm_lib
+    _HMM_AVAILABLE = True
+except ImportError:
+    _HMM_AVAILABLE = False
+
 log = logging.getLogger("strategy_core")
 
 # ── Thread-safe LRU GARCH cache ───────────────────────────────────────────────
@@ -79,15 +85,52 @@ def fit_garch11(returns: np.ndarray) -> tuple:
         return var_r * 0.03, 0.05, 0.90, h
 
 
+def fit_garch_regime_model(h: np.ndarray):
+    """
+    Fit a 3-state GaussianHMM on IS variance array h.
+    States are mapped to LOW/MED/HIGH by ascending mean variance.
+    Returns the fitted model (with _state_to_regime attr) or None on failure.
+    """
+    if not _HMM_AVAILABLE or len(h) < 30:
+        return None
+    try:
+        model = _hmm_lib.GaussianHMM(
+            n_components=3, covariance_type="full",
+            n_iter=200, random_state=42,
+        )
+        model.fit(h.reshape(-1, 1))
+        order = np.argsort(model.means_.flatten())
+        model._state_to_regime = {order[0]: "LOW", order[1]: "MED", order[2]: "HIGH"}
+        return model
+    except Exception:
+        return None
+
+
 def compute_garch_regime(h: np.ndarray,
                          low_pct: float = 25,
-                         high_pct: float = 75) -> np.ndarray:
+                         high_pct: float = 75,
+                         fitted_model=None) -> np.ndarray:
     """
-    Classifica ogni timestep in regime di volatilità:
-      'LOW'  → h < low_pct percentile  (mercato silenzioso, pochi breakout)
-      'MED'  → low_pct <= h <= high_pct (condizioni ottimali)
-      'HIGH' → h > high_pct percentile  (volatilità estrema, ridurre size)
+    Classifica ogni timestep in regime di volatilità LOW/MED/HIGH.
+
+    Se fitted_model è un GaussianHMM IS-fitted, usa predict (lookahead-free per OOS).
+    Altrimenti fitta un nuovo HMM sull'intera serie h.
+    Fallback a percentili espandenti se hmmlearn non è installato o la serie è troppo corta.
     """
+    if fitted_model is not None and _HMM_AVAILABLE:
+        try:
+            states = fitted_model.predict(h.reshape(-1, 1))
+            return np.array([fitted_model._state_to_regime[s] for s in states], dtype=object)
+        except Exception:
+            pass
+
+    if _HMM_AVAILABLE and len(h) >= 30:
+        model = fit_garch_regime_model(h)
+        if model is not None:
+            states = model.predict(h.reshape(-1, 1))
+            return np.array([model._state_to_regime[s] for s in states], dtype=object)
+
+    # Fallback: expanding percentiles (O(n²) but robust for short series)
     h_s = pd.Series(h)
     lo = h_s.expanding(min_periods=20).quantile(low_pct / 100)
     hi = h_s.expanding(min_periods=20).quantile(high_pct / 100)
@@ -484,6 +527,12 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
         omega   = float(qs.stats.omega(ret_s, periods=_PERIODS))
         omega   = omega if np.isfinite(omega) else 99.0
         ulcer   = float(qs.stats.ulcer_index(ret_s)) * 100
+        try:
+            _dd_details = qs.stats.drawdown_details(ret_s)
+            max_dd_dur = int(_dd_details["days"].max()) if not _dd_details.empty else 0
+            avg_dd_dur = float(_dd_details["days"].mean()) if not _dd_details.empty else 0.0
+        except Exception:
+            max_dd_dur = avg_dd_dur = 0
     except Exception:
         # fallback: pure numpy/pandas
         days = max((equity.index[-1] - equity.index[0]).days, 1)
@@ -502,6 +551,7 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
         eq_arr = equity.values
         rm = np.maximum.accumulate(eq_arr)
         ulcer = float(np.sqrt(np.mean(((eq_arr - rm) / rm) ** 2))) * 100
+        max_dd_dur = avg_dd_dur = 0
 
     calmar = cagr / abs(max_dd) if max_dd != 0 else np.inf
 
@@ -533,8 +583,10 @@ def compute_metrics(result: dict, initial_capital: float) -> dict:
         "ulcer":            round(ulcer, 2),
         "recovery_factor":  recovery_factor,
         "sortino_ratio":    round(sortino, 4),
-        "skewness":         round(skewness, 4),
-        "kurtosis":         round(kurtosis, 4),
+        "skewness":              round(skewness, 4),
+        "kurtosis":              round(kurtosis, 4),
+        "max_dd_duration_bars":  max_dd_dur,
+        "avg_dd_duration_bars":  round(avg_dd_dur, 1),
     }
 
 
@@ -559,14 +611,15 @@ def apply_garch_to_fold(
         omega, alpha, beta = var_is * 0.03, 0.05, 0.90
         h_is = np.full(len(is_ret), var_is)
 
-    # IS: regime uses expanding IS percentiles
+    # IS: fit HMM on IS variance, classify IS regime
     is_df["garch_h"] = h_is[: len(is_df)]
-    is_regime = compute_garch_regime(is_df["garch_h"].values)
+    is_hmm_model = fit_garch_regime_model(is_df["garch_h"].values)
+    is_regime = compute_garch_regime(is_df["garch_h"].values, fitted_model=is_hmm_model)
     is_df["garch_regime"] = is_regime
     is_df["size_mult"] = np.where(is_regime == "LOW", 0.0,
                           np.where(is_regime == "HIGH", 0.5, 1.0))
 
-    # OOS: recursively forecast using IS-fitted params, seed from last IS h
+    # OOS: recursively forecast using IS-fitted GARCH params, seed from last IS h
     oos_ret = np.log(oos_df["Close"] / oos_df["Close"].shift(1)).fillna(0).values
     h_prev = h_is[-1] if len(h_is) > 0 else omega / max(1 - alpha - beta, 1e-6)
     h_oos = np.empty(len(oos_ret))
@@ -575,13 +628,8 @@ def apply_garch_to_fold(
         h_prev = h_oos[i]
 
     oos_df["garch_h"] = h_oos[: len(oos_df)]
-    # Regime thresholds from IS distribution (no OOS data in thresholds)
-    lo_thresh = float(np.percentile(h_is, 25)) if len(h_is) >= 4 else 0.0
-    hi_thresh = float(np.percentile(h_is, 75)) if len(h_is) >= 4 else float("inf")
-    oos_regime = np.where(
-        oos_df["garch_h"].values < lo_thresh, "LOW",
-        np.where(oos_df["garch_h"].values > hi_thresh, "HIGH", "MED")
-    ).astype(object)
+    # OOS regime: predict via IS-fitted HMM (no OOS data seen during training)
+    oos_regime = compute_garch_regime(oos_df["garch_h"].values, fitted_model=is_hmm_model)
     oos_df["garch_regime"] = oos_regime
     oos_df["size_mult"] = np.where(oos_regime == "LOW", 0.0,
                            np.where(oos_regime == "HIGH", 0.5, 1.0))

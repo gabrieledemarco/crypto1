@@ -7,6 +7,7 @@ All functions receive DataFrames and config dicts; return dicts/DataFrames.
 import logging
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import TimeSeriesSplit
 
 
 def _require_columns(df: pd.DataFrame, cols: list, context: str) -> None:
@@ -127,10 +128,31 @@ def _best_params_on_is(
 ) -> tuple[float, float]:
     """Grid-search (sl, tp) on IS window; return pair maximising Sharpe.
 
-    Uses V1-Base settings (no GARCH, no commission) for speed.
+    Uses vectorbt sweep for ~20-50x speedup; falls back to sequential loop.
+    V1-Base settings (no GARCH, no commission) for speed.
     """
+    try:
+        from engine.backtest_vbt import backtest_vbt_sweep
+        result = backtest_vbt_sweep(
+            is_data,
+            sl_mults=WFO_SL_GRID,
+            tp_mults=WFO_TP_GRID,
+            hour_windows=[hrs],
+            initial_capital=INITIAL_CAPITAL,
+            risk_per_trade=0.01,
+            commission_pips=0.0,
+            slippage_pips=0.0,
+            leverage=1.0,
+        )
+        if not result.empty:
+            best = result.loc[result["sharpe_ratio"].idxmax()]
+            return float(best["sl_mult"]), float(best["tp_mult"])
+    except Exception as exc:
+        logging.getLogger("backtest").debug("vbt per-fold sweep failed, using loop: %s", exc)
+
+    # Sequential loop fallback
     best_sharpe = float("-inf")
-    best_sl, best_tp = WFO_SL_GRID[1], WFO_TP_GRID[1]   # sensible default
+    best_sl, best_tp = WFO_SL_GRID[1], WFO_TP_GRID[1]
     for sl_c in WFO_SL_GRID:
         for tp_c in WFO_TP_GRID:
             df_s = generate_signals_v2(
@@ -201,24 +223,42 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
         return pd.DataFrame()
 
     rows = []
-    total = sum(max(0, len(df_ind) - c["train"] - c["test"]) // c["test"] + 1
+    total = sum(max(0, (len(df_ind) - c["train"]) // c["test"])
                 for c in window_configs)
     done = 0
     for wcfg in window_configs:
         is_len  = wcfg["train"]
         oos_len = wcfg["test"]
-        step    = oos_len
-        fold    = 0
-        i       = 0
-        while i + is_len + oos_len <= len(df_ind):
-            is_data  = df_ind.iloc[i : i + is_len].copy()
-            oos_data = df_ind.iloc[i + is_len : i + is_len + oos_len].copy()
+
+        n_folds = max(0, (len(df_ind) - is_len) // oos_len)
+        if n_folds == 0:
+            continue
+
+        if n_folds >= 2:
+            tscv = TimeSeriesSplit(
+                n_splits=n_folds,
+                test_size=oos_len,
+                max_train_size=is_len,
+                gap=0,
+            )
+            fold_iter = enumerate(tscv.split(df_ind))
+        else:
+            # Single fold: build the one IS/OOS pair manually
+            train_idx = list(range(is_len))
+            test_idx  = list(range(is_len, is_len + oos_len))
+            fold_iter = enumerate([(train_idx, test_idx)])
+
+        for fold, (train_idx, test_idx) in fold_iter:
+            is_data  = df_ind.iloc[train_idx].copy()
+            oos_data = df_ind.iloc[test_idx].copy()
+
             # Guard: IS must end strictly before OOS begins (no lookahead bias)
             if not is_data.empty and not oos_data.empty:
                 assert is_data.index[-1] < oos_data.index[0], (
                     f"WFO data overlap: IS ends {is_data.index[-1]}, "
                     f"OOS starts {oos_data.index[0]}"
                 )
+
             # Refit GARCH on IS only — eliminates lookahead bias in WFO folds
             if "garch_h" in df_ind.columns and "Close" in df_ind.columns:
                 try:
@@ -226,7 +266,7 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
                 except Exception:
                     pass  # fall back to pre-computed garch_h if anything fails
 
-            # --- per-fold IS optimisation (optional) ---
+            # per-fold IS optimisation (optional)
             if per_fold_opt:
                 fold_sl, fold_tp = _best_params_on_is(is_data, hrs, direction)
             else:
@@ -270,8 +310,6 @@ def run_wfo(df_ind: pd.DataFrame, cfg: dict, agent_fn=None,
                 "efficiency_factor": round(m_os.get("sharpe_ratio", 0) / m_is.get("sharpe_ratio", 1), 3) if m_is.get("sharpe_ratio", 0) != 0 else 0.0,
             }
             rows.append(row)
-            fold += 1
-            i    += step
             done += 1
             if progress_cb:
                 progress_cb("wfo", int(70 + done / max(total, 1) * 20))

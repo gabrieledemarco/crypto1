@@ -13,9 +13,9 @@ def run_bootstrap(pnl: np.ndarray, n_sims: int = 1000, n_bars: int | None = None
     K = len(pnl)
     path_len = n_bars if (n_bars and 0 < n_bars) else K
     try:
-        from arch.bootstrap import StationaryBootstrap
+        from arch.bootstrap import CircularBlockBootstrap
         block_size = max(1, int(np.ceil(K ** (1/3))))
-        bs = StationaryBootstrap(block_size, pnl)
+        bs = CircularBlockBootstrap(block_size, pnl)
         sim_list = []
         for data, _ in bs.bootstrap(n_sims):
             sim_list.append(data[0][:path_len])
