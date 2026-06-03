@@ -620,7 +620,7 @@ def _load_strategy_agent_fn(strategy_id: str, push) -> object | None:
     return None
 
 
-_NAUTILUS_TIMEOUT = int(os.getenv("NAUTILUS_TIMEOUT", "60"))  # seconds; override via env
+_NAUTILUS_TIMEOUT = int(os.getenv("NAUTILUS_TIMEOUT", "10"))  # seconds; override via env
 
 
 def _sync_backtest_pipeline(df, params: dict, push) -> dict:
