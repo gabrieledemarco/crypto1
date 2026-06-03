@@ -66,24 +66,23 @@ def _seed_library_if_empty(conn) -> None:
 
 
 def _repair_assets_table(conn) -> None:
-    """Remove parquet-cached rows from the assets table on startup.
+    """Clear all rows from the assets table on startup.
 
-    Old versions of _load_or_fetch wrote Parquet data into DuckDB as a cache.
-    If the process was killed mid-write the table ends up with partial rows.
-    We now serve Parquet data directly from files, so these rows are stale.
+    The assets table was populated by the old FETCH flow (yfinance/ccxt
+    one-shot downloads). FETCH has been removed — all data must come from
+    Parquet backfills. Any rows in the table are stale and should be purged
+    so list_assets() shows only what is actually backfilled.
     """
     try:
-        n = conn.execute(
-            "SELECT COUNT(*) FROM assets WHERE source LIKE 'parquet:%'"
-        ).fetchone()[0]
+        n = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
         if n > 0:
-            conn.execute("DELETE FROM assets WHERE source LIKE 'parquet:%'")
+            conn.execute("DELETE FROM assets")
             conn.commit()
             import logging
-            logging.info(f"startup repair: removed {n} stale parquet-cached rows from assets table")
+            logging.info(f"startup: purged {n} stale rows from assets table (FETCH removed)")
     except Exception as e:
         import logging
-        logging.warning(f"startup repair skipped: {e}")
+        logging.warning(f"startup assets purge skipped: {e}")
 
 
 def _prewarm_data_cache() -> None:

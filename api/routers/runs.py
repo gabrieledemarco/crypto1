@@ -426,19 +426,18 @@ async def create_run(request: Request, body: RunCreate):
 
 def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
     """
-    Return OHLCV rows for ticker+interval.
-    Priority: Parquet deep history (files) → DuckDB live cache → live ccxt/yfinance fetch.
+    Return OHLCV rows for ticker+interval from the Parquet store.
 
-    Parquet data is never written to DuckDB — it's read directly from files.
-    This prevents partial-write corruption when a backfill is interrupted.
+    Downloads are only possible via backfill (Assets → BACKFILL).
+    If no Parquet data exists for this ticker/interval, raises ValueError
+    with a message that tells the user to backfill first.
     """
-    # ── 1. Parquet deep history (source of truth for large historical data) ────
-    try:
-        import pandas as pd
-        from engine.backfill import classify_ticker
-        from engine.storage.parquet_store import list_available
-        from engine.storage.fast_loader import load_fast
+    import pandas as pd
+    from engine.backfill import classify_ticker
+    from engine.storage.parquet_store import list_available
+    from engine.storage.fast_loader import load_fast
 
+    try:
         asset_class = classify_ticker(ticker)
         available = list_available(asset_class, ticker)
         if available:
@@ -457,7 +456,6 @@ def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
                 end_ts,
             )
             if not df.empty:
-                # Convert directly to tuples — never write Parquet data into DuckDB.
                 rows = list(zip(
                     df.index,
                     df["Open"], df["High"], df["Low"], df["Close"], df["Volume"],
@@ -467,53 +465,10 @@ def _load_or_fetch(conn, ticker: str, interval: str, push=None) -> list:
     except Exception as exc:
         log.warning("Parquet store lookup failed for %s/%s: %s", ticker, interval, exc)
 
-    # ── 2. DuckDB live cache (short-term data from ccxt/yfinance) ─────────────
-    # Explicitly exclude parquet-sourced rows — they may be partial from old writes.
-    source_key = f"yfinance:{interval}"
-    rows = conn.execute(
-        "SELECT ts, open, high, low, close, volume FROM assets "
-        "WHERE ticker=? AND source NOT LIKE 'parquet:%' "
-        "AND (source=? OR source=? OR source LIKE ?) ORDER BY ts",
-        [ticker, source_key, "yfinance", f"%:{interval}"]
-    ).fetchall()
-
-    if rows:
-        return rows
-
-    # Auto-fetch live data — no data in DB or Parquet yet
-    if push:
-        push("start", 2, f"auto-fetching {ticker} {interval}…")
-
-    try:
-        import pandas as pd
-        from engine.providers.ccxt_client import is_crypto_ticker, fetch as ccxt_fetch
-        from engine.providers.yfinance_client import fetch as yf_fetch
-        from engine.storage.bulk_writer import bulk_store
-
-        period = "2y"
-        if is_crypto_ticker(ticker):
-            try:
-                df = ccxt_fetch(ticker, period=period, interval=interval)
-            except Exception as _ccxt_exc:
-                log.warning("ccxt fetch failed for %s/%s, falling back to yfinance: %s",
-                                ticker, interval, _ccxt_exc)
-                df = yf_fetch(ticker, period=period, interval=interval)
-        else:
-            df = yf_fetch(ticker, period=period, interval=interval)
-
-        bulk_store(conn, ticker, source_key, df)
-    except Exception as exc:
-        raise ValueError(f"No data for {ticker}/{interval} and auto-fetch failed: {exc}")
-
-    rows = conn.execute(
-        "SELECT ts, open, high, low, close, volume FROM assets "
-        "WHERE ticker=? AND (source=? OR source=? OR source LIKE ?) ORDER BY ts",
-        [ticker, source_key, "yfinance", f"%:{interval}"]
-    ).fetchall()
-
-    if not rows:
-        raise ValueError(f"Auto-fetch returned no data for {ticker}/{interval}.")
-    return rows
+    raise ValueError(
+        f"Nessun dato disponibile per {ticker} ({interval}). "
+        f"Vai su Assets → BACKFILL per scaricare la serie storica prima di eseguire un backtest."
+    )
 
 
 async def _run_backtest(run_id: str, params: dict):
